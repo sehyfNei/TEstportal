@@ -1,0 +1,3980 @@
+﻿# Handoff
+
+Read this file first when resuming in a new session.
+
+---
+
+## Startup Checklist
+
+1. Read `docs/process/AGENT_WORKFLOW.md`.
+2. **Read `docs/process/ROADMAP.md`** — the milestone plan and critical path. Any session must advance a milestone and respect its ordering.
+3. Read `docs/process/SESSION_STATE.md`.
+4. Open `trackers/JIRA_TRACKER.csv` and inspect rows with `In Progress`, `Blocked`, or `Review`. The `Milestone` column maps every row to a roadmap milestone.
+5. Run:
+
+```powershell
+git status --short
+```
+
+6. Continue the next unblocked tracker task, picking from the current roadmap milestone.
+
+---
+
+## Source-Of-Truth Order
+
+1. `docs/final/FINAL_TRD.md`
+2. `docs/final/FINAL_PRD.md`
+3. `trackers/JIRA_TRACKER.csv`
+4. Current codebase
+5. Agent-specific brainstorm files
+
+---
+
+## Sequential Agent Protocol
+
+Use this order for each meaningful implementation slice:
+
+1. **Architect** — **first reads `docs/process/ROADMAP.md`** and names the milestone the session advances — then writes the approach, risk notes, expected files, and verification gates here before code changes.
+2. **Builder** implements the selected tracker row, updates tracker/docs, runs verification, and appends a builder handoff here.
+3. **Sanity Test** reviews the diff and builder notes, runs independent checks, and appends pass/fail findings here.
+
+Every handoff entry should include:
+
+- Agent role and name.
+- Tracker row or scope.
+- Files changed or reviewed.
+- Verification commands and results.
+- Blockers, risks, and next recommended step.
+
+Do not overwrite earlier entries from other agents. Append a new dated entry so the next agent can review and improve the previous pass.
+
+---
+
+## Latest Agent Handoffs
+
+### 2026-05-29 - Builder Orientation - Codex
+
+Scope:
+
+- Read `docs/process/AGENT_WORKFLOW.md`, `SESSION_STATE.md`, `HANDOFF.md`, `DECISIONS.md`, `BLOCKERS.md`, and `CHANGELOG.md`.
+- Checked `README.md`, final PRD/TRD headings, current tracker rows around `TSP-019`, `TSP-024`, and `TSP-025`, and `git status --short`.
+- Updated process docs to explicitly capture the founder's sequential Architect -> Builder -> Sanity Test handoff loop.
+
+Current understanding:
+
+- Project is a Next.js, TypeScript, Tailwind, Supabase-backed test series and self-study portal.
+- Active product/code work is still centered on the exam manifest/admin question bank track.
+- `TSP-019` and `TSP-024` are in `Review` pending browser/server-action smoke with a real admin user session.
+- `TSP-025` is `In Progress`; implementation exists, but verification is blocked by the broken pnpm install and browser persistence smoke still needs admin auth.
+
+Verification:
+
+- No application verification was run for this orientation/process-doc update.
+- Local state already reports pnpm dependency repair as the next required unblocker.
+
+Next recommended step:
+
+- Architect should review dependency repair plus `TSP-025` verification scope, then hand a precise plan to Builder before any code or install repair work.
+
+---
+
+### 2026-05-29 - Session 1 Plan - Architect (Claude Sonnet 4.6)
+
+Scope reviewed:
+
+- Read full tracker (all 158 rows), `AGENT_WORKFLOW.md`, `SESSION_STATE.md`, `HANDOFF.md`, `BLOCKERS.md`, `DECISIONS.md`.
+- Read all five admin action files, `middleware.ts`, `src/lib/supabase/server.ts`, `src/lib/supabase/env.ts`, `src/lib/utils.ts`, `src/app/admin/layout.tsx`, `src/app/admin/page.tsx`, all migration SQL files.
+- Identified 11 tasks buildable now despite active blockers (no admin user, broken pnpm, no AI keys).
+
+Session 1 scope selected:
+
+- **TSP-149** — `.env.example` audit (15 min, zero risk)
+- **TSP-090** — Admin role guard (security boundary, foundational for all subsequent admin work)
+- **TSP-091** — Admin nav + Phase 1 section overview (depends on TSP-090)
+
+Key design decisions made:
+
+1. `requireAdmin()` for layouts/pages uses `redirect()`. `requireAdminForAction()` for server actions returns a typed result. Two separate exports avoid the "redirect inside catch" problem in action result flows.
+2. No-config guard (`hasSupabaseConfig()`) preserved in both — admin shell must remain navigable in local scaffold mode without Supabase credentials.
+3. Role check mirrors DB `public.is_admin()` exactly: `app_metadata.user_role` first, `user_metadata.user_role` fallback.
+4. `AdminNav` is a Client Component (needs `usePathname`). Layout remains a Server Component — only the nav island is client-rendered.
+5. `/admin/questions/import` link added to nav — it was built in TSP-025 but never surfaced in navigation.
+6. Admin overview page extended to show all 8 Phase 1/1.5 sections with status badges (Live / Phase 1 / Phase 1.5) so any developer or admin landing on `/admin` has full orientation.
+
+Files the Builder will create or modify:
+
+| Action | Path |
+|---|---|
+| Create | `src/lib/auth/require-admin.ts` |
+| Create | `src/components/admin/admin-nav.tsx` |
+| Edit | `src/app/admin/layout.tsx` |
+| Edit | `src/app/admin/page.tsx` |
+| Edit | `src/app/admin/questions/actions.ts` |
+| Edit | `src/app/admin/manifests/actions.ts` |
+| Edit | `src/app/admin/questions/import/actions.ts` |
+| Edit | `.env.example` |
+
+Risks flagged for Sanity agent to check:
+
+- TSP-090: Confirm the no-config bypass in `requireAdmin()` is intentional and commented — it must never be removed without understanding its purpose.
+- TSP-090: Confirm `requireAdminForAction()` is used in ALL three action files — missing one leaves an unguarded write path.
+- TSP-091: Confirm `/admin/questions/import` nav order does not break active-link matching for `/admin/questions`.
+- TSP-090/091: Confirm `corepack pnpm build` passes — layout is now `async` which affects static analysis.
+
+Verification gate for this session:
+
+- Standard gate: `corepack pnpm typecheck` + `corepack pnpm lint`
+- App build gate (required — layout and Client Component changes): `corepack pnpm build`
+- If pnpm is still broken: mark rows `Review`, document exact error in BLOCKERS.md, do not mark `Done`.
+
+Next after Session 1:
+
+- Sanity agent reviews TSP-090 (security boundary) and TSP-091.
+- Session 2 proceeds to TSP-026 (question review/approval), TSP-027 (lifecycle statuses), TSP-035 (test session schema).
+
+---
+
+### 2026-05-29 - Session 1 Builder Handoff - Codex
+
+Scope completed:
+
+- Implemented `TSP-149`, `TSP-090`, and `TSP-091` from the Architect Session 1 plan.
+- Left all three rows in `Review` for Sanity Test instead of `Done`.
+
+Files changed:
+
+- `.env.example`
+- `src/lib/auth/require-admin.ts`
+- `src/components/admin/admin-nav.tsx`
+- `src/app/admin/layout.tsx`
+- `src/app/admin/page.tsx`
+- `src/app/admin/questions/actions.ts`
+- `src/app/admin/manifests/actions.ts`
+- `src/app/admin/questions/import/actions.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/BLOCKERS.md`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added `DATABASE_URL` and source/purpose comments for all Phase 1 secrets in `.env.example`.
+- Added `requireAdmin()` for Server Component layout/page redirects and `requireAdminForAction()` for typed server action authorization errors.
+- Admin role detection checks `app_metadata.user_role`, the top-level JWT `user_role` claim, and `user_metadata.user_role` as a compatibility fallback.
+- Preserved the no-config bypass for admin layouts so the local scaffold remains navigable without Supabase keys.
+- Replaced auth-only checks in all three admin write action files with `requireAdminForAction()`.
+- Added a client `AdminNav` with active states and surfaced `/admin/questions/import`.
+- Expanded `/admin` overview from two cards to 8 operational sections with Live, Phase 1, and Phase 1.5 badges.
+
+Verification:
+
+- `corepack pnpm install` failed after elevated rerun: `UNKNOWN: unknown error, read` while pnpm read its modules manifest.
+- `corepack pnpm typecheck` passed after elevated rerun.
+- `corepack pnpm lint` passed after elevated rerun.
+- `corepack pnpm test` passed after elevated rerun.
+- `corepack pnpm build` passed after elevated rerun.
+- Dev server was attempted on `http://127.0.0.1:3000`; the background process exited immediately, `curl.exe -I http://127.0.0.1:3000/admin` could not connect, and direct `node_modules\.bin\next.CMD --version` failed with `The cloud file provider exited unexpectedly`.
+
+Sanity review focus:
+
+- Confirm non-admin users are blocked by `requireAdmin()` on `/admin/*` when Supabase is configured.
+- Confirm no-config mode still renders the admin shell.
+- Confirm all admin write actions call `requireAdminForAction()`.
+- Confirm `/admin/questions/import` active state does not make `/admin/questions` active.
+- Confirm `/admin` shows 8 sections: 3 Live, 4 Phase 1, 1 Phase 1.5.
+
+Next recommended step:
+
+- Sanity Test agent should review `TSP-149`, `TSP-090`, and `TSP-091`, then either mark them `Done` with comments or hand back exact findings for a Builder fix pass.
+
+---
+
+### 2026-05-29 - Session 1 Sanity Review - Architect (Claude Sonnet 4.6)
+
+Reviewed all eight changed files against the Session 1 spec and the existing DB security model (`public.is_admin()`, question-bank RLS).
+
+**TSP-149 — PASS.** `.env.example` adds `DATABASE_URL` and source/purpose comments for every secret. Complete. Recommend → `Done`.
+
+**TSP-091 — PASS.** `AdminNav` active-state logic is correct; `/admin/questions/import` (exact) does not falsely activate `/admin/questions` (exact). Overview shows 8 sections (3 Live, 4 Phase 1, 1 Phase 1.5). Recommend → `Done`.
+- Minor UX nit (non-blocking, future polish): on the question detail route `/admin/questions/<id>`, no nav item highlights because `Questions` uses `exact: true`. Acceptable for now.
+
+**TSP-090 — ONE BLOCKING FINDING before `Done`. Otherwise solid.**
+
+- **FINDING S1-A (security, blocking for Done):** `getUserRole()` in `src/lib/auth/require-admin.ts` trusts `user_metadata.user_role` as its third fallback. **`user_metadata` is client-writable** via `supabase.auth.updateUser({ data: { user_role: "admin" } })`. Any authenticated user can self-promote and pass both `requireAdmin()` and `requireAdminForAction()`.
+  - **Blast radius is limited** (not a data breach): the DB is the real boundary — `public.is_admin()` and the CRUD RPCs read only `app_metadata` / JWT claims, never `user_metadata`. RLS confines a self-promoted user's reads to `status='live'` rows, and every write RPC returns `admin role required`. But the TypeScript guard's whole job is to be the clean first gate; trusting `user_metadata` lets a self-promoted user into admin pages and lets actions begin executing before the DB rejects them.
+  - **Root cause is the Architect's Session 1 spec** — I wrote "`user_metadata.user_role` as fallback." The Builder implemented it faithfully. My error, flagged for correction.
+  - **Fix (one change, ~2 lines):** in `getUserRole()`, delete the `user.user_metadata?.user_role` branch. Trust only `app_metadata` (from `getUser()`) + the JWT-claim decode. This exactly mirrors `public.is_admin()`.
+
+- **COMMEND:** The Builder added `getJwtUserRole()` (decodes the session access token to check `app_metadata.user_role` and the top-level `user_role` claim) — beyond the spec, and it achieves true parity with `is_admin()`'s top-level `user_role` branch, which my spec missed. Keep it. Token authenticity is established by the parallel `getUser()` call, so decoding the session token for claims is acceptable.
+
+- **MINOR S1-B (non-blocking):** in `questions/import/actions.ts`, dry-run validation runs before the admin check. Harmless — dry-run touches no data and only parses the user's own pasted input, and the page sits behind the layout guard. Leave as-is or move the admin check earlier for consistency; reviewer's choice.
+
+**Action items handed to Builder:**
+1. Apply fix S1-A (remove `user_metadata` trust). Re-run `typecheck` + `lint` + `build`.
+2. After S1-A, `TSP-149` and `TSP-091` can be marked `Done` now. `TSP-090` can be marked `Done` once S1-A lands — but live browser smoke (non-admin blocked, admin allowed) still requires the admin user and remains the only thing standing between `TSP-019`/`TSP-024`/`TSP-090` and full sign-off.
+
+---
+
+### 2026-05-29 - Session 2 Plan - Architect (Claude Sonnet 4.6)
+
+Founder decisions locked during brainstorming: **(1) all three rows this session**, **(2) lifecycle allows fast-track forward skips.**
+
+**Scope:** TSP-035 + TSP-027 + TSP-026 (+ new audit row TSP-159). Sequence below. One commit per row. This is a large session — strict per-row commits keep the Sanity diff reviewable.
+
+**Gating:** Apply Session-1 fix S1-A first (it touches the same security surface 026 extends). **TSP-035 has zero dependency on Session 1** and can start immediately even if S1-A is still open.
+
+---
+
+#### Order 1 — TSP-035: Test session schema (reaches `Done`)
+
+Pure migration + Drizzle schema from FINAL_TRD §6.4 (`test_templates`, `test_sessions`, `session_questions`, `session_answers`, `session_results`). No admin user needed → this row can reach `Done` (schema + migration applied to pooler + Drizzle-shape unit test).
+
+**Architect decision (must implement) — answer-key isolation:**
+- Add `prompt_snapshot jsonb` to `session_questions`: an **answer-stripped** copy of the question content, frozen at session-start.
+- The correct answer / explanation is **NEVER** copied into any user-readable row. Scoring (TSP-041) reads the real key from the admin-only `question_versions` server-side at submit.
+- Rationale: immune to mid-test edits/retirement, clean RLS (user reads only their own snapshot — no join to the admin-only versions table), single home for the answer key. This is the single most important security property of the test engine. **Add a DECISIONS.md entry** documenting it.
+
+**RLS (owner-only) — required in this migration:**
+- `test_templates`: admin all; authenticated read where `is_active`.
+- `test_sessions`: owner-only (`user_id = auth.uid()`) select/insert/update; admin all.
+- `session_questions`: select where parent session belongs to the user; inserts restricted to security-definer/admin (the session-start RPC lands in TSP-039).
+- `session_answers`: owner-only.
+- `session_results`: owner-only select; inserts restricted (scoring definer lands in TSP-041).
+- Include the TRD §6.4 indexes (`test_sessions_user_status`, `test_sessions_exam_type`, `session_answers_session`, `session_results_user_exam`).
+
+**Scope boundary:** schema ONLY. No start/save/submit APIs — those are TSP-039/040/041.
+**Gate:** Standard + Database gate (migration file + RLS documented + Drizzle schema). Add unit test asserting schema shape (mirror the `question-schema.test.ts` pattern).
+**Drizzle:** new `src/lib/db/schema/session.ts`; export it from `src/lib/db/schema/index.ts`.
+
+---
+
+#### Order 2 — TSP-027: Lifecycle transition enforcement (lands in `Review`)
+
+The 7 statuses already exist on `questions.status`; **nothing enforces transitions** and `update_admin_question` writes any status blindly. This adds enforcement.
+
+**Transition map (fast-track skips allowed)** — `src/lib/question-bank/question-lifecycle.ts`, pure + Vitest-tested:
+
+```
+draft     → validated, reviewed, approved, live, retired
+validated → draft, reviewed, approved, live, retired
+reviewed  → draft, validated, approved, live, retired
+approved  → draft, validated, reviewed, live, retired
+live      → draft, flagged, retired
+flagged   → live, draft, retired
+retired   → draft
+```
+
+- Forward skips allowed (`draft→live` one-shot for trusted PYQ seeding); every move audited.
+- `flagged` only reachable from `live`. `retired` reachable from any active state; revivable to `draft`.
+
+**Two-layer enforcement:**
+1. TS map + `canTransition(from, to)` (unit-tested — matches the project's deterministic-logic-gets-tests convention).
+2. New `set_question_status(p_question_id, p_to_status, p_note)` security-definer RPC that mirrors the map, checks `is_admin()`, locks the row, validates the transition, stamps `approved_by`/`approved_at` on any `→approved`, writes a `question_status_events` row (see TSP-159), then updates `status`. `revoke … from public; grant execute … to authenticated` (do NOT repeat the TSP-024 grant bug).
+
+**Refactor:** **remove `status` mutation from `update_admin_question`** — content edits stop changing lifecycle state. Status changes go only through `set_question_status`. Update `questions/actions.ts` accordingly (a dedicated `setQuestionStatusAction`).
+**Gate:** Standard + Database. Migration + RLS/grants documented. Vitest for the transition map.
+
+---
+
+#### Order 3 — TSP-026: Review & approval workflow (lands in `Review`)
+
+- `/admin/questions/review` queue filtering `status in ('validated','reviewed','flagged')`, with approve / reject(→draft) / publish(→live) actions calling `setQuestionStatusAction`.
+- Show per-question status history from `question_status_events`.
+- Single `is_admin()` retained; true creator≠approver segregation deferred until the admin-role-model blocker is resolved (record `approved_by` now so the audit data exists when SoD lands).
+- **Acceptance "only approved questions appear in tests"** is already enforced by existing RLS (`questions_read_live_metadata` exposes only `status='live'`). Approve = `→approved`; publish = `→live`. Two intentional steps.
+- **Gate:** App build gate. Lands in `Review` (browser admin-session smoke pending admin user), same as TSP-024.
+
+---
+
+#### New row — TSP-159: `question_status_events` audit table
+
+Add the tracker row (Question Bank epic). Folded into the TSP-026/027 migration. Columns: `id, question_id, from_status, to_status, actor uuid, note text, created_at`. RLS: admin read; inserts only via `set_question_status` (security-definer). Powers the review history view now and feeds the TSP-094 audit viewer later.
+
+---
+
+**Open question for founder (not blocking Session 2):** the admin-role model (single `is_admin()` vs reviewer/approver split) is still an open blocker. It gates true segregation of duties in the review workflow. Session 2 builds the audit trail so SoD can be added cleanly later without rework.
+
+---
+
+### 2026-05-30 - Session 2 Builder Handoff - Codex
+
+Scope completed locally:
+
+- Applied Session 1 Sanity finding **S1-A** for `TSP-090`.
+- Implemented `TSP-035`, `TSP-027`, `TSP-026`, and `TSP-159`.
+- Marked `TSP-149` and `TSP-091` `Done` after prior Sanity PASS.
+- Left `TSP-090`, `TSP-035`, `TSP-027`, `TSP-026`, and `TSP-159` in `Review` because live DB/browser gates are not complete.
+
+Files changed:
+
+- `src/lib/auth/require-admin.ts`
+- `src/lib/db/schema/index.ts`
+- `src/lib/db/schema/question.ts`
+- `src/lib/db/schema/session.ts`
+- `src/lib/question-bank/question-lifecycle.ts`
+- `src/app/admin/questions/actions.ts`
+- `src/app/admin/questions/page.tsx`
+- `src/app/admin/questions/review/page.tsx`
+- `src/app/admin/page.tsx`
+- `src/components/admin/admin-nav.tsx`
+- `src/components/admin/question-editor.tsx`
+- `src/components/admin/question-status-controls.tsx`
+- `src/tests/unit/session-schema.test.ts`
+- `src/tests/unit/question-lifecycle.test.ts`
+- `supabase/migrations/202605300001_test_sessions.sql`
+- `supabase/migrations/202605300002_question_lifecycle.sql`
+- `scripts/check-rpc-grants.js`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/BLOCKERS.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/DECISIONS.md`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Removed the client-writable `user_metadata.user_role` fallback from the TypeScript admin guard; role checks now trust only `app_metadata` and JWT role claims.
+- Added test session tables and Drizzle schema. `session_questions.prompt_snapshot` is intentionally answer-stripped and has a DB check against common answer/explanation keys.
+- Added lifecycle transition enforcement in TypeScript and Postgres. Content edits no longer change `questions.status`; status changes go through `set_question_status`.
+- Added `question_status_events` with admin-read RLS and lifecycle RPC writes.
+- Added `/admin/questions/review` with approve, reject-to-draft, publish, restore-live, retire, edit link, and status history.
+- Added the review route to admin navigation and admin overview.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/session-schema.test.ts src/tests/unit/question-lifecycle.test.ts src/tests/unit/question-schema.test.ts` exited 0 after elevated rerun, but Vitest printed no summary in this workspace.
+- `corepack pnpm typecheck` exited 0 after elevated rerun.
+- `corepack pnpm lint` exited 0 after elevated rerun.
+- `corepack pnpm test` exited 0 after elevated rerun, but Vitest printed no summary in this workspace.
+- `corepack pnpm build` exited 0 after elevated rerun.
+- `corepack pnpm exec tsc --noEmit --pretty false` exited 0 after elevated rerun.
+- `node --check scripts\check-rpc-grants.js` exited 0 after elevated rerun.
+- Source checks: `rg -n "user_metadata" src` returned no matches; `rg -n "status = p_status" supabase\migrations\202605300002_question_lifecycle.sql src` returned no matches.
+
+Blocked verification:
+
+- `node run-migrations.js` failed before applying Session 2 migrations:
+
+```text
+PostgresError: (ENOTFOUND) tenant/user postgres.iwzerbplanzlzwtiiska not found
+```
+
+Risks and Sanity focus:
+
+- Review `202605300001_test_sessions.sql` RLS carefully; session-start and scoring security depends on owner-only user reads plus server-side answer isolation.
+- Review `202605300002_question_lifecycle.sql` transition parity against `src/lib/question-bank/question-lifecycle.ts`.
+- Confirm `update_admin_question` no longer mutates `status` and `retireQuestionAction` now calls `set_question_status`.
+- Confirm `/admin/questions/review` behavior around `approved`: the page includes approved questions so they can be published as the second review step.
+
+Next recommended step:
+
+1. Fix the Supabase `DATABASE_URL` from Project Settings transaction pooler, then rerun `node run-migrations.js`.
+2. Run `node scripts\check-rpc-grants.js` after migration so `set_question_status` execute grants are verified with the existing CRUD grants.
+3. Create or provide an admin user with `app_metadata.user_role = "admin"` and run browser smoke for admin guard and the review queue.
+4. Sanity Test agent should review the Session 2 diff and move rows only after DB/browser gates pass.
+
+---
+
+### 2026-05-30 - Session 2 Sanity Review - Architect (Claude Opus 4.8)
+
+Reviewed the full Session 2 diff against the Session 2 plan and the project security model (`public.is_admin()`, question-bank RLS, answer-key isolation). Read both migrations, both schema files, the lifecycle module, `questions/actions.ts`, the review page, the question editor, both unit tests, the DECISIONS entry, and re-read `require-admin.ts`.
+
+**Overall: PASS on code. No blocking findings.** Row statuses are correct. The only things between `Review` and `Done` are the two environmental blockers (DB migration + browser smoke), not code defects.
+
+**S1-A — VERIFIED FIXED.** `require-admin.ts:getUserRole()` now trusts only `app_metadata` + the JWT-claim decode; the `user_metadata` fallback is gone. `rg user_metadata src` is clean. Matches the locked auth rule.
+
+**TSP-035 — PASS.** All five tables match TRD §6.4. Owner-only RLS is correct: `test_sessions`/`session_answers` have owner select/insert/update; `session_questions` and `session_results` deliberately have **no** owner-insert policy, so inserts are restricted to the security-definer/admin path (TSP-039/041) as specced. All four required indexes present. Drizzle schema + index export complete. DECISIONS entry recorded. `session-schema.test.ts` present.
+- COMMEND: `prompt_snapshot` has a DB CHECK rejecting top-level answer/explanation keys — stronger than my spec asked for.
+- NON-BLOCKING N1: the CHECK only guards **top-level** keys. A nested key (e.g. `prompt_snapshot.content.correct_option`) would pass. The authoritative defense remains the TSP-039 snapshot builder; the CHECK is defense-in-depth. Flag for TSP-039 to strip recursively.
+- NON-BLOCKING N2 (cosmetic): Drizzle `session_results_user_exam` index is asc on `created_at`; SQL is `desc`. Migrations are hand-written so this is harmless drift; align if convenient.
+
+**TSP-027 — PASS.** SQL transition map is byte-for-byte identical to the TS map and to my plan. `set_question_status` checks `is_admin()`, validates the enum, takes `FOR UPDATE`, stamps `approved_by/approved_at` on `→approved`, writes the audit row, and is idempotent on same-status (`changed:false`). **Grant hygiene correct** — `revoke all … from public; grant execute … to authenticated` on all three functions; the TSP-024 grant bug is NOT repeated. `update_admin_question` no longer mutates `status`; the edit form makes status read-only (hidden field carrying the current value), so no misleading control. `retire_admin_question` delegates to `set_question_status` and every active state can reach `retired`, so retire never breaks. Unit test covers fast-track skips, flagged/retired restrictions, same-status, and full map coverage.
+- NON-BLOCKING N3: `update_admin_question` still accepts a now-vestigial `p_status` param. Harmless (ignored). Drop on a future cleanup pass.
+
+**TSP-159 — PASS.** `question_status_events` has the specced columns, admin-read RLS, no insert policy (definer-only writes), and two sensible indexes.
+
+**TSP-026 — PASS.** Queue filters `validated/reviewed/approved/flagged`, shows per-question status history, and every command maps to a legal transition. The inclusion of `approved` in the queue is a **correct deviation** from my plan (`validated/reviewed/flagged`) — approved questions need a surface for the two-step Publish action; without it there'd be nowhere to publish. Acknowledged and endorsed.
+
+**Action items handed back:**
+1. No code fixes required to clear Sanity. (N1–N3 are non-blocking; N1 should be tracked against TSP-039.)
+2. **Founder/orchestrator unblock:** replace `DATABASE_URL` with the exact Supabase transaction pooler string (the `tenant/user postgres.iwzerbplanzlzwtiiska not found` error is a connection-string/credential issue only you can resolve), then `node run-migrations.js` + `node scripts\check-rpc-grants.js`.
+3. **Admin user** (`app_metadata.user_role = "admin"`) for browser smoke of `/admin`, `/admin/questions`, `/admin/questions/review`, and TSP-090's allow/deny paths.
+4. Rows stay in `Review` until 2–3 land; then `TSP-035/027/026/159` → `Done` and `TSP-090` → `Done`.
+
+---
+
+### 2026-05-30 - Session 3 Plan - Architect (Claude Opus 4.8)
+
+**Founder decisions locked:** (1) full take-a-test loop this session — **TSP-039 → TSP-040 → TSP-041**; (2) **minimal selection** (`status='live'` + exam/optional-topic filter); smart selection (036/037/038) deferred until TSP-029/030 land. One commit per row.
+
+**Why this slice:** 039 only depends on the just-delivered TSP-035. It's where the answer-key isolation property is actually *enforced* (currently only the schema half exists). It delivers the first end-to-end product loop.
+
+**Scope boundary — explicitly OUT:** test-taking UI/timer (TSP-043), smart selection (TSP-036/037/038), full marking-rules engine (TSP-051), client autosave recovery (TSP-048). Session 3 is server-side actions + RPCs + pure logic + unit tests only.
+
+---
+
+#### Architectural decisions (must implement)
+
+**A. Snapshot construction is an ALLOWLIST, built server-side under definer privilege.**
+- Answer keys live **nested inside `question_versions.content`**: `correct_options`, `correct_integer`, and (match type) the correct `pairs` mapping. The TSP-035 `prompt_snapshot` CHECK only guards *top-level* keys and does **not** list `pairs` — so a blacklist would leak match answers. **Build the snapshot by copying only known-safe fields per question type**, never by stripping known-bad ones.
+- A normal user cannot read `question_versions.content` (admin-only). Therefore snapshot building **must** happen inside the security-definer start RPC, not in any client-reachable path.
+- Per-type safe allowlist: `{ type, text/stem, options[], images[] }` for mcq/msq; `{ type, text, images }` for integer; for `match`, expose the two columns to be matched **without** the correct pairing; statement/assertion expose `statements[]`/`assertion`+`reason` text only. Anything not on the allowlist is excluded by default.
+- Mirror the allowlist in a pure TS `buildPromptSnapshot(content, type)` in `src/lib/test-session/prompt-snapshot.ts`, **unit-tested now** (incl. adversarial inputs that inject `correct_*`/`explanation`/`pairs`-with-answers → assert excluded). The SQL in the RPC mirrors it; add a comment in both that they must stay in sync. The RPC is the security boundary; the TS fn is the testable spec.
+
+**B. Definer RPCs MUST assert ownership manually.** `security definer` bypasses RLS. Both `start_test_session` and `submit_test_session` must explicitly check `auth.uid()` against the session's `user_id` (submit) / set `user_id = auth.uid()` (start). Missing this lets a user score/submit someone else's session. This is the #1 Sanity focus for the session.
+
+**C. Freeze version + marking rule at start.** Persist `question_version_id` on each `session_questions` row (already a column) so mid-test edits/retirement don't change scoring. Snapshot the marking rule (`marksPerCorrect`, `negativeMarkingFraction`) into `test_sessions.metadata` at start, sourced from the persisted exam manifest; if not cleanly available, default UPSC Prelims **2.0 / 0.33** and record which was used. Scoring reads the frozen rule, not live config.
+
+---
+
+#### Order 1 — TSP-039: `start_test_session` (security-definer RPC) → lands in `Review`
+
+- Input: `p_exam_id`, `p_type`, `p_template_id` (nullable), `p_topic_id` (nullable), `p_count` (default 10), `p_duration_minutes` (nullable).
+- Insert `test_sessions` with `user_id = auth.uid()`, `status='in_progress'`, `started_at=now()`, `expires_at = now() + duration`, marking rule into `metadata` (decision C).
+- **Minimal selection:** `questions` where `status='live'` and `exam_id` matches and (optional `topic_id`) and `exposure_policy = 'practice'`, `order by random()`, `limit p_count`. Capture each `current_version_id`.
+- For each, insert `session_questions` with `prompt_snapshot` = allowlist build (decision A), `question_version_id` = frozen version, `sequence`, `selected_by_reason='minimal_live_filter'`.
+- Return `{ session_id, expires_at, questions:[{ session_question_id, sequence, prompt_snapshot }] }` — **answer-free**.
+- `revoke all from public; grant execute to authenticated`. Wrap in `src/app/test/actions.ts` `startSessionAction` (calls `requireAuth`, then RPC).
+- **Gate:** Database gate. Migration + RLS/grants documented. Unit test for `buildPromptSnapshot`.
+
+#### Order 2 — TSP-040: `saveAnswerAction` (owner-only upsert, no RPC) → lands in `Review`
+
+- Plain server action; owner-only `upsert` into `session_answers` on `(session_id, question_id)` — RLS already permits owner insert/update.
+- Validate the session belongs to the caller and is `in_progress` (reject otherwise). Update `selected_answer`, `confidence`, `marked_review`, accumulate `time_spent_sec`, bump `revisit_count`, set `last_saved_at`. **Never** compute `is_correct`/`marks_awarded` here — those stay null until submit.
+- Idempotent, last-write-wins. **Gate:** Standard.
+
+#### Order 3 — TSP-041: `submit_test_session` (security-definer RPC) → lands in `Review`
+
+- **Assert `auth.uid() = test_sessions.user_id`** (decision B). Idempotent: if already `scored`, return the existing `session_results` row (no double-scoring).
+- For each `session_answers` row: read the real key from `question_versions.content` via the frozen `session_questions.question_version_id`; compute `is_correct` and `marks_awarded` using the frozen marking rule (correct → `+marksPerCorrect`; wrong → `-negativeMarkingFraction*marksPerCorrect`; skipped → 0). Write `is_correct`/`marks_awarded` back to `session_answers`.
+- Aggregate into `session_results` (score, max_score, accuracy, attempted/correct/incorrect/skipped, duration_sec, `topic_scores` jsonb by topic). Transition `test_sessions` `in_progress → submitted → scored`, set `submitted_at`.
+- Pure scoring/aggregation logic in `src/lib/test-session/scoring.ts`, **unit-tested now** (per-type correctness incl. msq exact-match, integer, marks math, skipped handling). The RPC mirrors it.
+- `revoke all from public; grant execute to authenticated`. Wrap in `submitSessionAction`. **Gate:** Database gate + scoring unit test.
+
+---
+
+#### Files the Builder will create/modify
+
+| Action | Path |
+|---|---|
+| Create | `supabase/migrations/202605310001_test_session_engine.sql` (start + submit RPCs, grants) |
+| Create | `src/lib/test-session/prompt-snapshot.ts` (+ `.test.ts`) |
+| Create | `src/lib/test-session/scoring.ts` (+ `.test.ts`) |
+| Create | `src/app/test/actions.ts` (`startSessionAction`, `saveAnswerAction`, `submitSessionAction`) |
+| Edit | `trackers/JIRA_TRACKER.csv`, `docs/process/{SESSION_STATE,CHANGELOG,HANDOFF}.md`, `DECISIONS.md` |
+
+#### Sanity focus (flag for reviewer)
+1. **Decision B** — both definer RPCs assert `auth.uid()` ownership. A missing check is a cross-user data breach, not a gate nit.
+2. `buildPromptSnapshot` is an allowlist; match-type `pairs` correct mapping is **not** present in any snapshot. Adversarial unit tests prove it.
+3. Real answer key is read **only** inside `submit_test_session`, never returned by start or autosave.
+4. Grant hygiene on both RPCs (no TSP-024 repeat).
+5. `question_version_id` frozen at start; scoring uses the frozen version + frozen marking rule.
+
+#### Verification gate
+- Standard + Database. Migration file + RLS/grants documented. Unit tests for `prompt-snapshot` and `scoring` must pass (these run **now**, despite the DB block).
+- DB application + browser smoke remain blocked on the **DATABASE_URL fix + admin/test user** — all three rows land in `Review`, same pattern as Session 2.
+
+**Open item (non-blocking):** confirm where the persisted manifest stores `marksPerCorrect`/`negativeMarkingFraction` during DB smoke; if not cleanly queryable, the UPSC 2.0/0.33 default stands and TSP-051 will generalize it.
+
+---
+
+### 2026-05-30 - Session 3 Builder Handoff - Codex
+
+Scope completed locally:
+
+- Implemented `TSP-039`, `TSP-040`, and `TSP-041` from the Session 3 Architect plan.
+- Opened `TSP-034` Test Session Engine epic as `In Progress`.
+- Left Session 3 rows in `Review` because live DB migration/RPC smoke is blocked by the existing Supabase pooler `DATABASE_URL` error.
+
+Files changed:
+
+- `supabase/migrations/202605310001_test_session_engine.sql`
+- `src/lib/test-session/prompt-snapshot.ts`
+- `src/lib/test-session/scoring.ts`
+- `src/tests/unit/prompt-snapshot.test.ts`
+- `src/tests/unit/scoring.test.ts`
+- `src/app/test/actions.ts`
+- `scripts/check-rpc-grants.js`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/BLOCKERS.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/DECISIONS.md`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added a TypeScript prompt snapshot allowlist and matching SQL helper. The start RPC copies only safe fields per question type; match `pairs`, `correct_*`, and explanations are never returned.
+- Added `start_test_session` security-definer RPC. It sets `user_id = auth.uid()`, freezes `question_version_id`, snapshots marking metadata, does minimal live/practice exam-topic selection, and returns answer-free prompt snapshots.
+- Added `saveAnswerAction`. It validates signed-in ownership, `in_progress` status, expiry, and question membership before upserting `session_answers`; it intentionally keeps `is_correct` and `marks_awarded` null.
+- Added a TypeScript scoring helper/test suite and matching SQL answer evaluator. Malformed option arrays are treated as invalid/skipped instead of breaking submit.
+- Added `submit_test_session` security-definer RPC. It explicitly asserts `auth.uid() = test_sessions.user_id`, is idempotent for already-scored sessions, reads real keys only through frozen `question_version_id`, writes `is_correct`/`marks_awarded`, aggregates `session_results`, and transitions the session to `scored`.
+- Extended `scripts/check-rpc-grants.js` to verify `start_test_session` and `submit_test_session` execute grants.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/prompt-snapshot.test.ts src/tests/unit/scoring.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0 after elevated rerun.
+- `corepack pnpm lint` exited 0 after elevated rerun.
+- `corepack pnpm test` exited 0 after elevated rerun, but Vitest printed no summary in this workspace.
+- `corepack pnpm build` exited 0 after elevated rerun.
+- `node --check scripts\check-rpc-grants.js` exited 0 after elevated rerun.
+- Static checks found the expected ownership and grant lines in `202605310001_test_session_engine.sql`.
+
+Blocked verification:
+
+- `node run-migrations.js` still fails before applying Session 2 or Session 3 migrations:
+
+```text
+PostgresError: (ENOTFOUND) tenant/user postgres.iwzerbplanzlzwtiiska not found
+```
+
+Sanity review focus:
+
+- Confirm `start_test_session` and `submit_test_session` both use `auth.uid()` correctly. `submit_test_session` must reject sessions not owned by the caller.
+- Confirm `build_session_prompt_snapshot` is an allowlist and does not copy match `pairs` or any `correct_*`/explanation fields.
+- Confirm `saveAnswerAction` never computes score fields and rejects non-owned, non-in-progress, expired, or non-member questions.
+- Confirm `submit_test_session` is idempotent for already-scored sessions and reads answer keys only from frozen `session_questions.question_version_id`.
+
+Next recommended step:
+
+1. Fix Supabase `DATABASE_URL` with the exact transaction pooler string from the current project.
+2. Run `node run-migrations.js`, then `node scripts\check-rpc-grants.js`.
+3. Smoke start→save→submit with a plain test user after migrations apply.
+4. Sanity Test agent reviews Session 3 and keeps rows in `Review` until DB/RPC smoke passes.
+
+---
+
+### 2026-05-31 - Session 3 Sanity Review - Architect (Claude Opus 4.8)
+
+Reviewed the full Session 3 diff against the Session 3 Plan's five security focuses. Read `202605310001_test_session_engine.sql` (all four functions), `prompt-snapshot.ts`, `scoring.ts`, `test/actions.ts`, and the adversarial unit tests.
+
+**Overall: PASS on code. No blocking findings.** All three rows correctly sit in `Review` — the only gap to `Done` is the DATABASE_URL fix + RPC/browser smoke, not code.
+
+**Focus 1 — Definer ownership assertion (the #1 risk): PASS.** `start_test_session` sets `user_id = auth.uid()` and rejects null auth. `submit_test_session` explicitly raises `42501` when `v_session.user_id <> v_user_id` *after* `select … for update`. No cross-user scoring path. This was the highest-risk item and it's correct.
+
+**Focus 2 — Allowlist snapshot, no `pairs` leak: PASS.** `build_session_prompt_snapshot` (SQL) and `buildPromptSnapshot` (TS) are strict per-type allowlists; match exposes `left/right/leftColumn/rightColumn/prompts/choices` but never `pairs`. Every copied array is validated to be a string array. Adversarial tests assert no `correct*`/`explanation`/`pairs` leak, including a nested-injection case. The allowlisted keys also can't collide with the TSP-035 `prompt_snapshot` CHECK.
+
+**Focus 3 — Real key read only at submit: PASS.** `score_session_answer_correct` (which reads `correct_options`/`correct_integer`/`pairs`) is invoked only inside `submit_test_session`. Start and autosave never touch answer-bearing fields; autosave forces `is_correct`/`marks_awarded` to null.
+
+**Focus 4 — Grant hygiene: PASS.** `revoke all from public` on all four functions; `grant execute to authenticated` only on `start`/`submit`. The two helpers stay owner-only (reachable just via the definer RPCs). No TSP-024 repeat.
+
+**Focus 5 — Frozen version + marking rule: PASS.** `session_questions.question_version_id` is pinned to `current_version_id` at start; submit scores via a join on the *frozen* version, not live. Marking rule is frozen into `test_sessions.metadata.markingRule` at start and read back from metadata at submit.
+- COMMEND: the open marking-source item is resolved — start reads `exam_manifests.manifest->'marking'` (most recent active version) with UPSC 2.0/0.33/120 defaults, and records the source.
+
+**Non-blocking notes (track, don't block):**
+- **N4 (match scoring):** SQL `jsonb` equality vs TS `JSON.stringify` can diverge for match questions if pair-object key order or array order differs. Exact-equality match is a v1 simplification anyway; canonicalize (sort keys/array) when match scoring becomes load-bearing.
+- **N5 (revisit_count):** `saveAnswerAction` increments `revisit_count` on every save, so it's really a save counter (first save → 1). Fix to view-based semantics when the test UI/autosave lands (TSP-043/048).
+- **N6 (cosmetic):** `start_test_session` calls `build_session_prompt_snapshot` twice per question (insert + return). Compute once into a variable.
+
+**Idempotency / correctness spot-checks:** submit returns the existing result when already `scored` (no double-score); `accuracy = correct/attempted` is consistent across SQL and TS; autosave validates ownership + `in_progress` + expiry + question-belongs-to-session, with RLS as defense-in-depth.
+
+**Note on TSP-034:** Builder set the parent row `Build reusable templates and user test sessions` to `In Progress` to house the session-engine work. Reasonable grouping; it stays `In Progress` until the 039/040/041 children reach `Done`.
+
+**Action items:** none for the Builder to fix to clear Sanity. N4–N6 are tracked for the relevant future rows. Environmental unblock (DATABASE_URL + admin/test user) remains the only path to `Done`.
+
+---
+
+### 2026-05-31 - M0 Live Verification - Architect (Claude Opus 4.8)
+
+**The DB blocker was a paused project, not a bad URI.** The connection string was correct all along; the founder unpaused the project and it connects immediately (`current_user=postgres`). The `tenant/user not found` error is what Supavisor returns for a paused tenant.
+
+Ran the full live verification chain against the pooler:
+
+- `node run-migrations.js` → **all migrations applied**, incl. `202605300001_test_sessions`, `202605300002_question_lifecycle`, `202605310001_test_session_engine`. NOTICEs were idempotent "drop policy if exists" skips.
+- `node scripts\check-rpc-grants.js` → all **7 RPCs** `can_execute=true` for `authenticated`, incl. `set_question_status`, `start_test_session`, `submit_test_session`. No grant bug.
+- `node scripts\smoke-manifest-import.js` → PASS (UPSC manifest v4; 18 topics / 4 concepts / 2 clusters / 2 cutoffs).
+- `node scripts\smoke-question-crud.js` → PASS (create v1 → update v2 → **retire via `set_question_status`** logging `draft→retired changed:true` → cleanup). Confirms the Session 2 lifecycle refactor live.
+- **New: `node scripts\smoke-test-session.js`** (added this session) → PASS. Seeds 3 live MCQs, runs `start_test_session` → autosave → `submit_test_session`. Verified live:
+  - **`snapshotLeak: none`** — recursive key scan of every returned snapshot found no `correct*`/`answer*`/`explanation*`/`pairs` field. Answer isolation holds against the live DB.
+  - **Exact scoring** — 1 correct (+2), 1 wrong (−0.6667×2), 1 skipped → score 0.6666, max 6, accuracy 0.5; marking rule frozen from `exam_manifest` (mpc 2, nmf 0.6667). Resolves the marking-source open item.
+  - **Idempotent** re-submit (same `result_id`, unchanged score).
+  - Clean teardown (sessions → questions → user order; deletes by id). Note: `create_admin_question` coerces a non-enum `p_source` to `manual`, so identify seed data by `created_by`, not source.
+
+**Rows moved to `Done` (DB/logic gates fully met, no UI dependency):** `TSP-035`, `TSP-039`, `TSP-041`, `TSP-159`, `TSP-027`.
+
+**Still `Review` — pending browser smoke with the two users (no code gap, just UI-path verification):**
+- `TSP-019` (manifest import) and `TSP-024` (question CRUD) — RPC-verified live; gate asks for an admin-session browser pass.
+- `TSP-090` (admin guard) — needs non-admin-blocked / admin-allowed browser check.
+- `TSP-026` (review queue) — needs the queue UI exercised in-browser.
+- `TSP-040` (autosave) — engine path verified, but the actual server action + owner-only RLS (a user cannot write to another's session) was not exercised; the smoke inserted as superuser, bypassing RLS. Verify via browser or an authenticated-client integration test.
+- `TSP-025` (bulk import) — not yet smoke-tested live.
+
+**To fully close M0, founder still needs to provide:** an admin user (`app_metadata.user_role="admin"`) + a plain test student, then a browser pass of `/admin/questions/review`, the admin guard, and the take-a-test loop.
+
+---
+
+### 2026-05-31 - Session 4 Plan (M1) - Architect (Claude Opus 4.8)
+
+**Milestone:** M1 Playable Test (per `docs/process/ROADMAP.md` — read first). **Scope:** TSP-044 (question renderer) → TSP-043 (test shell + timer). One commit per row, TSP-044 first (it's the testable unit the shell consumes). Remaining M1 rows (TSP-045 navigator grid, 046 confidence, 047 mark-for-review, 048 autosave recovery, 049 tab-switch logging) are **out of scope** — later M1 sessions.
+
+**Goal:** a logged-in student can start a test, see one question at a time with a live countdown, answer, and submit to see a score — in the browser. The engine (start/save/submit) is already live-verified; this puts a face on it.
+
+#### Routing & data flow (decisions)
+- Routes live under the existing `(app)` group at **`/tests/...`** — middleware already protects `/tests` (no middleware change needed). The `(app)` layout wraps them with the app header.
+- **Launcher** `src/app/(app)/tests/page.tsx` (Server Component): lists active exams; a client `<StartTest>` island calls `startSessionAction` via `useActionState` and on `state.sessionId` does `router.push('/tests/'+sessionId)`. Do **not** modify the verified actions; navigate from the client on success.
+- **Shell** `src/app/(app)/tests/[sessionId]/page.tsx` (Server Component): loads the session and its `session_questions` (ordered by `sequence`) with the Supabase **server** client — RLS already restricts to the owner. Guard: if not found / not owned → `notFound()`; if status is `submitted`/`scored` → show the result panel. Passes `{ sessionId, expiresAt, questions:[{sessionQuestionId, questionId, sequence, promptSnapshot}] }` to the client runner. **Never loads answer keys** (they aren't in `session_questions`).
+
+#### TSP-044 — Question renderer (`src/components/test/question-renderer.tsx`, client)
+- Input: `promptSnapshot` (answer-free) + current `value` + `onChange`. Renders by `promptSnapshot.type`.
+- **Answer shape must match the scorer exactly** (this is the #1 integration risk): mcq → `{ options: [i] }`; msq → `{ options: [i,j,...] }`; integer → `{ integer: n }` (scorer reads `selected.integer ?? selected.value`). Put this mapping in a pure, unit-tested helper `src/lib/test-session/answer-shape.ts` (mirror of `scoring.ts` expectations) so the shape can't silently drift.
+- **Scope for S4: mcq, msq, integer** — these are what `scoring.ts` handles cleanly and what seed/PYQ data uses (mcq dominates UPSC Prelims). `statement`/`assertion`/`match` render their prompt read-only with a "answer entry coming soon" note — **no crash**.
+  - **Flagged follow-up (architect):** the TSP-039 snapshot allowlist copies `options` only for mcq/msq, so `statement`/`assertion` questions arrive without selectable options. Supporting them needs a small TSP-039 amendment (copy `options` for those types too) + renderer work. Logging as a fast-follow row, not S4.
+
+#### TSP-043 — Test shell + timer (`src/components/test/test-runner.tsx`, client)
+- Holds `currentIndex`, an `answers` map, save status, and the submitted result. Renders `<QuestionRenderer>` for the current question + linear **Prev/Next** and "Question X of N" (the rich navigator grid is TSP-045, deferred).
+- **Server-authoritative timer (locked decision):** derive `remainingMs` from `expiresAt` (not a client-only counter); tick display every 1s. The client clock is display only — the server is the source of truth (`saveAnswerAction` rejects expired saves; `submit_test_session` scores frozen data). On `remaining ≤ 0` → auto-call `submitSessionAction` and lock inputs.
+- **Autosave:** on answer change / Next, call `saveAnswerAction` (sessionId, questionId, `selectedAnswer` JSON, `timeSpentSec` increment) with a subtle "Saving…/Saved" indicator. Confidence + mark-for-review are deferred (don't send them; defaults apply). Full client-side recovery is TSP-048.
+- **Submit:** `submitSessionAction` → on success show an **inline result panel** (score, max, accuracy, correct/incorrect/skipped) + a link to `/dashboard`. A dedicated results route is deferred to M4/TSP-053.
+
+#### Gates
+- **App build gate** (UI/routing): `corepack pnpm typecheck` + `lint` + **`build`**.
+- **Unit test:** `src/lib/test-session/answer-shape.ts` (per-type shape correctness) — runs now, no DB needed.
+- **Browser smoke (needs the M0 test student):** login → start → answer mcq/msq/integer → watch timer → submit → see score. Lands in `Review` until that browser pass with the test user is done.
+
+#### Sanity focus (flag for reviewer)
+1. Selected-answer JSON shape is byte-identical to what `scoring.ts` expects — a mismatch silently scores everything wrong/skipped. The shared `answer-shape.ts` helper + its test is the guard.
+2. Timer is server-authoritative; a tampered client clock cannot extend a session (saves rejected after `expires_at`; submit unaffected).
+3. Shell never receives or renders an answer key; renderer never depends on one.
+4. Owner guard on `[sessionId]` — opening another user's session is blocked (RLS + clean `notFound()`).
+5. statement/assertion/match render without crashing despite deferred answer entry.
+
+#### Files
+| Action | Path |
+|---|---|
+| Create | `src/app/(app)/tests/page.tsx` (launcher) |
+| Create | `src/components/test/start-test.tsx` (client launcher island) |
+| Create | `src/app/(app)/tests/[sessionId]/page.tsx` (shell loader + guard) |
+| Create | `src/components/test/test-runner.tsx` (TSP-043) |
+| Create | `src/components/test/question-renderer.tsx` (TSP-044) |
+| Create | `src/lib/test-session/answer-shape.ts` (+ `.test.ts`) |
+| Edit | `src/app/(app)/layout.tsx` (add a "Tests" nav link) |
+| Edit | `trackers/JIRA_TRACKER.csv`, process docs |
+
+**Open question for founder (non-blocking — proceeding assuming yes):** OK to ship the M1 demo supporting **mcq/msq/integer** answer entry first, with statement/assertion/match as a fast-follow? mcq dominates UPSC Prelims, so this still gives a real, takeable test.
+
+---
+
+### 2026-05-31 - Session 4 Builder Handoff - Codex
+
+Scope completed locally:
+
+- Implemented `TSP-044` question renderer and `TSP-043` test shell/timer from the Session 4 M1 plan.
+- Opened `TSP-042` Test Taking UI epic as `In Progress`.
+- Left `TSP-043` and `TSP-044` in `Review` because browser smoke still needs the M0 plain test student.
+
+Files changed:
+
+- `src/lib/test-session/answer-shape.ts`
+- `src/tests/unit/answer-shape.test.ts`
+- `src/components/test/question-renderer.tsx`
+- `src/components/test/start-test.tsx`
+- `src/components/test/test-runner.tsx`
+- `src/app/(app)/tests/page.tsx`
+- `src/app/(app)/tests/[sessionId]/page.tsx`
+- `src/app/(app)/layout.tsx`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/CHANGELOG.md`
+- `docs/process/DECISIONS.md`
+- `docs/process/BLOCKERS.md`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+Implementation notes:
+
+- Added a shared answer-shape helper so MCQ writes `{options:[i]}`, MSQ writes stable sorted `{options:[i,j]}`, and integer writes `{integer:n}`.
+- Added a renderer that consumes only answer-free prompt snapshots. MCQ/MSQ/integer support answer entry; statement/assertion/match render read-only with a deferred-entry note.
+- Added `/tests` launcher and `/tests/[sessionId]` shell under the existing protected `(app)` route group.
+- The shell loads sessions, session questions, saved answers, and results through the Supabase server client under owner RLS. It never joins `question_versions` or loads answer keys.
+- The runner derives countdown from `expires_at` plus server render time, autosaves through `saveAnswerAction`, auto-submits at zero, and shows the `submitSessionAction` result inline.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/answer-shape.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0 after elevated rerun.
+- `corepack pnpm lint` exited 0 after elevated rerun.
+- `corepack pnpm test` exited 0 after elevated rerun, but Vitest printed no summary in this workspace.
+- `corepack pnpm build` exited 0 after elevated rerun.
+- Dev server attempt: `corepack pnpm dev --hostname 127.0.0.1 --port 3000` exited immediately through the pnpm shim. Running the direct Next binary printed `http://127.0.0.1:3000`, then exited with `UNKNOWN: unknown error, read`, consistent with the existing OneDrive/node_modules hydration blocker.
+
+Pending browser smoke:
+
+- Login as the plain test student.
+- Open `/tests`, start a test, answer MCQ/MSQ/integer questions, confirm countdown display, submit, and verify the inline score.
+- This pass should cover `TSP-043`, `TSP-044`, and the remaining `TSP-040` browser autosave/RLS gate.
+
+Sanity review focus:
+
+- Confirm selected-answer JSON exactly matches `scoring.ts` expectations.
+- Confirm `/tests/[sessionId]` reads only `session_questions.prompt_snapshot`, `test_sessions`, `session_answers`, and `session_results`.
+- Confirm the timer cannot extend server acceptance beyond `expires_at`; expired saves should still be rejected server-side.
+- Confirm deferred statement/assertion/match snapshots render without crashing.
+
+---
+
+### 2026-05-31 - Session 4 Sanity Review (M1) - Architect (Claude Opus 4.8)
+
+Reviewed all six new/edited files: `answer-shape.ts` (+ test), `question-renderer.tsx`, `test-runner.tsx`, `(app)/tests/page.tsx`, `start-test.tsx`, `(app)/tests/[sessionId]/page.tsx`.
+
+**Overall: PASS on code. No blocking findings.** `TSP-043`/`TSP-044` correctly stay in `Review` — the only gap is the browser pass with the M0 test student.
+
+**Focus 1 — Answer-shape parity (the #1 risk): PASS.** `answer-shape.ts` emits exactly what `scoring.ts`/the SQL scorer read: mcq/msq `{options:[…]}`, integer `{integer:n}`. The renderer builds answers only via `makeMcqAnswer`/`toggleMsqAnswer`/`makeIntegerAnswer`, and `normalizeSelectedAnswer` also accepts the `selected_options`/`value` aliases when re-loading saved answers. Unit test covers all three types + the alias + match→null.
+
+**Focus 2 — Server-authoritative timer: PASS (well done).** `getRemainingMs = expiresMs − (serverNowMs + elapsedMs)` where `serverNow` is stamped by the server component and `elapsedMs` comes from `performance.now()` (monotonic). It never reads the client wall clock, so changing the device clock can't extend the session; the server enforces independently (`saveAnswerAction` rejects expired; submit scores frozen data). Auto-submit on `remaining≤0` is guarded by `submittedRef` against double-fire.
+
+**Focus 3 — No answer-key in the client: PASS.** The shell loads only `prompt_snapshot` + session/answer/result metadata; the renderer's `PromptSnapshot` type has no answer fields. Nothing reads `correct_*`.
+
+**Focus 4 — Owner guard on `[sessionId]`: PASS.** `session.user_id !== user.id → notFound()`, plus RLS. Unauthenticated → friendly panel.
+
+**Focus 5 — statement/assertion/match: PASS.** Their prompt renders read-only (statements list / assertion+reason / two match columns) with a "coming soon" entry; unknown types also fall through to it. No crash. Matches the flagged fast-follow.
+
+**Bonus:** the shell already rehydrates saved answers and a prior result (`initialAnswers`/`initialResult`), so a refresh mid-test resumes — partial early credit toward TSP-048.
+
+**Non-blocking notes (track, don't block):**
+- **N7:** `handleAnswerChange` stores `normalizeSelectedAnswer(...)` in state but saves the raw `answer` to the server. Equivalent today (the renderer only ever emits already-normalized values), but saving the normalized value too would remove the chance of future drift.
+- **N8:** if `expires_at` were ever null, `getRemainingMs` returns 0 and the auto-submit effect would fire on load. `start_test_session` always sets `expires_at`, so not reachable now — but treating null expiry as "no timer" rather than "expired" would be safer defensively.
+- **N5 (still open):** rapid answer changes each call `saveAnswerAction`, inflating `revisit_count` (it's a save counter). Fix when wiring real autosave semantics (TSP-048).
+
+**Action items:** none for the Builder to clear Sanity. N5/N7/N8 are tracked for TSP-045–048. Only the browser smoke with the plain test student remains before `TSP-040/043/044` → `Done`.
+
+---
+
+### 2026-05-31 - Session 5 Plan (M1 continued) - Architect (Claude Opus 4.8)
+
+**Milestone:** M1 Playable Test. **Scope:** TSP-045 (navigator grid) → TSP-046 (confidence) → TSP-047 (mark-for-review). All three land in `Review`; browser smoke with the M0 test student is the gate to `Done`. One commit per row.
+
+**No new migration needed.** `session_answers.confidence` and `session_answers.marked_review` are already live. `saveAnswerAction` already reads both fields from formData. The gap is client-side only: the runner doesn't hold or send them yet.
+
+#### Core architectural decision: unified `QuestionState`
+
+Replace the runner's `answers: Record<string, SelectedAnswer>` map with:
+
+```typescript
+type QuestionState = {
+  answer: SelectedAnswer;
+  confidence: Confidence | null;  // "sure" | "unsure" | "guessed"
+  markedReview: boolean;
+};
+// held as: questionStates: Record<string, QuestionState>
+```
+
+Export `Confidence = "sure" | "unsure" | "guessed"` from `src/lib/test-session/answer-shape.ts`.
+
+The session page query gains `confidence, marked_review` columns; `toInitialAnswers` becomes `toInitialQuestionStates`; the runner prop renames `initialAnswers` → `initialQuestionStates`. TypeScript build failure is the guard for a missed rename.
+
+Every `saveQuestionAnswer` call must append confidence and markedReview from the current state. Mark-for-review toggle and confidence change both trigger an immediate save (not deferred to next nav), so state is never lost on refresh.
+
+#### TSP-045 — Question navigator (`src/components/test/question-navigator.tsx`)
+
+```typescript
+type QuestionNavigatorProps = {
+  disabled?: boolean;
+  onJump: (index: number) => void;
+  questions: { questionId: string; sequence: number }[];
+  currentIndex: number;
+  states: Record<string, { answered: boolean; markedReview: boolean }>;
+};
+```
+
+Status derivation (per cell): `markedReview` → `review`/`review-answered`; answered (not marked) → `answered`; else → `unanswered`. Current index adds a ring on top.
+
+Colors: unanswered = muted border/bg; answered = `bg-primary text-primary-foreground`; review = `bg-amber-100 text-amber-800 border border-amber-300`; review-answered = `bg-amber-400 text-amber-950`; current adds `ring-2 ring-primary ring-offset-1`.
+
+Layout: `grid grid-cols-[repeat(auto-fill,minmax(2.5rem,1fr))] gap-1` between the header card and the question card. Each cell `h-10 w-10 rounded-md text-xs font-semibold`. Clicking calls `onJump(index)` (which saves first, same pattern as Prev/Next — extract a shared `jumpTo(index)` in the runner).
+
+#### TSP-046 — Confidence control (`src/components/test/confidence-control.tsx`)
+
+```typescript
+type ConfidenceControlProps = {
+  disabled?: boolean;
+  onChange: (value: Confidence | null) => void;
+  value: Confidence | null;
+};
+```
+
+Three inline toggles: **Sure** / **Unsure** / **Guessed**. Clicking the active one clears to null. Placed below `<QuestionRenderer>`, above nav buttons. Confidence change triggers immediate `saveQuestionAnswer`.
+
+#### TSP-047 — Mark for review (inline toggle in TestRunner)
+
+Single button in the question header card. Text: "Mark for review" / "Marked — unmark". Active style: `border border-amber-300 text-amber-700`; inactive: `border border-border text-muted-foreground`. Toggle triggers immediate `saveQuestionAnswer`.
+
+#### Files the Builder will create/modify
+
+| Action | Path |
+|--------|------|
+| Create | `src/components/test/question-navigator.tsx` (TSP-045) |
+| Create | `src/components/test/confidence-control.tsx` (TSP-046) |
+| Edit | `src/lib/test-session/answer-shape.ts` — export `Confidence` type |
+| Edit | `src/components/test/test-runner.tsx` — QuestionState refactor + all three features |
+| Edit | `src/app/(app)/tests/[sessionId]/page.tsx` — select confidence+marked_review; toInitialQuestionStates; rename prop |
+| Edit | `trackers/JIRA_TRACKER.csv`, process docs |
+
+#### Sanity focus
+
+1. Every save (nav, submit pre-save, answer-change, confidence-change, mark-toggle) sends confidence + markedReview — a missing one silently overwrites saved state to null.
+2. `jumpTo` saves before navigating (no race).
+3. Initial rehydration shows correct navigator state immediately on page load.
+4. `initialAnswers` → `initialQuestionStates` rename is complete in both page and runner (build catches it).
+5. Confidence + mark controls are `disabled` when `locked`.
+
+#### Verification gate
+
+Standard + App build gate: `corepack pnpm typecheck` + `lint` + `build`. No new unit tests (no new deterministic pure logic). Browser smoke: start → answer → mark-for-review → set confidence → see navigator states → navigate → verify rehydration → submit → score.
+
+---
+
+### 2026-05-31 - Session 5 Builder Handoff - Codex
+
+Scope completed locally:
+
+- Implemented `TSP-045`, `TSP-046`, and `TSP-047` from the Session 5 Architect plan.
+- Left all three rows in `Review` because browser smoke still needs the M0 plain test student.
+- No migration was added; existing `session_answers.confidence` and `session_answers.marked_review` columns are used.
+
+Files changed:
+
+- `src/lib/test-session/answer-shape.ts`
+- `src/components/test/question-navigator.tsx`
+- `src/components/test/confidence-control.tsx`
+- `src/components/test/test-runner.tsx`
+- `src/app/(app)/tests/[sessionId]/page.tsx`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/BLOCKERS.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Exported the `Confidence` type (`sure | unsure | guessed`) from the answer-shape helper.
+- Replaced the runner's answer-only map with unified `QuestionState` records: answer, confidence, and marked-review state.
+- Added a navigator grid with current, unanswered, answered, review, and review-answered visual states.
+- Added a confidence segmented control and a mark-for-review header toggle.
+- Every runner save path now submits `selectedAnswer`, `confidence`, and `markedReview`: answer changes, confidence changes, mark toggles, Prev/Next, navigator jumps, and submit pre-save.
+- Session resume now selects `confidence` and `marked_review` from `session_answers` and rehydrates them into initial runner state.
+
+Verification:
+
+- `corepack pnpm typecheck` passed.
+- `corepack pnpm lint` failed twice with Windows sandbox `spawn setup refresh`, then passed after elevated rerun.
+- `corepack pnpm test` passed.
+- `corepack pnpm build` passed.
+- Dev server attempt: background `corepack pnpm exec next dev --hostname 127.0.0.1 --port 3000` exited immediately with code 0; `curl.exe -I http://127.0.0.1:3000/tests` could not connect.
+- Dev server attempt: background `corepack pnpm exec next dev --hostname 127.0.0.1 --port 3000` exited immediately with code 0; foreground command also exited 0 with no server left listening; `curl.exe -I http://127.0.0.1:3000/tests` could not connect.
+
+Sanity review focus:
+
+- Confirm every save path sends both `confidence` and `markedReview` so saved values are not overwritten to null/false.
+- Confirm `jumpTo(index)` is used by Prev, Next, and navigator clicks and saves before changing the current index.
+- Confirm confidence and mark-for-review changes save immediately and rehydrate on refresh.
+- Confirm navigator status priority: marked+answered, marked-only, answered-only, then unanswered; current ring overlays the status.
+
+Next recommended step:
+
+- Sanity Test agent should review `TSP-045`, `TSP-046`, and `TSP-047`.
+- Browser smoke remains: login as plain student → start test → answer → set confidence → mark for review → navigate → refresh/rehydrate → submit → see score.
+
+---
+
+### 2026-05-31 - Session 5 Sanity Review (M1) - Architect (Claude Opus 4.8)
+
+Reviewed all five changed files against the Session 5 plan's five sanity focus items.
+
+**Overall: PASS on code. No blocking findings.** TSP-045/046/047 correctly stay in `Review` — the only gap to `Done` is the browser pass with the M0 test student.
+
+**Focus 1 — Every save sends confidence + markedReview: PASS.** `saveQuestionAnswer` appends both fields on every call. All three call sites (`commitQuestionState`, `jumpTo`, `submit` pre-save) pass the full `QuestionState`. `commitQuestionState` passes the *new* state directly to the save (not re-read from the ref), so rapid answer → confidence → mark sequences never save stale data. `questionStatesRef` is kept in sync on every commit, so `jumpTo` and `submit` always read the latest value.
+
+**Focus 2 — jumpTo saves before navigating: PASS.** `jumpTo` awaits `saveQuestionAnswer`, then `setCurrentIndex`. `move(delta)` delegates to `jumpTo`. Both Prev/Next and the navigator's `onJump` call the same shared function.
+
+**Focus 3 — Initial rehydration: PASS.** Session page query adds `confidence, marked_review`. `toInitialQuestionStates` maps them through `normalizeConfidence` (explicit string validation) and `row.marked_review === true`. Navigator derives from `questionStates` initialized with this data — correct state shown immediately on load.
+
+**Focus 4 — initialAnswers → initialQuestionStates rename: PASS.** Prop declaration, function signature, `useState`, `useRef`, and the page's `<TestRunner>` call are all consistent. Build gate confirmed.
+
+**Focus 5 — Controls disabled when locked: PASS.** Mark-for-review button, `QuestionNavigator`, `ConfidenceControl`, and `QuestionRenderer` all have `disabled={locked || isPending}`.
+- **COMMEND:** Builder fixed a pre-existing gap — Prev/Next in Session 4 were only gated on `isPending`, not `locked`. Now `disabled={locked || currentIndex === 0 || isPending}`.
+
+**Non-blocking note:**
+- **N9 (cosmetic):** `QuestionState` is exported from the `"use client"` `test-runner.tsx` and imported as `type` by the Server Component page. TypeScript handles type-only imports across the boundary correctly; no runtime issue. Relocate to `answer-shape.ts` on a future cleanup pass.
+
+**Action items:** none for the Builder. N9 tracked for future cleanup. Only the browser smoke remains before TSP-045/046/047 → Done.
+
+---
+
+## Current Recommended Next Task
+
+Session 5 passed Architect Sanity (PASS, no blocking findings). TSP-045/046/047 in `Review`; TSP-042 `In Progress`.
+
+**Founder — one browser session closes 11 rows (M0 + full M1 first slice):**
+1. Create admin user (`app_metadata.user_role="admin"`) + plain test student in Supabase Auth.
+2. As **admin**: `/admin/questions/review` → verify queue loads, approve/reject works; confirm non-admin is blocked → closes TSP-019/024/025/026/090.
+3. As **student**: `/tests` → start → answer MCQ/MSQ/integer → set confidence → mark a question → navigate grid → submit → inline score → closes TSP-040/043/044/045/046/047.
+
+After that: **Session 6 = M1 final slice — TSP-048** (autosave recovery) + **TSP-049** (tab-switch logging), then M1 closes and M2 begins.
+
+---
+
+### 2026-05-31 - Session 6 Plan (M1 final slice) - Architect (Claude Opus 4.8)
+
+**Milestone:** M1 Playable Test — final two rows. **Scope:** TSP-048 (autosave recovery) + TSP-049 (tab-switch logging). Both land in `Review`. One commit per row. No new migration needed.
+
+**Pre-work (folded into TSP-048 commit):** Move `QuestionState` type from `test-runner.tsx` into `src/lib/test-session/answer-shape.ts`. Resolves Sanity N9 (type exported from a client component, imported by a server page).
+
+#### Architectural decisions (all locked per ROADMAP M1)
+
+**A. Zustand backup — conflict rule: server answer wins.**
+`session-backup-store.ts` holds `Record<sessionId, { questionStates, savedAt }>` persisted to `localStorage` under key `"tsp-session-backup"` (Zustand v5 + persist middleware). On mount, apply backup via `useEffect` (not during SSR render) after Zustand has hydrated. Merge rule (pure fn `mergeWithBackup`, unit-tested): server state with a non-null answer wins; backup fills in only where server has no answer. Write backup in `commitQuestionState` before the async save — so even a crash mid-flight preserves the latest state. Clear on submit *success* (not on attempt).
+
+**B. Debounce integer saves (800ms); everything else saves immediately.**
+`commitQuestionState` gains `mode: "immediate" | "debounced"`. `handleAnswerChange` passes `"debounced"` when question type is `"integer"`, `"immediate"` otherwise. `scheduleDebounced` and `flushDebouncedSave` use a `debouncedSaveRef` that reads from `questionStatesRef.current` at fire time (no stale-closure risk). `jumpTo` and `submit` call `flushDebouncedSave()` first. Timer cleared on unmount.
+
+**C. Fix revisit_count semantics (N5).**
+`pendingVisitRef = useRef<Record<string, number>>({})`. First question initialized with 1 on mount. `jumpTo` increments `pendingVisitRef[destQuestion.questionId]` before navigating. `saveQuestionAnswer` reads and resets the pending count, passes it as `revisitIncrement` in formData. `saveAnswerAction` gains `revisitIncrement = integerValue(formData, "revisitIncrement", 1)` (default 1 for backwards compat); upsert uses `existing.revisit_count + revisitIncrement`.
+
+#### TSP-048 — New file: `src/lib/test-session/session-backup-store.ts`
+Zustand v5 store with persist. Exports `useSessionBackupStore` (with `setBackup`, `clearBackup`, `getBackup`) and pure `mergeWithBackup(serverStates, backup)` function. Unit test required: server-wins, backup-wins (null answer), backup-wins (missing key), null backup no-op, overlapping non-null server wins.
+
+#### TSP-049 — Tab-switch logging
+New `logTabSwitchAction` in `src/app/test/actions.ts`. Reads `test_sessions.metadata`, increments `tabSwitches` key, writes back. Owner + in-progress check; errors dropped silently. In `TestRunner`: `visibilitychange` listener increments local `tabSwitchCount` state and calls `logTabSwitchAction` fire-and-forget (`void`). Display `"{n} tab switch(es)"` in the header status line when count > 0. No warning shown — Phase 1 is logging only.
+
+#### Files the Builder will create or modify
+| Action | Path |
+|--------|------|
+| Edit | `src/lib/test-session/answer-shape.ts` — add `QuestionState` (move from test-runner, resolves N9) |
+| Create | `src/lib/test-session/session-backup-store.ts` |
+| Create | `src/tests/unit/session-backup.test.ts` |
+| Edit | `src/components/test/test-runner.tsx` — backup, debounce, pendingVisitRef, tab-switch |
+| Edit | `src/app/(app)/tests/[sessionId]/page.tsx` — update `QuestionState` import source |
+| Edit | `src/app/test/actions.ts` — `revisitIncrement` in saveAnswerAction + `logTabSwitchAction` |
+| Edit | `trackers/JIRA_TRACKER.csv`, process docs |
+
+#### Verification gate
+Standard + App build gate: typecheck + lint + build. Unit test: `corepack pnpm exec vitest run src/tests/unit/session-backup.test.ts` must pass. Browser smoke: type integer → hard-refresh → confirm recovery; switch tabs → confirm count in status line; submit → confirm backup cleared.
+
+#### Sanity focus
+1. `setBackup` called before the async save in `commitQuestionState` (crash-safe).
+2. `mergeWithBackup` unit test covers all five cases.
+3. `flushDebouncedSave()` awaited at the top of `jumpTo` and `submit`.
+4. `clearBackup` only in submit success branch.
+5. `revisitIncrement` defaults to 1 in `saveAnswerAction`.
+6. `logTabSwitchAction` called with `void` — does not block or throw.
+
+---
+
+### 2026-05-31 - Session 6 Builder Handoff - Codex
+
+Scope completed locally:
+
+- Implemented `TSP-048` and `TSP-049` from the Session 6 Architect plan.
+- Left both rows in `Review` because browser smoke still needs the M0 plain test student and a runnable dev server.
+- No migration was added; existing `test_sessions.metadata`, `test_sessions.tab_switch_count`, and `session_answers.revisit_count` are used.
+
+Files changed:
+
+- `src/lib/test-session/answer-shape.ts`
+- `src/lib/test-session/session-backup-store.ts`
+- `src/tests/unit/session-backup.test.ts`
+- `src/components/test/test-runner.tsx`
+- `src/app/(app)/tests/[sessionId]/page.tsx`
+- `src/app/test/actions.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/BLOCKERS.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Moved `QuestionState` into `answer-shape.ts` so the Server Component page no longer imports a type from the client runner.
+- Added `useSessionBackupStore` with Zustand persist under `tsp-session-backup`.
+- Added `mergeWithBackup(serverStates, backup)` with the locked server-wins rule: server non-null answers win; backup fills null or missing server states.
+- Runner writes backup before starting async saves and clears backup only after submit succeeds.
+- Integer answer changes use an 800ms debounce; jump and submit flush pending debounced saves before continuing.
+- `pendingVisitRef` tracks visits-to-question; saves now pass `revisitIncrement`, and `saveAnswerAction` defaults that field to `1` for backwards compatibility.
+- Added `logTabSwitchAction` with owner/in-progress checks. The runner listens for `visibilitychange`, fire-and-forgets the action, and displays local tab-switch count.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/session-backup.test.ts` passed.
+- `corepack pnpm typecheck` passed.
+- `corepack pnpm lint` failed twice with Windows sandbox `spawn setup refresh`, then passed after elevated rerun.
+- `corepack pnpm test` passed.
+- `corepack pnpm build` passed.
+
+Sanity review focus:
+
+- Confirm `setBackup` happens before async save starts in `commitQuestionState`.
+- Confirm `mergeWithBackup` tests cover server-wins, backup-wins for null server answer, backup-wins for missing key, null backup no-op, and overlapping non-null server wins.
+- Confirm `flushDebouncedSave()` is awaited before jump and submit.
+- Confirm `clearBackup(sessionId)` only occurs in submit success.
+- Confirm `revisitIncrement` defaults to `1` in `saveAnswerAction`, while the runner sends tracked increments.
+- Confirm `logTabSwitchAction` is fire-and-forget and does not block the user flow.
+
+Next recommended step:
+
+- Sanity Test agent should review `TSP-048` and `TSP-049`.
+- Browser smoke remains: login as plain student → start test → type integer → hard refresh/recover → switch tabs → see count → submit → confirm backup clears.
+
+---
+
+### 2026-05-31 - Session 6 Sanity Review (M1) - Architect (Claude Opus 4.8)
+
+Reviewed all six changed files against the six sanity focus items.
+
+**Overall: PASS on code. No blocking findings.** TSP-048 and TSP-049 correctly stay in `Review` — the only gap is the browser smoke.
+
+**Focus 1 — `setBackup` before async save: PASS.** In `commitQuestionState`, the order is `questionStatesRef.current = nextStates` → `setQuestionStates` → `setBackup(sessionId, nextStates)` → then the async path. Backup is a synchronous localStorage write before any network activity. ✅
+
+**Focus 2 — `mergeWithBackup` unit tests: PASS.** All five cases present and correct: server answer wins, null-answer backup wins, missing-key backup wins, null backup is a no-op, overlapping non-null server wins. ✅
+
+**Focus 3 — `flushDebouncedSave` awaited first in `jumpTo` and `submit`: PASS.** Both functions `await flushDebouncedSave()` as the first async operation inside their `startTransition`. ✅
+
+**Focus 4 — `clearBackup` only on submit success: PASS.** `clearBackup(sessionId)` is inside the success branch, after `nextState.ok`. The failure path returns early, leaving the backup intact. ✅
+
+**Focus 5 — `revisitIncrement` defaults to 1: PASS.** `Math.max(0, integerValue(formData, "revisitIncrement", 1))` — default 1, clamped non-negative. Old callers preserve the original behaviour. ✅
+
+**Focus 6 — `logTabSwitchAction` is fire-and-forget: PASS.** Called as `void logTabSwitchAction(formData).catch(() => undefined)` — rejections swallowed, no await, no blocking. ✅
+
+**Three things beyond spec — all commended:**
+- **`hasHydrated` flag + `onRehydrateStorage` callback** — the backup effect waits for confirmed localStorage hydration before applying. Eliminates the SSR/hydration race the plan flagged. Better than the plan's empty-deps `useEffect`.
+- **`saveStatus: "pending"` + "Saved locally" label** — accurately signals that the answer is in localStorage but not yet synced to the server. Directly serves the TSP-048 acceptance criteria ("user sees sync failures").
+- **Writes to `test_sessions.tab_switch_count`** (the dedicated integer column already in the Session 2 schema) in addition to `metadata.tabSwitches`. Keeps the indexed column in sync; avoids JSONB traversal for future analytics queries. The column exists in the live DB — no migration needed.
+
+**Non-blocking note:**
+- **N10 (cosmetic):** The backup effect's deps array includes `getBackup` (a Zustand selector). Zustand store functions are stable references so this is safe; `backupAppliedRef` also guards against double-application if the effect ever re-fires.
+
+**M1 implementation is complete.** All rows from TSP-043 through TSP-049 are in `Review`. Only the browser smoke with the plain test student and admin user closes all 13 in-Review rows.
+
+---
+
+## Current Recommended Next Task
+
+**M1 is implementation-complete.** All Review rows close with one browser session.
+
+**Founder — browser smoke to close M0 + M1 (≈20 minutes):**
+1. Create admin user (`app_metadata.user_role="admin"`) + plain test student in Supabase Auth.
+2. As **admin**: `/admin/questions/review` → queue loads, approve/reject works, non-admin blocked → closes TSP-019/024/025/026/090.
+3. As **student**: `/tests` → start → answer questions → type integer (observe debounce) → set confidence → mark for review → navigate grid → hard-refresh mid-test → confirm answer is recovered → switch tabs → see count in status line → submit → see inline score → closes TSP-040/043/044/045/046/047/048/049.
+
+**Session 7 = M2 first slice — when ready to code next.** Per ROADMAP: TSP-029 (quality tiers) + TSP-030 (exposure policies). These unblock smart selection and are the critical path into M2. Founder decision on admin-role model (single `is_admin()` vs. reviewer/approver segregation of duties) is needed before TSP-028 (flags/quarantine).
+
+---
+
+### 2026-05-31 - Session 7 Plan (M2 first slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M2 Quality & Selection (per `docs/process/ROADMAP.md` — read first). **Scope:** TSP-029 (quality tiers) + TSP-030 (exposure policies). One commit per row, TSP-029 first. Both land in `Review`; browser smoke closes them.
+
+**Why this slice first:** `start_test_session` currently selects any `status='live'` `practice` question at random. No quality gate, no pool separation. These two rows add those guardrails and unblock M2 selection rows (TSP-036/037/038). Both `quality_tier` and `exposure_policy` columns already exist on `questions` with DB CHECK constraints — no schema migration needed. We only add admin RPCs and update the start RPC.
+
+**Pre-read facts:**
+- `questions.quality_tier` — `text NOT NULL DEFAULT 'bronze'`, CHECK in `('gold','silver','bronze','quarantine')`. Index on `(quality_tier, exposure_policy)` exists.
+- `questions.exposure_policy` — `text NOT NULL DEFAULT 'practice'`, CHECK in `('practice','diagnostic_reserved','benchmark_reserved','hidden')`.
+- `question_stats.quality_tier` — same values, same CHECK. Must stay in sync with `questions.quality_tier`.
+- `start_test_session` currently hard-codes `exposure_policy = 'practice'` and has **no quality tier filter** (quarantine questions can be selected today).
+
+---
+
+#### TSP-029 — Quality Tiers
+
+**Goal:** Admins can assign a tier; selection always excludes quarantine; selection can require gold/silver minimum.
+
+**Architect decisions (locked):**
+
+1. **Tier ranking:** `gold=4, silver=3, bronze=2, quarantine=1`. Quarantine is always excluded from selection regardless of `p_min_quality_tier`.
+2. **Manual assignment only.** Automatic calibration from stats is TSP-098 (M7). This row is admin-set only.
+3. **Tier is not a lifecycle event.** No `question_status_events` row. Tier changes independently of status.
+4. **Both `questions.quality_tier` and `question_stats.quality_tier` updated together** — upsert `question_stats` if absent.
+
+**New migration: `supabase/migrations/202605310002_quality_tiers.sql`**
+
+New RPC `set_question_quality_tier(p_question_id uuid, p_tier text) returns jsonb`:
+- `is_admin()` guard; raise `42501` if not admin.
+- Validate `p_tier in ('gold','silver','bronze','quarantine')`; raise `22023` with clear message if invalid. (The DB CHECK would also catch it, but give a readable error first.)
+- `select ... for update` on `questions`; update `quality_tier`.
+- Upsert `question_stats(question_id, quality_tier)` — insert row with defaults if absent, update tier if present.
+- Return `jsonb_build_object('question_id', p_question_id, 'old_tier', v_old_tier, 'new_tier', p_tier, 'changed', v_old_tier <> p_tier)`.
+- `revoke all on function ... from public; grant execute ... to authenticated`.
+
+Updated `start_test_session` (`create or replace` in same migration) — add `p_min_quality_tier text default 'bronze'` parameter. Selection gains two new filters:
+
+```sql
+and q.quality_tier <> 'quarantine'
+and case p_min_quality_tier
+      when 'gold'   then q.quality_tier = 'gold'
+      when 'silver' then q.quality_tier in ('gold', 'silver')
+      else               true
+    end
+```
+
+`exposure_policy = 'practice'` stays unchanged (TSP-030 replaces it). Add `minQualityTier` to `metadata.selection`. Re-apply `revoke/grant` for `start_test_session` after `create or replace`.
+
+**New file: `src/lib/question-bank/quality-tier.ts`** (pure, no I/O, no DB):
+
+```typescript
+export const QUALITY_TIERS = ["gold", "silver", "bronze", "quarantine"] as const;
+export type QualityTier = (typeof QUALITY_TIERS)[number];
+export const QUALITY_TIER_RANK: Record<QualityTier, number> = {
+  gold: 4, silver: 3, bronze: 2, quarantine: 1
+};
+export function isValidQualityTier(value: string): value is QualityTier { ... }
+export function meetsMinimumTier(tier: string, minTier: string): boolean {
+  // returns false for any invalid/unknown string
+}
+```
+
+**New file: `src/tests/unit/quality-tier.test.ts`** — required cases:
+- gold meets gold, silver, bronze (true × 3)
+- silver fails gold (false), meets silver, bronze (true × 2)
+- bronze fails gold and silver (false × 2), meets bronze (true)
+- quarantine fails all tiers including bronze (false × 3)
+- invalid string input → false (both args)
+
+**Edit `src/app/admin/questions/actions.ts`**: Add `setQualityTierAction(formData: FormData)`. Calls `requireAdminForAction`, reads `questionId` + `tier` from formData, validates `isValidQualityTier`, calls `set_question_quality_tier` RPC, returns typed result.
+
+**Edit `src/components/admin/question-editor.tsx`**: On the edit form only (not create), add a quality tier section below the main fields. Show the current tier as a styled badge (gold=yellow-500, silver=slate-400, bronze=orange-400, quarantine=red-500). A `<select>` + "Save tier" button calls `setQualityTierAction`. Disabled while saving.
+
+**Edit `src/app/test/actions.ts`**: `startSessionAction` reads optional `minQualityTier` from formData; validates with `isValidQualityTier` (falls back to `'bronze'` if absent/invalid); passes `p_min_quality_tier` to RPC.
+
+**Gate:** Standard + Database gate. `quality-tier.test.ts` must pass (no DB needed). Migration documented with grants.
+
+---
+
+#### TSP-030 — Exposure Policies
+
+**Goal:** `start_test_session` draws from the correct pool for the session type; admins can set a question's pool.
+
+**Architect decisions (locked):**
+
+1. **Pool mapping:**
+   - `practice`, `topic`, `concept_retest`, `custom` → `['practice']`
+   - `diagnostic` → `['practice', 'diagnostic_reserved']`
+   - `benchmark`, `mock` → `['practice', 'benchmark_reserved']`
+   - `hidden` — **never** in any list; admin-access only.
+   - Unknown/future types → `['practice']` (safe default).
+2. **`diagnostic_reserved` questions can appear in diagnostic sessions** alongside practice questions — they just won't show up in plain practice.
+3. **`hidden` questions are never auto-selected.** They exist for admin staging/preview only.
+
+**New migration: `supabase/migrations/202605310003_exposure_policies.sql`**
+
+New RPC `set_question_exposure_policy(p_question_id uuid, p_policy text) returns jsonb`:
+- `is_admin()` guard; raise `42501` if not admin.
+- Validate `p_policy in ('practice','diagnostic_reserved','benchmark_reserved','hidden')`; raise `22023` if invalid.
+- `select ... for update`; update `questions.exposure_policy`.
+- Return `{ question_id, old_policy, new_policy, changed }`.
+- `revoke all from public; grant execute to authenticated`.
+
+Updated `start_test_session` (`create or replace` in same migration) — replaces `and q.exposure_policy = 'practice'` with:
+
+```sql
+and q.exposure_policy = any(
+  case p_type
+    when 'diagnostic' then array['practice', 'diagnostic_reserved']
+    when 'benchmark'  then array['practice', 'benchmark_reserved']
+    when 'mock'       then array['practice', 'benchmark_reserved']
+    else                   array['practice']
+  end
+)
+```
+
+Add `exposurePolicies` (the actual array used) to `metadata.selection`. Re-apply `revoke/grant` for `start_test_session`.
+
+**New file: `src/lib/question-bank/exposure-policy.ts`** (pure):
+
+```typescript
+export const EXPOSURE_POLICIES = [
+  "practice", "diagnostic_reserved", "benchmark_reserved", "hidden"
+] as const;
+export type ExposurePolicy = (typeof EXPOSURE_POLICIES)[number];
+export function getEligibleExposurePolicies(sessionType: string): ExposurePolicy[] { ... }
+```
+
+**New file: `src/tests/unit/exposure-policy.test.ts`** — required cases:
+- `practice` → `['practice']`
+- `topic` → `['practice']`
+- `concept_retest` → `['practice']`
+- `custom` → `['practice']`
+- `diagnostic` → `['practice', 'diagnostic_reserved']`
+- `benchmark` → `['practice', 'benchmark_reserved']`
+- `mock` → `['practice', 'benchmark_reserved']`
+- unknown string → `['practice']` (safe default)
+- confirm `'hidden'` is NEVER in any returned array
+
+**Edit `src/app/admin/questions/actions.ts`**: Add `setExposurePolicyAction(formData: FormData)`. Same pattern as `setQualityTierAction`.
+
+**Edit `src/components/admin/question-editor.tsx`**: On the edit form only, add exposure policy `<select>` + "Save policy" button calling `setExposurePolicyAction`. Show human-readable labels: Practice / Diagnostic Reserved / Benchmark Reserved / Hidden.
+
+**No change to `startSessionAction`** — pool is derived from session type which is already sent.
+
+**Gate:** Standard + Database gate. `exposure-policy.test.ts` must pass. Migration documented with grants.
+
+---
+
+#### Files the Builder will create or modify
+
+| Action | Path |
+|--------|------|
+| Create | `supabase/migrations/202605310002_quality_tiers.sql` |
+| Create | `src/lib/question-bank/quality-tier.ts` |
+| Create | `src/tests/unit/quality-tier.test.ts` |
+| Create | `supabase/migrations/202605310003_exposure_policies.sql` |
+| Create | `src/lib/question-bank/exposure-policy.ts` |
+| Create | `src/tests/unit/exposure-policy.test.ts` |
+| Edit | `src/app/admin/questions/actions.ts` — add `setQualityTierAction` (TSP-029) + `setExposurePolicyAction` (TSP-030) |
+| Edit | `src/components/admin/question-editor.tsx` — tier + policy selectors on edit form |
+| Edit | `src/app/test/actions.ts` — `minQualityTier` param in `startSessionAction` |
+| Edit | `trackers/JIRA_TRACKER.csv`, `docs/process/{SESSION_STATE,CHANGELOG,HANDOFF}.md` |
+
+---
+
+#### Sanity focus (flag for reviewer)
+
+1. `set_question_quality_tier` updates **both** `questions.quality_tier` **and** `question_stats.quality_tier` (upsert). Missing the stats update is a silent data inconsistency.
+2. `quarantine` is **always** excluded from `start_test_session` — even when `p_min_quality_tier = 'bronze'`. The `quality_tier <> 'quarantine'` filter is unconditional.
+3. `hidden` is **never** in any eligible policies array for any session type.
+4. Grant hygiene: `revoke all from public; grant execute to authenticated` on both new RPCs. `start_test_session` re-granted after each `create or replace` (two migrations each replace it — both must re-grant).
+5. Unit tests cover all 7 session types for `getEligibleExposurePolicies` + unknown fallback, and all tier comparison edges.
+6. `setQualityTierAction` and `setExposurePolicyAction` validate inputs in TypeScript before hitting the RPC (clean error, not a DB constraint violation).
+7. `startSessionAction` `minQualityTier` falls back to `'bronze'` for any absent/invalid value — never passes an invalid string to the RPC.
+
+---
+
+### 2026-05-31 - Session 7 Builder Handoff - Codex
+
+Scope completed locally:
+
+- Implemented `TSP-029` and `TSP-030` from the Session 7 Architect plan.
+- Left both rows in `Review` because browser smoke still needs the admin user.
+
+Files changed:
+
+- `supabase/migrations/202605310002_quality_tiers.sql`
+- `supabase/migrations/202605310003_exposure_policies.sql`
+- `src/lib/question-bank/quality-tier.ts`
+- `src/tests/unit/quality-tier.test.ts`
+- `src/lib/question-bank/exposure-policy.ts`
+- `src/tests/unit/exposure-policy.test.ts`
+- `src/app/admin/questions/actions.ts`
+- `src/components/admin/question-editor.tsx`
+- `src/app/test/actions.ts`
+- `trackers/JIRA_TRACKER.csv`, process docs
+
+What changed:
+
+- Added `set_question_quality_tier` security-definer RPC. Updates both `questions.quality_tier` and `question_stats.quality_tier` (upsert pattern). Returns `{ question_id, old_tier, new_tier, changed }`.
+- `start_test_session` gains `p_min_quality_tier` param (default `'bronze'`). SQL validates/normalises the param. Quarantine unconditionally excluded. Min-tier CASE filter applied. `minQualityTier` recorded in `metadata.selection`. Old 6-param signature dropped before creating 7-param version.
+- Added `set_question_exposure_policy` security-definer RPC. Updates `questions.exposure_policy`. Returns `{ question_id, old_policy, new_policy, changed }`.
+- `start_test_session` replaces hardcoded `exposure_policy='practice'` with type-based `= any(v_exposure_policies)`. `exposurePolicies` array recorded in `metadata.selection`.
+- Pure `quality-tier.ts`: `QUALITY_TIER_RANK`, `isValidQualityTier`, `meetsMinimumTier` (quarantine hard-returns false).
+- Pure `exposure-policy.ts`: `getEligibleExposurePolicies` for all 7 session types; `hidden` never returned.
+- `setQualityTierAction` and `setExposurePolicyAction` in questions/actions.ts. Both TS-validate before RPC call.
+- `startSessionAction` reads optional `minQualityTier`; validates via `isValidQualityTier`; falls back to `'bronze'`.
+- Question editor (edit mode only): tier badge + selector + "Save tier" form; policy selector + "Save policy" form.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/quality-tier.test.ts src/tests/unit/exposure-policy.test.ts` passed.
+- `corepack pnpm typecheck` passed.
+- `corepack pnpm lint` passed after elevated rerun.
+- `corepack pnpm test` passed.
+- `corepack pnpm build` passed.
+- `node run-migrations.js` applied both migrations.
+- `node scripts/check-rpc-grants.js` confirmed all 9 tracked RPC grants.
+- Dev server exits immediately; browser smoke blocked by OneDrive/node_modules environment issue.
+
+---
+
+### 2026-05-31 - Session 7 Sanity Review (M2) - Architect (Claude Sonnet 4.6)
+
+Reviewed all nine changed files against the six sanity focus items.
+
+**Overall: PASS on code. No blocking findings.** DB gate passed (per Builder). Browser smoke is the only remaining gate.
+
+**Focus 1 — `set_question_quality_tier` updates BOTH tables: PASS.** Migration 002 lines 33–40: updates `questions.quality_tier`, then upserts `question_stats(question_id, quality_tier)`. All other stats columns have defaults; insert path is safe. ✅
+
+**Focus 2 — Quarantine unconditionally excluded: PASS.** `quality_tier <> 'quarantine'` is an unconditional WHERE filter preceding the `CASE v_min_quality_tier` block in both migrations. Even `p_min_quality_tier='quarantine'` cannot select a quarantine question. ✅
+
+**Focus 3 — `hidden` never in any eligible list: PASS.** `getEligibleExposurePolicies` returns only `practice`, `diagnostic_reserved`, or `benchmark_reserved`. Explicit test loops all 9 session types asserting no `'hidden'`. SQL `v_exposure_policies` CASE has no `'hidden'` branch. ✅
+
+**Focus 4 — Grant hygiene: PASS.** Migration 002: `drop function if exists ...(uuid,text,uuid,uuid,int,int)` correctly drops old 6-param signature before creating new 7-param version. Both new RPCs and `start_test_session` revoked and re-granted. Migration 003: `create or replace` on the now-existing 7-param signature; both new RPCs and `start_test_session` re-granted. Clean — no TSP-024 repeat. ✅
+
+**Focus 5 — Unit test coverage: PASS.** `quality-tier.test.ts`: all tier comparisons, quarantine excluded from all (including `meetsMinimumTier("quarantine","quarantine")=false`), invalid strings. `exposure-policy.test.ts`: 9 session types via `it.each` + explicit `hidden`-never-included loop. ✅
+
+**Focus 6 — TS input validation before RPC: PASS.** Both actions validate via helpers before RPC call. `startSessionAction` falls back to `'bronze'` for absent/invalid input — `getString("")` correctly fails `isValidQualityTier`. ✅
+
+**Three beyond-spec commends:**
+- SQL also normalises invalid `p_min_quality_tier` to `'bronze'` — defensive against direct RPC calls bypassing TS validation.
+- `exposurePolicies` array frozen into `metadata.selection` — future analytics can reconstruct exactly which pool was offered.
+- `QualityTierBadge` fallback handles unknown tiers gracefully.
+
+**Non-blocking notes:**
+- **N11:** `meetsMinimumTier` TS and SQL CASE implement tier ordering independently — must stay in sync if a new tier is ever added. Add DECISIONS.md note on a cleanup pass.
+- **N12 (cosmetic):** `set_question_quality_tier` validates inline and DB CHECK also catches it. Both layers correct.
+
+**M2 first slice is implementation-complete and DB-verified.** TSP-029 and TSP-030 unblock TSP-036/037/038 (smart selection).
+
+---
+
+## Current Recommended Next Task
+
+**M2 first slice (Session 7) is implementation-complete and DB-verified.** TSP-029 and TSP-030 in `Review`.
+
+**Founder — browser smoke to close M0 + M1 + M2 first slice (≈25 min):**
+1. Create admin user (`app_metadata.user_role="admin"`) + plain test student in Supabase Auth (if not done yet).
+2. As **admin**: `/admin/questions` → open any question in edit → change quality tier → save → confirm badge updates; change exposure policy → save → closes TSP-029/030 admin UI path.
+3. As **student**: `/tests` → start → full test flow → submit → score → closes TSP-040/043/044/045/046/047/048/049.
+4. As **admin**: `/admin/questions/review` → queue loads, approve/reject, non-admin blocked → closes TSP-019/024/025/026/090.
+
+**Session 8 = M2 continued — when ready to code next.** TSP-028 (flags/quarantine) requires founder decision on admin-role model first. Unblocked alternative if decision is deferred: **TSP-031** (admin search/filter) — no founder decision needed. Architect will read ROADMAP and choose at Session 8 start.
+
+---
+
+### 2026-05-31 - Session 7 Builder Handoff - Codex
+
+Scope completed:
+
+- Implemented `TSP-029` quality tiers and `TSP-030` exposure policies from the Session 7 Architect plan.
+- Left both rows in `Review` for Sanity/browser smoke instead of `Done`.
+
+Files changed:
+
+- `supabase/migrations/202605310002_quality_tiers.sql`
+- `supabase/migrations/202605310003_exposure_policies.sql`
+- `src/lib/question-bank/quality-tier.ts`
+- `src/lib/question-bank/exposure-policy.ts`
+- `src/tests/unit/quality-tier.test.ts`
+- `src/tests/unit/exposure-policy.test.ts`
+- `src/app/admin/questions/actions.ts`
+- `src/components/admin/question-editor.tsx`
+- `src/app/test/actions.ts`
+- `scripts/check-rpc-grants.js`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/BLOCKERS.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added `set_question_quality_tier`, which updates `questions.quality_tier` and upserts `question_stats.quality_tier` to keep stats in sync.
+- Added `set_question_exposure_policy` for admin-managed pool assignment.
+- Replaced `start_test_session` twice, once for min quality and once for exposure policy pools; both migrations re-grant `start_test_session`.
+- `start_test_session` now accepts `p_min_quality_tier default 'bronze'`, unconditionally excludes `quarantine`, and uses type-based exposure pools where `hidden` is never eligible.
+- Added pure helpers/tests for tier comparison and exposure policy eligibility.
+- Added edit-mode admin controls for tier and policy, with TypeScript validation before RPC calls.
+- Updated `startSessionAction` to validate optional `minQualityTier` and pass the RPC parameter.
+- Updated the grant checker to expect 9 RPCs and load local `.env` like the migration runner.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/quality-tier.test.ts src/tests/unit/exposure-policy.test.ts` passed.
+- `corepack pnpm typecheck` passed.
+- `corepack pnpm lint` passed after elevated rerun because the sandbox failed to spawn lint.
+- `corepack pnpm test` passed.
+- `corepack pnpm build` passed.
+- `node --check scripts/check-rpc-grants.js` passed.
+- `node run-migrations.js` applied all migrations through `202605310003_exposure_policies.sql`.
+- `node scripts/check-rpc-grants.js` verified authenticated execute privilege for all 9 tracked RPCs.
+
+Dev server:
+
+- Attempted `corepack pnpm exec next dev --hostname 127.0.0.1 --port 3000`.
+- Background run exited immediately with code 0.
+- Foreground run also exited 0 with no output and no server left listening.
+
+Git state:
+
+- No commits were created. `git status --short` shows the project tree as untracked alongside pre-existing deleted root docs, so staging row-sized commits would risk capturing unrelated repository state.
+
+Sanity review focus:
+
+- Confirm `set_question_quality_tier` updates both `questions` and `question_stats` with upsert sync.
+- Confirm `start_test_session` excludes `quarantine` unconditionally, including at `p_min_quality_tier='bronze'`.
+- Confirm `hidden` is never in any eligible exposure policy array.
+- Confirm both migrations re-grant `start_test_session` after `create or replace`.
+- Confirm admin edit forms do not accidentally bypass TypeScript validation for tier/policy saves.
+
+Next recommended step:
+
+- Sanity Test reviews Session 7 and either marks `TSP-029`/`TSP-030` ready for browser smoke or hands back exact findings.
+
+---
+
+## Current Recommended Next Task
+
+**Session 7 Builder pass completed.** Sanity review should inspect `TSP-029`/`TSP-030` before any further M2 selection work starts.
+
+After Sanity, the next M2 rows are the smart selection slices: `TSP-036` diagnostic selection, `TSP-037` topic practice selection, and `TSP-038` benchmark/mock selection. Browser smoke for M0/M1/M2 Review rows still needs the admin user and plain test student.
+
+---
+
+### 2026-06-01 - Session 8 Plan (M2 continued) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M2 Quality & Selection (per `docs/process/ROADMAP.md` — read first). **Scope:** TSP-031 (admin search/filter) + TSP-036 (diagnostic question selection). One commit per row, TSP-031 first. Both land in `Review`.
+
+**Why this pair:** TSP-028 blocked on admin-role model founder decision. TSP-031 gives admins search over the growing question bank; TSP-036 is the first smart selection algorithm that puts TSP-029/030 quality tiers and exposure policies to work.
+
+**Key pre-read facts:**
+- Admin questions page loads 50 questions by `created_at DESC` with no filters — a direct Supabase client query.
+- FTS must join `questions → question_versions` (GIN index is on `question_versions.content->>'text'`). PostgREST `.textSearch()` can't reach joined tables — a security-definer RPC is required.
+- `topics.weight_percent` (nullable numeric, level=1 = top-level section) drives diagnostic allocation. `start_test_session` currently uses one random loop for all session types.
+- Existing migrations: 001 through 005 (through today). New migrations: `202605310004` and `202605310005`.
+
+---
+
+#### TSP-031 — Admin Questions Search/Filter
+
+**Architect decisions:**
+1. Filter state in URL search params — shareable, back-button safe. Server Component re-renders on param change; no client state.
+2. Security-definer RPC `search_admin_questions` required for FTS across joined tables.
+3. FTS uses `plainto_tsquery('english', p_query)` — safe for multi-word input. Searches `content->>'text' || content->>'stem'` (covers integer questions).
+4. FTS filter is **skipped** entirely when `p_query IS NULL OR p_query = ''` — no filter applied, not filtered to empty.
+5. Pagination: 50/page via `p_limit`/`p_offset` params. `page` search param on the page (default 1).
+
+**New migration `supabase/migrations/202605310004_admin_search.sql`:**
+
+```sql
+create or replace function public.search_admin_questions(
+  p_query text default null,
+  p_exam_id uuid default null,
+  p_topic_id uuid default null,
+  p_status text default null,
+  p_difficulty text default null,
+  p_quality_tier text default null,
+  p_exposure_policy text default null,
+  p_limit int default 50,
+  p_offset int default 0
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_limit int := least(greatest(coalesce(p_limit,50),1),100);
+  v_offset int := greatest(coalesce(p_offset,0),0);
+  v_total int;
+  v_questions jsonb;
+begin
+  if not public.is_admin() then
+    raise exception 'admin role required' using errcode = '42501';
+  end if;
+  -- count query (same WHERE as data query below)
+  -- data query: join questions + question_versions + exams + topics
+  -- FTS: skipped when p_query is null or ''
+  -- returns { total, questions: [{id,type,difficulty,...,question_text}] }
+end; $$;
+revoke all on function ... from public;
+grant execute on function ... to authenticated;
+```
+
+Full implementation: the WHERE clause pattern for every filter is `(p_x is null or q.column = p_x)`; FTS adds `and (p_query is null or p_query = '' or to_tsvector(...) @@ plainto_tsquery('english', p_query))`. `question_text = left(coalesce(content->>'text', content->>'stem', ''), 200)`.
+
+**Edit `src/app/admin/questions/page.tsx`:**
+- Read `searchParams`: `q`, `examId`, `topicId`, `status`, `difficulty`, `qualityTier`, `exposurePolicy`, `page`.
+- If any filter present, call `search_admin_questions` RPC (offset = (page-1)*50). Otherwise keep existing direct query.
+- Pass filter values + total + page to `AdminQuestionFilters` component.
+- Show `"X questions"` count and `Previous / Next` page links.
+
+**New `src/components/admin/admin-question-filters.tsx`** (client component — needs `useSearchParams` for active state):
+- A `<form method="GET">` that POSTs to the same URL (search param update).
+- Fields: text input (`name="q"`), select for exam (`examId`), topic (`topicId`), status, difficulty, quality tier, exposure policy.
+- "Search" submit + "Clear filters" `<Link href="/admin/questions">`.
+- All selects pre-populated from props (exam list, topic list, static enum lists).
+
+**Edit `scripts/check-rpc-grants.js`:** add `search_admin_questions` to the tracked RPCs list.
+
+**Gate:** Standard + App build gate. No unit tests (SQL filtering logic). `node run-migrations.js` + `node scripts/check-rpc-grants.js` (10 RPCs tracked).
+
+---
+
+#### TSP-036 — Diagnostic Question Selection
+
+**Architect decisions:**
+1. **Weighted allocation:** `floor(p_count * weight_percent / 100)` per level-1 topic; remainder distributed 1-extra to highest-weight topics until total = `p_count`.
+2. **Status broadened to `IN ('approved','live')` for diagnostic only.** Non-diagnostic branches keep `status='live'`.
+3. **Zero-rows fallback:** if `select_diagnostic_questions` returns no rows (no topic weights, or all topics empty), `start_test_session` falls back to the existing random loop with `selected_by_reason='diagnostic_random_fallback'`. Not an error.
+4. **Pure TS helper `computeTopicAllocations` is unit-tested.** SQL mirrors it. Same pattern as `scoring.ts` / SQL scorer.
+5. **`select_diagnostic_questions` is a private helper** — `revoke all from public`, no grant. Only reachable from within `start_test_session` (security-definer context).
+
+**New file `src/lib/test-session/selection.ts`** (pure, no I/O):
+```typescript
+export function computeTopicAllocations(
+  topics: { topicId: string; weightPercent: number }[],
+  count: number
+): { topicId: string; alloc: number }[] {
+  // floor(count * weightPercent/100) per topic
+  // remainder = count - sum(floor_allocs)
+  // distribute +1 to top-N topics by weightPercent (tiebreak by original order)
+  // returns sorted descending by weightPercent
+}
+```
+
+**New file `src/tests/unit/selection.test.ts`** — required cases:
+- 50/30/20 weights, count=10 → `[{alloc:5},{alloc:3},{alloc:2}]`
+- Weights summing to 90 (not 100), count=10 → total allocated = 10 still
+- All zeros → empty array
+- Single topic 100%, count=7 → `[{alloc:7}]`
+- Equal thirds, count=10 → two get 4, one gets 2 (remainder goes to first two by stable order)
+
+**New migration `supabase/migrations/202605310005_diagnostic_selection.sql`:**
+
+New function `public.select_diagnostic_questions(p_exam_id uuid, p_count int, p_min_quality_tier text, p_exposure_policies text[]) returns table(question_id uuid, current_version_id uuid, q_type text, content jsonb)`:
+- Plain language sql (not plpgsql, not security definer).
+- CTE chain: `topic_allocs` → `remainder_distribution` → `weighted_picks` (with `row_number() over (partition by topic_id order by random())`) → `selected` (where `rn <= alloc`) → `fillup` (random from general pool, excluding already-selected, `limit greatest(0, p_count - (select count(*) from selected))`).
+- Final: `select * from selected union all select * from fillup limit p_count`.
+- Status: `q.status in ('approved','live')` in both `weighted_picks` and `fillup`.
+- Quality and exposure filters mirror `start_test_session` (same CASE block).
+- `revoke all on function ... from public;` — NO grant (private helper).
+
+Updated `start_test_session` (`create or replace` in same migration):
+```sql
+if p_type = 'diagnostic' then
+  for v_question in
+    select * from public.select_diagnostic_questions(
+      p_exam_id, v_count, v_min_quality_tier, v_exposure_policies
+    )
+  loop
+    v_sequence := v_sequence + 1;
+    -- same insert block as existing loop
+    -- selected_by_reason = 'diagnostic_weighted'
+  end loop;
+  -- fallback if zero results
+  if v_sequence = 0 then
+    -- existing random loop with selected_by_reason = 'diagnostic_random_fallback'
+  end if;
+else
+  -- existing random loop (unchanged), selected_by_reason = 'minimal_live_filter'
+end if;
+```
+`metadata.selection.mode` set to `'diagnostic_weighted'`, `'diagnostic_random_fallback'`, or `'minimal_live_filter'` accordingly. Re-apply `revoke/grant` for `start_test_session`.
+
+**Gate:** Standard + Database gate. `selection.test.ts` must pass. `node run-migrations.js` + `node scripts/check-rpc-grants.js`. `select_diagnostic_questions` should NOT appear in grants checker (it's private).
+
+---
+
+#### Files the Builder will create or modify
+
+| Action | Path |
+|--------|------|
+| Create | `supabase/migrations/202605310004_admin_search.sql` |
+| Create | `supabase/migrations/202605310005_diagnostic_selection.sql` |
+| Create | `src/lib/test-session/selection.ts` |
+| Create | `src/tests/unit/selection.test.ts` |
+| Create | `src/components/admin/admin-question-filters.tsx` |
+| Edit | `src/app/admin/questions/page.tsx` — search params + RPC call + pagination |
+| Edit | `scripts/check-rpc-grants.js` — add `search_admin_questions` |
+| Edit | `trackers/JIRA_TRACKER.csv`, process docs |
+
+---
+
+#### Sanity focus (flag for reviewer)
+
+1. `search_admin_questions` raises `42501` for non-admin callers — not silently returns empty.
+2. FTS filter is **skipped** (not applied as an empty-match filter) when `p_query` is null or empty string. Confirm with a test query that omitting `q=` still returns all questions.
+3. Allocation sum from `select_diagnostic_questions` equals `p_count` exactly — check remainder math.
+4. Status broadening (`approved,live`) is **only** in `select_diagnostic_questions` and the fallback diagnostic loop. Non-diagnostic branch in `start_test_session` still uses `status='live'` only.
+5. Zero-rows fallback is a graceful fallback, not an exception — `v_sequence = 0` after the diagnostic loop triggers the random fallback, not the `raise exception 'no eligible...'`.
+6. `select_diagnostic_questions` has `revoke all from public` with **no** `grant execute` line. It must not appear in `check-rpc-grants.js`.
+7. `start_test_session` re-granted after `create or replace` in migration 005.
+
+---
+
+## Current Recommended Next Task
+
+**Session 8 plan ready for Builder.** TSP-031 then TSP-036, one commit each.
+
+Verification: `corepack pnpm exec vitest run src/tests/unit/selection.test.ts`, then standard gate. DB gate: `node run-migrations.js` + `node scripts/check-rpc-grants.js` (10 RPCs: 9 existing + `search_admin_questions`). `select_diagnostic_questions` is private — confirm it is NOT in the grants checker output.
+
+---
+
+### 2026-06-01 - Session 8 Builder Handoff - Codex
+
+Scope completed:
+
+- Implemented `TSP-031` admin search/filter and `TSP-036` diagnostic selection from the Session 8 Architect plan.
+- Left both rows in `Review` for Sanity/browser smoke instead of `Done`.
+
+Files changed:
+
+- `supabase/migrations/202605310004_admin_search.sql`
+- `supabase/migrations/202605310005_diagnostic_selection.sql`
+- `src/components/admin/admin-question-filters.tsx`
+- `src/app/admin/questions/page.tsx`
+- `src/lib/test-session/selection.ts`
+- `src/tests/unit/selection.test.ts`
+- `scripts/check-rpc-grants.js`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/BLOCKERS.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added `search_admin_questions` as a security-definer admin-only RPC returning paginated `{ total, questions }`.
+- FTS uses `plainto_tsquery('english', v_query)` over current question `content->>'text'` plus `content->>'stem'`; `v_query` is `null` for absent/blank input, so FTS is skipped entirely for empty search.
+- `/admin/questions` now reads URL search params, renders a GET filter form, calls the search RPC when filters are active, and shows Previous/Next pagination links.
+- Added `computeTopicAllocations` with tests for exact weights, under-100 weights, zero weights, single-topic allocation, and stable-order remainder distribution.
+- Added private `select_diagnostic_questions` with weighted level-1 topic allocation, random-within-topic row numbering, fillup slots, and `approved/live` status scope.
+- Updated `start_test_session` so only diagnostic sessions use weighted selection or `diagnostic_random_fallback`; non-diagnostic selection still uses `status='live'`.
+- Added `search_admin_questions` to `scripts/check-rpc-grants.js`; `select_diagnostic_questions` intentionally has `revoke all` and no grant.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/selection.test.ts` passed.
+- `corepack pnpm typecheck` passed.
+- `corepack pnpm lint` passed after elevated rerun because the sandbox failed to spawn lint.
+- `corepack pnpm test` passed.
+- `corepack pnpm build` passed.
+- `node --check scripts/check-rpc-grants.js` passed.
+- `node run-migrations.js` applied all migrations through `202605310005_diagnostic_selection.sql`.
+- `node scripts/check-rpc-grants.js` verified authenticated execute privilege for all 10 tracked RPCs.
+- The grant-checker output did not include `select_diagnostic_questions`.
+
+Dev server:
+
+- Attempted `corepack pnpm exec next dev --hostname 127.0.0.1 --port 3000`.
+- Background run exited immediately with code 0.
+- Foreground run also exited 0 with no output and no server left listening.
+
+Git state:
+
+- No commits were created. `git status --short` still shows the project tree as untracked alongside pre-existing deleted root docs, so staging row-sized commits would risk capturing unrelated repository state.
+
+Sanity review focus:
+
+- Confirm `search_admin_questions` raises `42501` for non-admin callers and does not silently return empty.
+- Confirm FTS is skipped for blank/absent `q`, rather than becoming an empty-result filter.
+- Confirm `select_diagnostic_questions` remains private: `revoke all` with no authenticated grant and no grant-checker entry.
+- Confirm diagnostic status broadening to `approved/live` is only in diagnostic weighted/fallback paths; non-diagnostic `start_test_session` still uses `status='live'`.
+- Confirm zero-row diagnostic weighted selection falls back to `diagnostic_random_fallback`.
+
+Next recommended step:
+
+- Sanity Test reviews Session 8 and either marks `TSP-031`/`TSP-036` ready for browser smoke or hands back exact findings.
+
+---
+
+### 2026-06-01 - Session 8 Sanity Review (M2) - Architect (Claude Sonnet 4.6)
+
+Reviewed all six changed files against the six sanity focus items.
+
+**Overall: PASS on code. No blocking findings.** DB gate passed (per Builder). TSP-031 and TSP-036 correctly sit in `Review`.
+
+**Focus 1 — `search_admin_questions` raises `42501` for non-admin: PASS.** First statement after the declare block — `if not public.is_admin() then raise exception ... using errcode = '42501'`. No data accessed before the guard. ✅
+
+**Focus 2 — FTS skipped for blank/absent query: PASS.** `v_query := nullif(btrim(coalesce(p_query, '')), '')` normalises null, empty, and whitespace-only inputs to NULL. WHERE uses `(v_query is null or ...)` — when NULL the condition is vacuously true (no filter applied). Not an empty-match filter. ✅
+
+**Focus 3 — Allocation sum equals `p_count` exactly: PASS.** SQL: `generate_series(1, p_count - allocated)` produces exactly the remainder slots, distributed round-robin by weight rank. TS: while-loop distributes +1 in order. Both verified against the five required test cases (50/30/20 exact, sub-100 remainder, all-zero, single topic, equal thirds). ✅
+
+**Focus 4 — Status broadening is diagnostic-only: PASS.** `select_diagnostic_questions` uses `status in ('approved','live')` in both `weighted_picks` and `fillup`. Diagnostic fallback loop also uses `in ('approved','live')`. Non-diagnostic `else` branch uses `status = 'live'` only — original filter, unchanged. ✅
+
+**Focus 5 — Zero-rows fallback is graceful: PASS.** `v_sequence = 0` after the diagnostic weighted loop triggers the fallback (not an exception). Fallback performs a random `approved+live` query, updates `metadata.selection.mode` to `'diagnostic_random_fallback'`. Only if fallback also yields 0 rows does the final `raise exception` fire. ✅
+
+**Focus 6 — `select_diagnostic_questions` private, no grant: PASS.** `revoke all on function ... from public` with no following `grant execute` line. `start_test_session` re-granted immediately after. ✅
+
+**Four beyond-spec commends:**
+- `p_source` filter added to `search_admin_questions` — useful for PYQ vs manual vs AI-generated filtering, consistent with the plan's spirit.
+- `hasFilters` fast path — direct Supabase client query when no filters active; RPC only invoked when needed.
+- `fillup` CTE guarded by `exists (select 1 from topic_allocs)` — ensures zero-row fallback fires cleanly when no topic weights exist, rather than silently filling with unweighted questions.
+- Defensive over-count loop in `computeTopicAllocations` — handles edge case where weights sum > 100; SQL `limit p_count` caps the same.
+
+**Non-blocking notes:**
+- **N13:** SQL and TS allocation algorithms are independently implemented — must stay in sync if topic ordering or rounding behaviour changes. Log in DECISIONS.md on cleanup.
+- **N14 (cosmetic):** `PaginationControls` receives `filters` and `page` as separate props but `page` is already a field on `filters`. Harmless redundancy.
+
+**M2 second slice is implementation-complete and DB-verified.** TSP-031 and TSP-036 unblock admin content operations and smart diagnostic selection.
+
+---
+
+## Current Recommended Next Task
+
+**Session 8 (M2 second slice) is implementation-complete and DB-verified.** TSP-031 and TSP-036 in `Review`.
+
+**Founder — browser smoke to close M0 + M1 + M2 (≈30 min total, if not done yet):**
+1. Admin user + plain test student in Supabase Auth.
+2. Admin: `/admin/questions` → use search box and filters → verify filtered results and pagination → closes TSP-031.
+3. Admin: open a question → change tier/policy → closes TSP-029/030 admin path.
+4. Admin: `/admin/questions/review` → queue loads → closes TSP-019/024/025/026/090.
+5. Student: `/tests` → start (type=diagnostic, if available) → full flow → submit → score → closes TSP-040/043/044/045/046/047/048/049/036.
+
+**Session 9 = M2 final selection slice — when ready to code next.** TSP-037 (topic practice selection) + TSP-038 (benchmark/mock selection). Both unblocked. TSP-028 (flags/quarantine) still parked on admin-role model founder decision.
+
+---
+
+### 2026-06-01 - Session 9 Plan (M2 final selection slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M2 Quality & Selection (per `docs/process/ROADMAP.md` — read first). **Scope:** TSP-037 (topic practice selection) + TSP-038 (benchmark/mock selection). One commit per row, TSP-037 first. Both land in `Review`; browser smoke closes them.
+
+**Why this pair:** These are the last two algorithmic selection rows in M2. TSP-037 adds difficulty-balanced, recency-aware topic practice. TSP-038 adds gold-priority benchmark/mock selection with optional fixed-template support. After these land, the M2 selection suite is complete and M3 can begin.
+
+**Key pre-read facts:**
+- `questions.difficulty`: `text CHECK in ('easy','medium','hard')`.
+- `questions.source`: `text CHECK in ('pyq','ai_generated','manual','vision_ingested')`.
+- `questions.topic_id` / `questions.subtopic_id`: already used by `start_test_session` `p_topic_id`.
+- `session_questions` stores the user's question history (for recency avoidance).
+- `test_templates.selection_mode`: can be `'fixed'`; `config` JSONB may hold `questionIds`.
+- Both types use `status='live'` (not the `approved+live` broadening used only for diagnostic).
+- The `else` branch in `start_test_session` currently handles topic/benchmark/mock with plain random selection. These rows replace that branch for their respective types.
+- New migrations: `202606010001` and `202606010002`.
+
+---
+
+#### TSP-037 — Topic Practice Selection
+
+**Architect decisions (locked):**
+
+1. **Difficulty allocation:** Target 30% easy / 40% medium / 30% hard. `easy = floor(count * 0.3)`, `hard = floor(count * 0.3)`, `medium = count - easy - hard` (absorbs all remainder). If any tier has fewer questions than its target, a fillup CTE adds random questions from the same pool (excluding already-selected) to reach `p_count`. Pure TS helper `computeDifficultyAllocations(count)` codifies this; SQL mirrors it.
+
+2. **Recency avoidance:** Exclude question IDs from the user's last 3 topic/concept_retest sessions on the same exam. Capped at 150 question IDs. Empty result → no exclusion (no NULLs in `session_questions.question_id`, but use `NOT EXISTS` not `NOT IN` for safety). No topic filter on the session lookup — simplest safe rule for Phase 1.
+
+3. **Status:** `'live'` only.
+
+4. **Private helper:** `select_topic_practice_questions(p_user_id, p_exam_id, p_topic_id, p_count, p_min_quality_tier, p_exposure_policies)` — `revoke all from public`, no `grant execute`. Pattern from TSP-036.
+
+5. **`selected_by_reason`:** `'topic_practice_balanced'`.
+
+6. **No mastery/adaptive difficulty** — deferred to M3. Source mix (PYQ vs manual) is also deferred to M3; Phase 1 topic practice is difficulty-balanced + recency-aware only.
+
+**New migration `supabase/migrations/202606010001_topic_practice_selection.sql`:**
+
+```sql
+-- Private helper: difficulty-balanced, recency-aware topic practice selection.
+-- NOT granted to authenticated — only reachable from start_test_session.
+create or replace function public.select_topic_practice_questions(
+  p_user_id uuid,
+  p_exam_id uuid,
+  p_topic_id uuid,           -- null = exam-wide topic practice
+  p_count int,
+  p_min_quality_tier text,
+  p_exposure_policies text[]
+) returns table(question_id uuid, current_version_id uuid, q_type text, content jsonb)
+language sql
+security definer
+set search_path = public
+as $$
+  with
+  recent_sessions as (
+    select id
+    from public.test_sessions
+    where user_id = p_user_id
+      and exam_id = p_exam_id
+      and type in ('topic', 'concept_retest')
+    order by started_at desc
+    limit 3
+  ),
+  recently_seen as (
+    select sq.question_id
+    from public.session_questions sq
+    where sq.session_id in (select id from recent_sessions)
+    limit 150
+  ),
+  eligible as (
+    select
+      q.id as question_id,
+      q.current_version_id,
+      q.type as q_type,
+      qv.content,
+      q.difficulty
+    from public.questions q
+    join public.question_versions qv on qv.id = q.current_version_id
+    where q.exam_id = p_exam_id
+      and q.status = 'live'
+      and q.exposure_policy = any(p_exposure_policies)
+      and q.quality_tier <> 'quarantine'
+      and case p_min_quality_tier
+            when 'gold'   then q.quality_tier = 'gold'
+            when 'silver' then q.quality_tier in ('gold', 'silver')
+            else true
+          end
+      and (p_topic_id is null
+           or q.topic_id = p_topic_id
+           or q.subtopic_id = p_topic_id)
+      and not exists (
+        select 1 from recently_seen rs where rs.question_id = q.id
+      )
+  ),
+  easy_picks as (
+    select question_id, current_version_id, q_type, content
+    from eligible
+    where difficulty = 'easy'
+    order by random()
+    limit greatest(0, floor(p_count * 0.3)::int)
+  ),
+  medium_picks as (
+    select question_id, current_version_id, q_type, content
+    from eligible
+    where difficulty = 'medium'
+    order by random()
+    limit greatest(0, p_count - 2 * floor(p_count * 0.3)::int)
+  ),
+  hard_picks as (
+    select question_id, current_version_id, q_type, content
+    from eligible
+    where difficulty = 'hard'
+    order by random()
+    limit greatest(0, floor(p_count * 0.3)::int)
+  ),
+  balanced as (
+    select question_id, current_version_id, q_type, content from easy_picks
+    union all
+    select question_id, current_version_id, q_type, content from medium_picks
+    union all
+    select question_id, current_version_id, q_type, content from hard_picks
+  ),
+  fillup as (
+    select question_id, current_version_id, q_type, content
+    from eligible
+    where not exists (
+      select 1 from balanced b where b.question_id = eligible.question_id
+    )
+    order by random()
+    limit greatest(0, p_count - (select count(*) from balanced)::int)
+  )
+  select question_id, current_version_id, q_type, content from balanced
+  union all
+  select question_id, current_version_id, q_type, content from fillup
+  limit p_count;
+$$;
+
+revoke all on function public.select_topic_practice_questions(uuid, uuid, uuid, int, text, text[]) from public;
+```
+
+Updated `start_test_session` in the same migration — split the `else` branch for `p_type = 'topic'`.
+
+**Critical ordering constraint (fixes metadata desync):** The `INSERT INTO test_sessions` already runs BEFORE the if/elsif chain and writes `metadata.selection.mode = v_selection_mode`. The existing initial CASE only sets `'diagnostic_weighted'` or `'minimal_live_filter'`. To avoid storing `'minimal_live_filter'` in metadata for topic sessions, the `v_selection_mode` assignment for `'topic'` **must be added to the initial CASE before the INSERT**, not inside the branch:
+
+```sql
+-- In the declare block + pre-INSERT CASE (replace the existing 2-way CASE):
+v_selection_mode := case p_type
+  when 'diagnostic' then 'diagnostic_weighted'
+  when 'topic'      then 'topic_practice_balanced'
+  -- benchmark/mock determined later (handled in migration 002)
+  else 'minimal_live_filter'
+end;
+-- INSERT happens after this, so metadata.selection.mode is already correct for topic.
+```
+
+Then in the if/elsif chain, add:
+```sql
+elsif p_type = 'topic' then
+  -- v_selection_mode already set to 'topic_practice_balanced' above — do NOT re-assign
+  for v_question in
+    select * from public.select_topic_practice_questions(
+      v_user_id, p_exam_id, p_topic_id,
+      v_count, v_min_quality_tier, v_exposure_policies
+    )
+  loop
+    v_sequence := v_sequence + 1;
+    insert into session_questions (..., selected_by_reason)
+    values (..., 'topic_practice_balanced');
+    ...
+  end loop;
+else
+  -- existing random loop unchanged for concept_retest, sectional, custom
+  ...
+end if;
+```
+
+Re-apply `revoke all from public; grant execute to authenticated` on `start_test_session` after `create or replace`.
+
+**New file `src/lib/test-session/selection.ts`** — add to existing file:
+
+```typescript
+export type DifficultyAllocation = {
+  easy: number;
+  hard: number;
+  medium: number;
+};
+
+export function computeDifficultyAllocations(count: number): DifficultyAllocation {
+  if (!Number.isInteger(count) || count <= 0) {
+    return { easy: 0, hard: 0, medium: 0 };
+  }
+  const easy = Math.floor(count * 0.3);
+  const hard = Math.floor(count * 0.3);
+  const medium = count - easy - hard;
+  return { easy, hard, medium };
+}
+```
+
+**New tests in `src/tests/unit/selection.test.ts`** — add after existing `computeTopicAllocations` tests:
+
+Required cases for `computeDifficultyAllocations`:
+- count=10 → `{easy:3, medium:4, hard:3}`, sum=10
+- count=7 → `{easy:2, medium:3, hard:2}`, sum=7
+- count=3 → `{easy:0, medium:3, hard:0}`, sum=3
+- count=1 → `{easy:0, medium:1, hard:0}`, sum=1
+- count=0 → `{easy:0, medium:0, hard:0}`
+- sum always equals count for counts 1–20 (loop test)
+
+**Gate:** Standard + Database gate. Updated `selection.test.ts` must pass. `node run-migrations.js` + `node scripts/check-rpc-grants.js` (10 RPCs unchanged — `select_topic_practice_questions` is private and must NOT appear).
+
+---
+
+#### TSP-038 — Benchmark/Mock Selection
+
+**Architect decisions (locked):**
+
+1. **Gold priority:** ORDER BY `CASE quality_tier WHEN 'gold' THEN 1 WHEN 'silver' THEN 2 ELSE 3 END, random()`. Ensures gold questions are preferred without excluding silver/bronze when the pool is small. No complex CTE — single-pass priority sort.
+
+2. **Status:** `'live'` only (benchmark/mock — stricter than diagnostic which allows `approved`).
+
+3. **Fixed template:** If `p_template_id IS NOT NULL` and the template's `config->>'selectionMode' = 'fixed'` and `config->'questionIds'` is a JSON array, extract those question IDs and pass them as `p_fixed_question_ids text[]` to `select_benchmark_questions`. The helper enforces `q.exam_id = p_exam_id` on the fixed IDs — questions from another exam cannot load. Still applies quality/status filters so a stale template cannot surface quarantined or non-live questions.
+
+4. **Private helper:** `select_benchmark_questions(p_exam_id, p_count, p_min_quality_tier, p_exposure_policies, p_fixed_question_ids)` — `revoke all from public`, no `grant execute`.
+
+5. **`selected_by_reason`:** `'benchmark_gold_priority'` or `'benchmark_fixed_template'`.
+
+**New migration `supabase/migrations/202606010002_benchmark_selection.sql`:**
+
+```sql
+-- Private helper: gold-priority or fixed-template benchmark/mock selection.
+create or replace function public.select_benchmark_questions(
+  p_exam_id uuid,
+  p_count int,
+  p_min_quality_tier text,
+  p_exposure_policies text[],
+  p_fixed_question_ids text[] default null
+) returns table(question_id uuid, current_version_id uuid, q_type text, content jsonb)
+language sql
+security definer
+set search_path = public
+as $$
+  with
+  fixed_picks as (
+    select q.id as question_id, q.current_version_id, q.type as q_type, qv.content
+    from public.questions q
+    join public.question_versions qv on qv.id = q.current_version_id
+    where p_fixed_question_ids is not null
+      and q.id = any(p_fixed_question_ids::uuid[])
+      and q.exam_id = p_exam_id         -- security: same exam only
+      and q.status = 'live'
+      and q.exposure_policy = any(p_exposure_policies)
+      and q.quality_tier <> 'quarantine'
+    order by random()
+    limit p_count
+  ),
+  priority_picks as (
+    select q.id as question_id, q.current_version_id, q.type as q_type, qv.content
+    from public.questions q
+    join public.question_versions qv on qv.id = q.current_version_id
+    where p_fixed_question_ids is null
+      and q.exam_id = p_exam_id
+      and q.status = 'live'
+      and q.exposure_policy = any(p_exposure_policies)
+      and q.quality_tier <> 'quarantine'
+      and case p_min_quality_tier
+            when 'gold'   then q.quality_tier = 'gold'
+            when 'silver' then q.quality_tier in ('gold', 'silver')
+            else true
+          end
+    order by
+      case q.quality_tier when 'gold' then 1 when 'silver' then 2 else 3 end,
+      random()
+    limit p_count
+  )
+  select * from fixed_picks
+  union all
+  select * from priority_picks
+  limit p_count;
+$$;
+
+revoke all on function public.select_benchmark_questions(uuid, int, text, text[], text[]) from public;
+```
+
+Updated `start_test_session` in the same migration — add `benchmark/mock` branch.
+
+**Critical ordering constraint (same metadata desync fix as TSP-037):** For benchmark/mock, `v_selection_mode` depends on whether the template is fixed. This requires resolving `v_fixed_qids` **before** the `INSERT INTO test_sessions`. The entire pre-INSERT block must be:
+
+```sql
+-- Declare at top of function (add to existing declare block):
+--   v_fixed_qids text[] := null;
+
+-- ── Pre-INSERT: resolve fixed template + determine final v_selection_mode ──
+
+-- For benchmark/mock: read template config to determine fixed vs gold-priority
+if p_type in ('benchmark', 'mock') and p_template_id is not null then
+  select
+    case
+      when (config ->> 'selectionMode') = 'fixed'
+           and jsonb_typeof(config -> 'questionIds') = 'array'
+      then array(
+        select value::text
+        from jsonb_array_elements_text(config -> 'questionIds')
+      )
+      else null
+    end
+  into v_fixed_qids
+  from public.test_templates
+  where id = p_template_id;
+end if;
+
+-- Now expand the CASE to cover all types (replaces the existing 2-way CASE
+-- introduced in migration 001 — this migration 002 replaces start_test_session again):
+v_selection_mode := case p_type
+  when 'diagnostic' then 'diagnostic_weighted'
+  when 'topic'      then 'topic_practice_balanced'
+  when 'benchmark'  then case when v_fixed_qids is not null
+                              then 'benchmark_fixed_template'
+                              else 'benchmark_gold_priority' end
+  when 'mock'       then case when v_fixed_qids is not null
+                              then 'benchmark_fixed_template'
+                              else 'benchmark_gold_priority' end
+  else 'minimal_live_filter'
+end;
+
+-- INSERT happens after this — metadata.selection.mode is already correct.
+insert into public.test_sessions (...) values (...);
+```
+
+Then in the if/elsif chain, add (do NOT re-assign `v_selection_mode` here — it is already correct):
+```sql
+elsif p_type in ('benchmark', 'mock') then
+  -- v_selection_mode already set above — do NOT re-assign
+  for v_question in
+    select * from public.select_benchmark_questions(
+      p_exam_id, v_count, v_min_quality_tier, v_exposure_policies, v_fixed_qids
+    )
+  loop
+    v_sequence := v_sequence + 1;
+    insert into public.session_questions (..., selected_by_reason)
+    values (..., v_selection_mode);
+    ...
+  end loop;
+else
+  -- existing random loop unchanged for concept_retest, sectional, custom
+  ...
+end if;
+```
+
+Re-apply `revoke all from public; grant execute to authenticated` on `start_test_session` after `create or replace`.
+
+**Note on migration chain:** Migration 002 replaces `start_test_session` again (third time after migrations 004/005). Both `revoke` and `grant` must appear in migration 002 for the final signature. The Builder must drop the old 7-param signature if the declare block grows (adding `v_fixed_qids` does not change the external signature — param count stays at 7).
+
+**No new TS helpers for TSP-038** — the gold-priority logic is purely in SQL. No unit tests needed (no deterministic pure logic to separate out; the SQL gold ordering is straightforwardly verified by reading the migration).
+
+**Gate:** Standard + Database gate. `node run-migrations.js` + `node scripts/check-rpc-grants.js` (10 RPCs unchanged — both new private helpers must NOT appear).
+
+---
+
+#### Files the Builder will create or modify
+
+| Action | Path |
+|--------|------|
+| Create | `supabase/migrations/202606010001_topic_practice_selection.sql` |
+| Create | `supabase/migrations/202606010002_benchmark_selection.sql` |
+| Edit | `src/lib/test-session/selection.ts` — add `computeDifficultyAllocations` + `DifficultyAllocation` type |
+| Edit | `src/tests/unit/selection.test.ts` — add difficulty allocation test cases |
+| Edit | `trackers/JIRA_TRACKER.csv`, `docs/process/{SESSION_STATE,CHANGELOG,HANDOFF}.md` |
+
+No UI changes this session — the selection algorithms are backend only. The `/tests` launcher currently hardcodes `type="diagnostic"`. Exposing topic and benchmark session types in the UI is a fast-follow task after M2 closes.
+
+---
+
+#### Sanity focus (flag for reviewer)
+
+1. **`select_topic_practice_questions` is private** — `revoke all from public`, no `grant execute` line. Must NOT appear in `check-rpc-grants.js` output.
+2. **Difficulty allocation sums to `p_count` exactly** — `medium = count - easy - hard` is the invariant. Verify the SQL `medium_picks LIMIT` formula (`p_count - 2 * floor(p_count * 0.3)`) matches the TS `computeDifficultyAllocations` for at least count=10, 7, 3, 1.
+3. **Recency exclusion uses `NOT EXISTS`** (not `NOT IN`) — safe against NULL edge cases even though question_id is NOT NULL in practice.
+4. **`select_benchmark_questions` is private** — same check as item 1.
+5. **Gold-priority CASE rank is correct**: `gold=1 < silver=2 < else=3` — ascending ORDER BY means gold first.
+6. **Fixed template enforces `exam_id`** — the `q.exam_id = p_exam_id` filter in `fixed_picks` prevents a template with cross-exam question IDs from loading them. Sanity should confirm this line is present.
+7. **`start_test_session` re-granted** after `create or replace` in BOTH migrations (001 and 002).
+8. **`else` branch unchanged** — `concept_retest`, `sectional`, `custom` still reach the existing random loop. Confirm the if/elsif/else chain is exhaustive and correct.
+9. **(Critical) `v_selection_mode` set BEFORE `INSERT INTO test_sessions`** — confirm migration 001 adds `'topic'` to the pre-INSERT CASE, and migration 002 expands it to cover `'benchmark'`/`'mock'` (after resolving `v_fixed_qids`). A post-INSERT assignment would silently store `'minimal_live_filter'` in `metadata.selection.mode` and create a permanent desync with `session_questions.selected_by_reason`.
+
+---
+
+## Current Recommended Next Task
+
+**Session 9 plan ready for Builder.** TSP-037 then TSP-038, one commit each.
+
+Verification: `corepack pnpm exec vitest run src/tests/unit/selection.test.ts`, then standard gate. DB gate: `node run-migrations.js` + `node scripts/check-rpc-grants.js` (10 RPCs: unchanged count — both new helpers are private). Confirm `select_topic_practice_questions` and `select_benchmark_questions` are NOT in grants checker output.
+
+---
+
+### 2026-06-01 - Session 9 Builder Handoff - Codex
+
+Scope completed:
+
+- Implemented `TSP-037` topic practice selection and `TSP-038` benchmark/mock selection from the Session 9 Architect plan.
+- Left both rows in `Review` for Sanity/browser smoke instead of `Done`.
+
+Files changed:
+
+- `supabase/migrations/202606010001_topic_practice_selection.sql`
+- `supabase/migrations/202606010002_benchmark_selection.sql`
+- `src/lib/test-session/selection.ts`
+- `src/tests/unit/selection.test.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added `computeDifficultyAllocations` with unit tests for the 30/40/30 topic-practice split and sum invariant.
+- Added private `select_topic_practice_questions` with live-only filtering, quality/exposure filtering, optional topic/subtopic scope, and recency exclusion from the user's last 3 topic/concept-retest sessions.
+- Updated `start_test_session` so topic sessions set `topic_practice_balanced` before `test_sessions` insert and write matching `session_questions.selected_by_reason`.
+- Added private `select_benchmark_questions` with fixed-template selection and gold-priority benchmark/mock selection.
+- Updated `start_test_session` so benchmark/mock sessions resolve fixed template question IDs before `test_sessions` insert and set either `benchmark_fixed_template` or `benchmark_gold_priority` in metadata and selected-question rows.
+- Kept `concept_retest`, `sectional`, and `custom` on the existing live-only generic random branch.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/selection.test.ts` passed.
+- `corepack pnpm typecheck` passed.
+- `corepack pnpm lint` passed after elevated rerun because the sandbox failed to spawn lint.
+- `corepack pnpm test` passed.
+- `corepack pnpm build` passed.
+- `node --check scripts/check-rpc-grants.js` passed.
+- `node run-migrations.js` applied all migrations through `202606010002_benchmark_selection.sql`.
+- `node scripts/check-rpc-grants.js` verified authenticated execute privilege for all 10 tracked public RPCs.
+- The grant-checker output did not include `select_topic_practice_questions` or `select_benchmark_questions`.
+
+Dev server:
+
+- Not started; Session 9 is backend selection logic only, with no UI route or component changes.
+
+Git state:
+
+- No commits were created. `git status --short` still shows the project tree as untracked alongside pre-existing deleted root docs, so staging row-sized commits would risk capturing unrelated repository state.
+
+Sanity review focus:
+
+- Confirm `select_topic_practice_questions` and `select_benchmark_questions` remain private: `revoke all` with no authenticated grant and no grant-checker entry.
+- Confirm topic difficulty allocation matches TS for count 10, 7, 3, and 1: medium absorbs the remainder.
+- Confirm recency exclusion uses `not exists`, and only the last 3 same-exam topic/concept-retest sessions are considered.
+- Confirm benchmark fixed-template selection includes `q.exam_id = p_exam_id`, `q.status = 'live'`, allowed exposure policy, and non-quarantine filtering.
+- Confirm benchmark gold priority sorts `gold`, then `silver`, then the remaining eligible tiers.
+- Confirm `v_selection_mode` is resolved before `insert into public.test_sessions` in both new migration replacements.
+- Confirm the generic else branch still handles `concept_retest`, `sectional`, and `custom`.
+
+Next recommended step:
+
+- Sanity Test reviews Session 9 and either marks `TSP-037`/`TSP-038` ready for browser smoke or hands back exact findings.
+
+---
+
+### 2026-06-01 - Session 9 Sanity Review (M2) - Architect (Claude Sonnet 4.6)
+
+Reviewed all four changed files (`202606010001_topic_practice_selection.sql`, `202606010002_benchmark_selection.sql`, `selection.ts`, `selection.test.ts`) against all nine sanity focus items.
+
+**Overall: PASS on code. No blocking findings.** TSP-037 and TSP-038 correctly sit in `Review` — the only gap to `Done` is browser/student smoke.
+
+**Focus 1 — `select_topic_practice_questions` is private: PASS.** Migration 001 line 458: `revoke all on function ... from public`. No `grant execute` follows for this function. Grant checker confirmed absent from output per Builder. ✅
+
+**Focus 2 — Difficulty allocation sums to `p_count` exactly: PASS.** SQL: `easy = floor(p_count*0.3)`, `hard = floor(p_count*0.3)`, `medium = p_count - 2*floor(p_count*0.3)`. Algebraic identity confirms sum = p_count. TS: identical formula. Verified for count=10→{3,4,3}, 7→{2,3,2}, 3→{0,3,0}, 1→{0,1,0}. Unit test's loop (counts 1–20) provides exhaustive coverage. ✅
+
+**Focus 3 — Recency exclusion uses `NOT EXISTS`: PASS.** Migration 001 lines 59–63: `and not exists (select 1 from recently_seen rs where rs.question_id = q.id)`. No `NOT IN`. ✅
+
+**Focus 4 — `select_benchmark_questions` is private: PASS.** Migration 002 line 473: `revoke all on function ... from public`. No `grant execute` for this function. ✅
+
+**Focus 5 — Gold-priority CASE rank correct: PASS.** Migration 002 lines 55–57: `case q.quality_tier when 'gold' then 1 when 'silver' then 2 else 3 end, random()`. Ascending ORDER BY means gold first, then silver, then bronze. ✅
+
+**Focus 6 — Fixed template enforces `exam_id`: PASS.** Migration 002 line 30: `and q.exam_id = p_exam_id` present in `fixed_picks`. Defense-in-depth: template validation at lines 121–128 also enforces `exam_id = p_exam_id` before `v_fixed_qids` is populated. ✅
+
+**Focus 7 — `start_test_session` re-granted in both migrations: PASS.** Migration 001 lines 459–461: `revoke all ... from public; grant execute ... to authenticated`. Migration 002 lines 474–476: same. ✅
+
+**Focus 8 — `else` branch unchanged: PASS.** Migration 002 if/elsif/else chain: `diagnostic` → `topic` → `in ('benchmark','mock')` → `else`. `concept_retest`, `sectional`, `custom` all fall through to `else` with `'minimal_live_filter'` (set in the pre-INSERT CASE). ✅
+
+**Focus 9 — `v_selection_mode` set BEFORE `INSERT INTO test_sessions`: PASS.** This was the critical bug fixed during planning. Migration 001: `v_selection_mode` CASE at lines 166–170 adds `when 'topic' then 'topic_practice_balanced'` before the INSERT at line 215. Migration 002: `v_fixed_qids` resolved at lines 131–145, then `v_selection_mode` CASE (now covering benchmark/mock) at lines 147–159, then INSERT at line 190. Confirmed line ordering: 142 (`v_fixed_qids`) → 147 (`v_selection_mode`) → 190 (`INSERT`). No post-INSERT mode assignment for any new type. ✅
+
+**Three beyond-spec commends:**
+- **`coalesce(started_at, created_at)`** in `recent_sessions` ORDER BY (migration 001 line 27) — handles sessions where `started_at` is NULL, making the ordering robust for all session states.
+- **`coalesce(p_exposure_policies, array['practice'])`** in `eligible` and benchmark CTEs — defensive NULL handling on the exposure policies parameter.
+- **Dual selection_mode check** in template resolution (migration 002 line 134): `selection_mode = 'fixed' or config ->> 'selectionMode' = 'fixed'` checks both the `test_templates.selection_mode` column and the JSON config field. More robust than the plan's spec which only specified the JSONB field.
+
+**Non-blocking notes:**
+- **N15:** `fixed_picks` in `select_benchmark_questions` does not apply `p_min_quality_tier` — only `quality_tier <> 'quarantine'` is enforced. If a fixed template contains silver questions but the caller requests `p_min_quality_tier='gold'`, those silver questions still appear. Intentional behavior (fixed templates override tier filtering), but worth documenting in DECISIONS.md on a cleanup pass.
+- **N16 (cosmetic):** Migration 001's `v_selection_mode` initial CASE still falls through to `'minimal_live_filter'` for benchmark/mock. This is correct because migration 002 immediately replaces `start_test_session` with the full version — both migrations are applied atomically in sequence.
+
+**M2 selection suite is complete.** All three selection algorithms (diagnostic weighted, topic practice balanced, benchmark gold-priority) are live and DB-verified. TSP-037 and TSP-038 in `Review`, awaiting browser/student smoke.
+
+---
+
+## Current Recommended Next Task
+
+**Session 10 Builder pass completed.** TSP-051, TSP-052, and TSP-128 are in `Review` after local verification — TypeScript-only, no migration.
+
+**Verification gate:** `corepack pnpm exec vitest run src/tests/unit/marking-rules.test.ts`, then standard gate (`typecheck + lint + test + build`) passed. No DB gate this session.
+
+---
+
+### 2026-06-01 - Session 10 Plan (M3 first slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M3 Scoring & Learning Model — first TypeScript layer slice.
+
+**Scope:** TSP-051 (marking rules engine) + TSP-052 (answer evaluation by type) + TSP-128 (scoring unit tests). All three land in `Review`; no browser smoke gate — these are pure TypeScript modules verified by unit tests.
+
+**Why now:** M2 remaining rows (TSP-032/033 Phase 1.5, TSP-028 parked on founder decision) are deferred. The existing `submit_test_session` SQL handles authoritative scoring, but the TypeScript layer is incomplete: `statement` and `assertion` types fall through implicitly, match evaluation is order-sensitive, and there is no `buildMarkingRuleFromManifest` bridge from exam manifest data. This session builds the proper TypeScript scoring module as specified in the TRD (`src/lib/scoring/`).
+
+**What already exists (do NOT break):**
+- `src/lib/test-session/scoring.ts` — basic `MarkingRule`, `evaluateAnswer`, `scoreAnswer`, `scoreSession`; imported only by `src/tests/unit/scoring.test.ts`. Keep this file unchanged for backward compat. New module is additive.
+- SQL `score_session_answer_correct` — authoritative for production. MCQ/MSQ use sorted array comparison (order-independent). Match uses `p_selected_answer -> 'pairs' = p_content -> 'pairs'` (order-sensitive — known gap N17).
+
+---
+
+#### Architecture decisions
+
+1. **New directory `src/lib/scoring/`** — TRD target structure; three new files, no edits to existing files.
+2. **`MarkingRule.noNegativeForTypes?: string[]`** — optional per-type override. If a type appears in this list, wrong answers return `0` instead of negative marks. Defaults to `undefined` (all types attract negative marking). Useful for exams that exempt integer or match types from negative marking.
+3. **`buildMarkingRuleFromManifest(marking: unknown): MarkingRule`** — reads `marksPerCorrect` and `negativeMarkingFraction` from an exam manifest marking object. Validates using regex `/^[0-9]+(\.[0-9]+)?$/` — matching the SQL regex exactly (`'^[0-9]+(\.[0-9]+)?$'`). Accepts both `number` and `string` representations. Returns `DEFAULT_MARKING_RULE` on any invalid or missing input.
+4. **`evaluateAnswer` for `statement` and `assertion`** — explicit branch, not a fallthrough. Both types use `correct_options` (same logic as MCQ). Explicit branch avoids future confusion if content schema diverges.
+5. **`evaluateAnswer` for `match`** — **order-independent**: sort both pairs arrays by `JSON.stringify(pair)` before comparing. This diverges from the SQL which uses direct JSONB equality (order-sensitive). The TypeScript side is the correct behavior; SQL alignment is noted as N17 and deferred.
+6. **`evaluateAnswer` for `msq`** — explicit all-or-nothing: `sorted(correct_options)` must equal `sorted(selected_options)` exactly. Partial selection is `false`.
+7. **`DEFAULT_MARKING_RULE`** in the new module must equal `{marksPerCorrect:2, negativeMarkingFraction:0.33}` — no regression from the existing module.
+
+---
+
+#### Files the Builder will create
+
+| Action | Path |
+|--------|------|
+| Create | `src/lib/scoring/marking-rules.ts` |
+| Create | `src/lib/scoring/answer-eval.ts` |
+| Create | `src/lib/scoring/score-session.ts` |
+| Create | `src/tests/unit/marking-rules.test.ts` |
+| Edit | `trackers/JIRA_TRACKER.csv`, `docs/process/{SESSION_STATE,CHANGELOG,HANDOFF}.md` |
+
+No SQL migrations. No changes to `src/lib/test-session/scoring.ts` or `src/tests/unit/scoring.test.ts`.
+
+---
+
+#### Exact API
+
+**`src/lib/scoring/marking-rules.ts`**
+
+```typescript
+export type MarkingRule = {
+  marksPerCorrect: number;
+  negativeMarkingFraction: number;
+  noNegativeForTypes?: string[];
+};
+
+export type AnswerEvaluation = {
+  attempted: boolean;
+  isCorrect: boolean | null;
+  marksAwarded: number;
+};
+
+export const DEFAULT_MARKING_RULE: MarkingRule = {
+  marksPerCorrect: 2,
+  negativeMarkingFraction: 0.33,
+};
+
+// Returns AnswerEvaluation from a pre-computed isCorrect boolean (or null for skipped).
+// Checks noNegativeForTypes before applying negative marks.
+export function applyMarkingRule(
+  type: string,
+  isCorrect: boolean | null,
+  rule?: MarkingRule
+): AnswerEvaluation;
+
+// Reads marksPerCorrect, negativeMarkingFraction, and noNegativeForTypes from an
+// exam manifest marking block.
+// Same regex as SQL: /^[0-9]+(\.[0-9]+)?$/ (NOTE: dot must be escaped — /\.[0-9]+/)
+// Falls back to DEFAULT_MARKING_RULE for any invalid/missing numeric fields.
+// noNegativeForTypes is optional; only set on the result if present and a valid string[].
+export function buildMarkingRuleFromManifest(marking: unknown): MarkingRule;
+```
+
+**`src/lib/scoring/answer-eval.ts`**
+
+```typescript
+// Evaluates correctness for all 6 question types:
+//   mcq         — single-choice: correct_options must have length=1; if selected has
+//                 length>1 return null (malformed, treat as unattempted not penalised);
+//                 if correct_options length!=1 return false (content integrity error)
+//   msq         — all-or-nothing; sorted selected.options must equal sorted correct_options
+//   integer     — numeric equality; accepts string or number in both content + answer
+//   statement   — same single-choice logic as mcq (uses correct_options)
+//   assertion   — same single-choice logic as mcq (uses correct_options)
+//   match       — order-independent: sort both pairs arrays by JSON.stringify before comparing
+// Returns null (skipped) if:
+//   - selectedAnswer is null/empty
+//   - content does not have the expected field for the type
+//   - selected value cannot be parsed to valid type
+//   - mcq/statement/assertion receives selectedOptions.length > 1 (malformed, no penalty)
+export function evaluateAnswer(
+  type: string,
+  content: unknown,
+  selectedAnswer: unknown
+): boolean | null;
+```
+
+**`src/lib/scoring/score-session.ts`**
+
+```typescript
+import { evaluateAnswer } from "./answer-eval";
+import { applyMarkingRule, MarkingRule, AnswerEvaluation, DEFAULT_MARKING_RULE } from "./marking-rules";
+
+export type ScoredQuestionInput = {
+  questionId: string;
+  topicId?: string | null;
+  type: string;
+  content: unknown;
+  selectedAnswer: unknown;
+};
+
+export type SessionScoreSummary = {
+  score: number;
+  maxScore: number;
+  accuracy: number;
+  attempted: number;
+  correct: number;
+  incorrect: number;
+  skipped: number;
+  topicScores: Record<string, {
+    score: number; maxScore: number;
+    attempted: number; correct: number; incorrect: number; skipped: number;
+  }>;
+};
+
+// Combines evaluateAnswer + applyMarkingRule for a single question.
+export function scoreQuestion(
+  type: string,
+  content: unknown,
+  selectedAnswer: unknown,
+  rule?: MarkingRule
+): AnswerEvaluation;
+
+// Aggregates a full session using scoreQuestion per row, groups by topicId.
+export function scoreSession(
+  questions: ScoredQuestionInput[],
+  rule?: MarkingRule
+): SessionScoreSummary;
+```
+
+---
+
+#### Required test cases for `marking-rules.test.ts` (TSP-128)
+
+**`evaluateAnswer` — all 6 types × correct/wrong/skipped:**
+
+| type | scenario | expected |
+|------|----------|----------|
+| mcq | correct option | `true` |
+| mcq | wrong option | `false` |
+| mcq | null answer | `null` |
+| msq | all correct options (order reversed) | `true` |
+| msq | partial options only | `false` |
+| msq | null answer | `null` |
+| integer | matching integer (string representation) | `true` |
+| integer | wrong value | `false` |
+| integer | null answer | `null` |
+| statement | correct option (same as mcq) | `true` |
+| statement | wrong option | `false` |
+| assertion | correct option | `true` |
+| assertion | null answer | `null` |
+| match | pairs in reversed order vs content | `true` (order-independent) |
+| match | wrong pairs | `false` |
+| match | no pairs field in answer | `null` |
+
+**`applyMarkingRule`:**
+- correct answer → `marksAwarded = marksPerCorrect` ✅
+- wrong answer → `marksAwarded = -(negativeMarkingFraction * marksPerCorrect)` ✅
+- skipped (null) → `{attempted:false, isCorrect:null, marksAwarded:0}` ✅
+- wrong answer with type in `noNegativeForTypes` → `marksAwarded = 0` ✅
+
+**`buildMarkingRuleFromManifest`:**
+- valid object `{marksPerCorrect:"3", negativeMarkingFraction:"0.25"}` → applies both values ✅
+- valid object with numbers (not strings) → applies both values ✅
+- null, undefined, non-object → returns `DEFAULT_MARKING_RULE` ✅
+- object with invalid string values (e.g., `"abc"`) → falls back to `DEFAULT_MARKING_RULE` ✅
+- object with `noNegativeForTypes: ["integer"]` → result includes `noNegativeForTypes:["integer"]` ✅
+- object with `noNegativeForTypes: [1, "integer"]` (mixed array) → field is ignored (not a valid string[]) ✅
+- object with `noNegativeForTypes: null` → field is ignored ✅
+
+**`scoreSession`:**
+- 3-question session (correct MCQ + wrong integer + skipped MSQ): score, accuracy, topic breakdown verified ✅
+
+---
+
+#### Sanity focus items (11)
+
+1. All 6 question types have explicit `evaluateAnswer` test cases — not just MCQ and integer.
+2. Match comparison is order-independent — test: answer `{pairs:[["B","2"],["A","1"]]}` vs content `{pairs:[["A","1"],["B","2"]]}` must return `true`.
+3. MSQ all-or-nothing — `correct_options:[1,3]` + selected `{options:[1]}` (partial) returns `false`.
+4. `noNegativeForTypes` — wrong answer on a type in this list returns `marksAwarded:0`, not negative marks.
+5. `buildMarkingRuleFromManifest` validates with regex matching SQL (`/^[0-9]+(\.[0-9]+)?$/`); **the dot must be escaped** (`\.`). Negative numbers or letters fall back to default.
+6. `buildMarkingRuleFromManifest` handles both `number` and `string` `marksPerCorrect` values (JSON manifests may arrive as either).
+7. `DEFAULT_MARKING_RULE` in the new module = `{marksPerCorrect:2, negativeMarkingFraction:0.33}` — no regression.
+8. Skipped answer (null) returns `{attempted:false, isCorrect:null, marksAwarded:0}` for **all 6 types** — no type can return negative marks for a skip.
+9. New files do NOT import from `@/lib/test-session/scoring` — no circular dependency between old and new scoring modules.
+10. **`buildMarkingRuleFromManifest` parses `noNegativeForTypes`** — if present and a valid `string[]`, it is included in the returned rule. Mixed arrays (e.g. `[1, "integer"]`) or non-array values are silently ignored, not an error.
+11. **MCQ/statement/assertion single-choice malformed selection returns `null`, not `false`** — `selectedOptions.length > 1` is treated as unattempted (no penalty). `correctOptions.length !== 1` returns `false` (content integrity error). Test both edges explicitly.
+
+**Non-blocking note N17 (document, don't fix):** SQL `score_session_answer_correct` uses `p_selected_answer -> 'pairs' = p_content -> 'pairs'` for match — JSONB array equality is order-sensitive in Postgres. TypeScript new impl is order-independent. These diverge. SQL should be fixed in a future session (add a sort-and-compare approach, e.g., using `jsonb_agg(... order by ...)` on unnested pairs).
+
+---
+
+### 2026-06-01 - Session 10 Builder Handoff - Codex
+
+Scope completed locally:
+
+- Implemented `TSP-051`, `TSP-052`, and `TSP-128` from the revised Session 10 Architect plan.
+- Kept the existing `src/lib/test-session/scoring.ts` and `src/tests/unit/scoring.test.ts` unchanged for backward compatibility.
+- No SQL migrations, grant changes, or browser routes were added.
+
+Files changed:
+
+- `src/lib/scoring/marking-rules.ts`
+- `src/lib/scoring/answer-eval.ts`
+- `src/lib/scoring/score-session.ts`
+- `src/tests/unit/marking-rules.test.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/CHANGELOG.md`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added the new TRD-target `src/lib/scoring/` layer with marking rules, answer evaluation, and session aggregation split across the planned files.
+- `buildMarkingRuleFromManifest` accepts numeric strings and numbers using `/^[0-9]+(\.[0-9]+)?$/`, rejects invalid/negative numeric inputs to the default rule, and includes `noNegativeForTypes` only when it is a valid `string[]`.
+- `applyMarkingRule` returns zero for skipped answers and suppresses negative marks for wrong answers when the question type is listed in `noNegativeForTypes`.
+- `evaluateAnswer` now has explicit branches for all six supported types: `mcq`, `msq`, `integer`, `statement`, `assertion`, and `match`.
+- `match` evaluation is order-independent by sorting pair arrays with `JSON.stringify(pair)` before comparison.
+- `mcq`/`statement`/`assertion` malformed multi-option selections return `null` so they are treated as unattempted, while malformed content with multiple correct options returns `false`.
+- Added unit coverage for all revised Session 10 sanity focus items, including all six type skips, `noNegativeForTypes`, manifest parsing, MSQ all-or-nothing, order-independent match, and session/topic aggregation.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/marking-rules.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed to spawn lint.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+
+Dev server:
+
+- Not started; Session 10 is a TypeScript scoring module/test slice with no UI route or component changes.
+
+Git state:
+
+- No commits were created. `git status --short` still shows the project tree as untracked alongside pre-existing deleted root docs, so staging row-sized commits would risk capturing unrelated repository state.
+
+Sanity review focus:
+
+- Confirm new files do not import from `@/lib/test-session/scoring`.
+- Confirm all six question types have explicit tests and `null` skips produce `{attempted:false,isCorrect:null,marksAwarded:0}`.
+- Confirm match comparison is order-independent.
+- Confirm MSQ partial selection is wrong, not partial credit.
+- Confirm `noNegativeForTypes` both parses from valid manifest input and suppresses negative marks.
+- Confirm the manifest number regex escapes the decimal dot and rejects negative/letter/scientific-style strings.
+- Confirm malformed single-choice selected answers with multiple options return `null`, while multiple correct options in content return `false`.
+
+Next recommended step:
+
+- Sanity Test reviews Session 10 and either marks `TSP-051`/`TSP-052`/`TSP-128` ready for `Done` or hands back exact findings.
+
+---
+
+### 2026-06-01 - Session 10 Sanity Review (M3) - Architect (Claude Sonnet 4.6)
+
+Reviewed all four new files (`marking-rules.ts`, `answer-eval.ts`, `score-session.ts`, `marking-rules.test.ts`) against all 11 sanity focus items.
+
+**Overall: PASS on code. No blocking findings.** TSP-051/052/128 are pure TypeScript with full unit-test coverage and no DB gate — these rows can move to `Done` immediately upon Sanity pass.
+
+**Focus 1 — All 6 types have explicit test cases: PASS.** `marking-rules.test.ts` has dedicated `it()` blocks for mcq (lines 16–22), msq (lines 24–28), integer (lines 30–34), statement (lines 36–42), assertion (lines 44–50), match (lines 52–68). The loop test at lines 70–87 additionally covers all 6 types with null answers via `scoreQuestion`. ✅
+
+**Focus 2 — Match is order-independent: PASS.** `evaluateMatch` uses `sortByJson` (sorts array elements by `JSON.stringify`) then `arraysEqual` with `stableJson` normalize. Test line 53–60: `{pairs:[["B","2"],["A","1"]]}` vs `{pairs:[["A","1"],["B","2"]]}` → `true`. Early length check (line 95–97) provides fast-fail before sort. ✅
+
+**Focus 3 — MSQ all-or-nothing: PASS.** `evaluateMsq` uses `arraysEqual(sortNumbers(selectedOptions), sortNumbers(correctOptions))`. Test line 26: `correct:[1,3]` + `selected:{options:[1]}` → `false`. Order-reversed correct match tested at line 25. ✅
+
+**Focus 4 — `noNegativeForTypes` suppresses negative marks: PASS.** `applyMarkingRule` checks `rule.noNegativeForTypes?.includes(type)` (line 41); if true, `marksAwarded: 0` instead of negative. Test lines 114–124: wrong `integer` with `noNegativeForTypes:["integer"]` → `{marksAwarded:0}`. ✅
+
+**Focus 5 — Regex dot is escaped: PASS.** Line 18: `const MANIFEST_NUMBER_PATTERN = /^[0-9]+(\.[0-9]+)?$/` — `\.` is escaped. Test confirms `"-3"` (line 161–163) and `"0x1"` (line 165–169) both fall back to `DEFAULT_MARKING_RULE`. ✅
+
+**Focus 6 — Accepts both number and string representations: PASS.** `parseManifestNumber` has explicit `typeof value === "number"` and `typeof value === "string"` branches. Test lines 138–145: `{marksPerCorrect:4, negativeMarkingFraction:0.5}` (numbers) applies correctly. String test at lines 127–136. ✅
+
+**Focus 7 — DEFAULT_MARKING_RULE unchanged: PASS.** Lines 13–16: `{marksPerCorrect:2, negativeMarkingFraction:0.33}`. Test at lines 91–96 asserts exact match. No `noNegativeForTypes` field on the default. ✅
+
+**Focus 8 — Skipped returns `{attempted:false, isCorrect:null, marksAwarded:0}` for all 6 types: PASS.** Loop test at lines 70–87 calls `scoreQuestion(type, content, null, markingRule)` for every type and asserts the exact shape. The `applyMarkingRule` null branch (lines 25–31) is the single return path — no type can override it. ✅
+
+**Focus 9 — No import from `@/lib/test-session/scoring`: PASS.** Grep confirmed zero matches in `src/lib/scoring/`. `score-session.ts` only imports from `./answer-eval` and `./marking-rules`. ✅
+
+**Focus 10 — `buildMarkingRuleFromManifest` parses `noNegativeForTypes`: PASS.** `isStringArray` type predicate (lines 99–101) + conditional assignment (lines 69–71). Tests: valid `["integer"]` included (lines 174–182); mixed array `[1,"integer"]` ignored (lines 185–194); `null` ignored (lines 196–205). ✅
+
+**Focus 11 — MCQ/statement/assertion single-choice edge cases: PASS.** `evaluateSingleChoice` (lines 21–45): `selectedOptions.length > 1` → `null` (line 36–38); `correctOptions.length !== 1` → `false` (lines 40–42). Tests confirm both: multi-select answer → `null` (lines 20, 40, 48); multi-correct content → `false` (lines 21, 41, 49). ✅
+
+**Four beyond-spec commends:**
+- **`parseManifestNumber` also regex-validates numeric inputs** — converts number to string and tests against the pattern, catching negative numbers like `-3.0` even when passed as a JS number. This is more defensive than the SQL (which only applies the regex to string JSON values).
+- **`evaluateMatch` early length comparison** before sort-and-compare — O(1) fast-fail when pair counts differ, avoids the O(n log n) sort entirely in the common mismatch case.
+- **Generic `arraysEqual<T>` with normalize callback** — used with `stableJson` for match pairs and with identity for number arrays. DRY without sacrificing clarity.
+- **`scoreSession` sets `maxScore` once at initialization** — the old `test-session/scoring.ts` redundantly reassigned `summary.maxScore` inside the question loop. New version is clean.
+
+**Non-blocking notes:**
+- **N18 (cosmetic):** `evaluateMatch` with `question.pairs = []` and `selected.pairs = []` returns `true` (both empty, lengths equal, `arraysEqual([], [])` = `true`). Harmless in practice — zero-pair match questions will never reach the DB.
+- **N17 (carried forward):** SQL `score_session_answer_correct` match comparison is still order-sensitive. TypeScript new impl is order-independent. Alignment deferred to a future session.
+
+**TSP-051, TSP-052, TSP-128 → Done.** No browser smoke gate for pure TypeScript modules. The M3 scoring TypeScript layer is complete and fully unit-tested.
+
+---
+
+## Current Recommended Next Task
+
+**Session 11 Sanity PASS. TSP-053 and TSP-054 are Done.** Next session: TSP-055 — mastery update job. Requires creating `mastery_records` table (does not exist yet) and an UPDATE path from `session_results` to update topic/concept mastery after submit. Architect must read ROADMAP.md and FINAL_TRD Section 12.1 before planning.
+
+---
+
+### 2026-06-01 - Session 11 Plan (M3 second slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M3 Scoring & Learning Model — result aggregates + strategy metrics.
+
+**Scope:** TSP-053 (compute result aggregates: concept_scores, difficulty_scores, source_scores) + TSP-054 (compute strategy metrics). Both land in `Review`; DB gate required.
+
+**What already exists:**
+- `session_results` table (created in `202605300001_test_sessions.sql`) with: `score`, `max_score`, `accuracy`, `attempted`, `correct`, `incorrect`, `skipped`, `duration_sec`, `topic_scores`, `concept_scores`, `strategy_metrics` — but no `difficulty_scores` or `source_scores` columns.
+- `submit_test_session` (in `202605310001_test_session_engine.sql`) currently: loops through session_questions, scores each answer, accumulates `topic_scores`, inserts into `session_results`. Does NOT compute concept_scores, difficulty_scores, source_scores, or strategy_metrics — these columns are null after every submit.
+- `question_concepts (question_id, concept_id, relevance)` — exists, populated as questions are tagged.
+- `questions.difficulty` is NOT NULL CHECK `('easy','medium','hard')`.
+- `questions.source` is NOT NULL CHECK `('pyq','ai_generated','manual','vision_ingested')`.
+- `session_answers.confidence`, `.time_spent_sec`, `.revisit_count`, `.marks_awarded`, `.is_correct` — populated by submit loop (is_correct/marks_awarded written in the loop; confidence/time/revisit_count written by the autosave path before submit).
+- `mastery_records` table does NOT exist yet — TSP-055 creates it (Session 12).
+
+---
+
+#### Architecture decisions
+
+1. **Add `difficulty_scores` and `source_scores` columns** via `ALTER TABLE public.session_results ADD COLUMN IF NOT EXISTS … jsonb`. Two new nullable JSONB columns, additive and re-runnable. Better than packing them into `strategy_metrics` (wrong semantics) or `concept_scores` (wrong key space).
+2. **Expand the submit loop SELECT** to include `q.difficulty`, `q.source` — both NOT NULL, no COALESCE needed. Accumulate `v_difficulty_scores` and `v_source_scores` inside the loop using the same `jsonb_set` pattern as `v_topic_scores`.
+3. **concept_scores computed POST-loop** via a separate aggregate query on `question_concepts` + updated `session_answers`. After the loop sets `is_correct` and `marks_awarded` on every session_answer, the concept aggregate can read those updated values in the same transaction.
+4. **strategy_metrics computed POST-loop** via a single aggregate SELECT on `session_answers` (same timing — loop must complete first). Includes: `negativeMarksLost`, `highConfidenceWrong`, `correctGuessed`, `totalRevisits`, `timeOnWrongSec`, `timeOnSkippedSec`.
+5. **ON CONFLICT DO UPDATE** must include all four new fields. Omitting any one means a re-submitted session loses that data.
+6. **TypeScript `computeStrategyMetrics`** — pure function mirroring the SQL logic, useful for client-side preview and unit-testable without a DB.
+
+---
+
+#### Files the Builder will create or modify
+
+| Action | Path |
+|--------|------|
+| Create | `supabase/migrations/202606010003_result_aggregates.sql` |
+| Create | `src/lib/scoring/result-types.ts` |
+| Create | `src/lib/scoring/strategy-metrics.ts` |
+| Create | `src/tests/unit/strategy-metrics.test.ts` |
+| Edit | `src/lib/db/schema/session.ts` — add `difficultyScores` and `sourceScores` to `sessionResults` |
+| Edit | `trackers/JIRA_TRACKER.csv`, `docs/process/{SESSION_STATE,CHANGELOG,HANDOFF}.md` |
+
+No changes to `src/lib/test-session/scoring.ts`, `src/lib/scoring/marking-rules.ts`, or `src/lib/scoring/answer-eval.ts`.
+
+**Drizzle schema edit (`src/lib/db/schema/session.ts`):**
+
+The `sessionResults` table definition currently has `conceptScores` and `strategyMetrics` but is missing the two new columns. Add them immediately after `topicScores` and before `conceptScores` so the order matches the migration:
+
+```typescript
+// In sessionResults pgTable definition, after topicScores line:
+topicScores: jsonb("topic_scores").notNull(),
+difficultyScores: jsonb("difficulty_scores"),   // add
+sourceScores: jsonb("source_scores"),            // add
+conceptScores: jsonb("concept_scores"),
+strategyMetrics: jsonb("strategy_metrics"),
+```
+
+These are nullable JSONB columns — no `.notNull()`, no default. Matches the `ADD COLUMN IF NOT EXISTS … jsonb` in the migration.
+
+---
+
+#### Migration structure (`202606010003_result_aggregates.sql`)
+
+```sql
+-- Step 1: Extend session_results schema (additive, safe)
+alter table public.session_results
+  add column if not exists difficulty_scores jsonb,
+  add column if not exists source_scores jsonb;
+
+-- Step 2: Replace submit_test_session with expanded aggregation
+create or replace function public.submit_test_session(p_session_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  -- (existing declares unchanged)
+  v_difficulty_scores jsonb := '{}'::jsonb;   -- new
+  v_source_scores jsonb := '{}'::jsonb;        -- new
+  v_concept_scores jsonb;                      -- new (computed post-loop)
+  v_strategy_metrics jsonb;                    -- new (computed post-loop)
+  v_difficulty_key text;                       -- new
+  v_source_key text;                           -- new
+  v_difficulty_current jsonb;                  -- new
+  v_source_current jsonb;                      -- new
+begin
+  -- (existing auth/ownership/idempotency checks unchanged)
+
+  -- Expand the FOR loop SELECT to include q.difficulty and q.source:
+  for v_row in
+    select
+      sq.question_id,
+      q.topic_id,
+      q.type,
+      q.difficulty,    -- new
+      q.source,        -- new
+      qv.content,
+      sa.id as answer_id,
+      sa.selected_answer
+    from public.session_questions sq
+    join public.questions q on q.id = sq.question_id
+    join public.question_versions qv on qv.id = sq.question_version_id
+    left join public.session_answers sa
+      on sa.session_id = sq.session_id and sa.question_id = sq.question_id
+    where sq.session_id = p_session_id
+    order by sq.sequence
+  loop
+    -- (existing scoring logic unchanged)
+
+    -- Accumulate difficulty_scores (same jsonb_set pattern as topic_scores):
+    v_difficulty_key := coalesce(v_row.difficulty, 'unknown');
+    v_difficulty_current := coalesce(
+      v_difficulty_scores -> v_difficulty_key,
+      jsonb_build_object('score',0,'maxScore',0,'attempted',0,'correct',0,'incorrect',0,'skipped',0)
+    );
+    v_difficulty_scores := jsonb_set(
+      v_difficulty_scores, array[v_difficulty_key],
+      jsonb_build_object(
+        'score',     (v_difficulty_current->>'score')::numeric + v_marks_awarded,
+        'maxScore',  (v_difficulty_current->>'maxScore')::numeric + v_marks_per_correct,
+        'attempted', (v_difficulty_current->>'attempted')::int + case when v_is_correct is null then 0 else 1 end,
+        'correct',   (v_difficulty_current->>'correct')::int + case when v_is_correct then 1 else 0 end,
+        'incorrect', (v_difficulty_current->>'incorrect')::int + case when v_is_correct = false then 1 else 0 end,
+        'skipped',   (v_difficulty_current->>'skipped')::int + case when v_is_correct is null then 1 else 0 end
+      ), true
+    );
+
+    -- Accumulate source_scores (same pattern):
+    v_source_key := coalesce(v_row.source, 'unknown');
+    -- ... same jsonb_set pattern as difficulty_scores ...
+  end loop;
+
+  -- ── Post-loop: concept_scores ────────────────────────────────────────────
+  select jsonb_object_agg(
+    qc.concept_id::text,
+    jsonb_build_object(
+      'score',     coalesce(sum(sa.marks_awarded), 0),
+      'maxScore',  count(*) * v_marks_per_correct,
+      'attempted', count(*) filter (where sa.is_correct is not null),
+      'correct',   count(*) filter (where sa.is_correct = true),
+      'incorrect', count(*) filter (where sa.is_correct = false),
+      'skipped',   count(*) filter (where sa.is_correct is null)
+    )
+  )
+  into v_concept_scores
+  from public.session_questions sq
+  join public.question_concepts qc on qc.question_id = sq.question_id
+  left join public.session_answers sa
+    on sa.session_id = sq.session_id and sa.question_id = sq.question_id
+  where sq.session_id = p_session_id
+  group by qc.concept_id;   -- NOTE: the GROUP BY is inside the jsonb_object_agg CTE
+
+  -- ── Post-loop: strategy_metrics ─────────────────────────────────────────
+  select jsonb_build_object(
+    'negativeMarksLost',  coalesce(sum(case when is_correct = false then abs(marks_awarded) else 0 end), 0),
+    'highConfidenceWrong', count(*) filter (where confidence = 'sure' and is_correct = false),
+    'correctGuessed',      count(*) filter (where confidence = 'guessed' and is_correct = true),
+    'totalRevisits',       coalesce(sum(revisit_count), 0),
+    'timeOnWrongSec',      coalesce(sum(case when is_correct = false then time_spent_sec else 0 end), 0),
+    'timeOnSkippedSec',    coalesce(sum(case when is_correct is null then time_spent_sec else 0 end), 0)
+  )
+  into v_strategy_metrics
+  from public.session_answers
+  where session_id = p_session_id;
+
+  -- ── Insert / upsert session_results ─────────────────────────────────────
+  insert into public.session_results (
+    session_id, user_id, exam_id,
+    score, max_score, accuracy,
+    attempted, correct, incorrect, skipped,
+    duration_sec, topic_scores,
+    difficulty_scores, source_scores,  -- new
+    concept_scores, strategy_metrics   -- new
+  ) values (
+    ...,
+    v_difficulty_scores, v_source_scores,
+    v_concept_scores, v_strategy_metrics
+  )
+  on conflict (session_id) do update set
+    ...,
+    difficulty_scores = excluded.difficulty_scores,  -- new
+    source_scores = excluded.source_scores,          -- new
+    concept_scores = excluded.concept_scores,        -- new
+    strategy_metrics = excluded.strategy_metrics;    -- new
+
+  -- (existing status update and return unchanged)
+end;
+$$;
+
+revoke all on function public.submit_test_session(uuid) from public;
+grant execute on function public.submit_test_session(uuid) to authenticated;
+```
+
+**Builder note on concept_scores SQL:** The `jsonb_object_agg` with a `GROUP BY` inside needs a CTE form. The correct pattern is:
+```sql
+with concept_agg as (
+  select
+    qc.concept_id::text as concept_key,
+    coalesce(sum(sa.marks_awarded), 0) as score,
+    count(*) * v_marks_per_correct as max_score,
+    count(*) filter (where sa.is_correct is not null) as attempted,
+    count(*) filter (where sa.is_correct = true) as correct_count,
+    count(*) filter (where sa.is_correct = false) as incorrect_count,
+    count(*) filter (where sa.is_correct is null) as skipped_count
+  from public.session_questions sq
+  join public.question_concepts qc on qc.question_id = sq.question_id
+  left join public.session_answers sa
+    on sa.session_id = sq.session_id and sa.question_id = sq.question_id
+  where sq.session_id = p_session_id
+  group by qc.concept_id
+)
+select jsonb_object_agg(
+  concept_key,
+  jsonb_build_object('score', score, 'maxScore', max_score,
+    'attempted', attempted, 'correct', correct_count,
+    'incorrect', incorrect_count, 'skipped', skipped_count)
+)
+into v_concept_scores
+from concept_agg;
+-- v_concept_scores is null if no concept links exist — that is fine (column is nullable)
+```
+
+---
+
+#### TypeScript types (`src/lib/scoring/result-types.ts`)
+
+```typescript
+export type TopicScore = {
+  score: number;
+  maxScore: number;
+  attempted: number;
+  correct: number;
+  incorrect: number;
+  skipped: number;
+};
+
+export type DifficultyScores = {
+  easy?: TopicScore;
+  medium?: TopicScore;
+  hard?: TopicScore;
+};
+
+export type SourceScores = {
+  pyq?: TopicScore;
+  ai_generated?: TopicScore;
+  manual?: TopicScore;
+  vision_ingested?: TopicScore;
+};
+
+export type ConceptScores = Record<string, TopicScore>; // conceptId → score
+
+export type StrategyMetrics = {
+  negativeMarksLost: number;
+  highConfidenceWrong: number;
+  correctGuessed: number;
+  totalRevisits: number;
+  timeOnWrongSec: number;
+  timeOnSkippedSec: number;
+};
+
+export type SessionResultSummary = {
+  resultId: string;
+  sessionId: string;
+  score: number;
+  maxScore: number;
+  accuracy: number;
+  attempted: number;
+  correct: number;
+  incorrect: number;
+  skipped: number;
+  durationSec: number;
+  topicScores: Record<string, TopicScore>;
+  difficultyScores?: DifficultyScores;
+  sourceScores?: SourceScores;
+  conceptScores?: ConceptScores;
+  strategyMetrics?: StrategyMetrics;
+};
+```
+
+---
+
+#### Pure TypeScript function (`src/lib/scoring/strategy-metrics.ts`)
+
+```typescript
+import type { StrategyMetrics } from "./result-types";
+
+export type ScoredAnswerInput = {
+  isCorrect: boolean | null;
+  marksAwarded: number;
+  confidence: "sure" | "unsure" | "guessed" | null;
+  timeSpentSec: number;
+  revisitCount: number;
+};
+
+export function computeStrategyMetrics(answers: ScoredAnswerInput[]): StrategyMetrics {
+  // Mirrors the SQL aggregate query exactly.
+  // Skipped (isCorrect=null) contributes 0 to negativeMarksLost.
+  // Returns all-zero defaults for empty input.
+}
+```
+
+---
+
+#### Required test cases (`src/tests/unit/strategy-metrics.test.ts`)
+
+- All zeroes for empty input array ✅
+- `negativeMarksLost`: 2 wrong answers (marks -0.66 each) → `1.32` ✅
+- Skipped (isCorrect=null) does NOT contribute to `negativeMarksLost` ✅
+- `highConfidenceWrong`: confidence='sure' + isCorrect=false → counted; confidence='sure' + isCorrect=true → not counted ✅
+- `correctGuessed`: confidence='guessed' + isCorrect=true → counted ✅
+- `totalRevisits`: sum of all revisit_count values ✅
+- `timeOnWrongSec`: sum of time_spent_sec only for isCorrect=false rows ✅
+- `timeOnSkippedSec`: sum of time_spent_sec only for isCorrect=null rows ✅
+- Mixed session (correct sure, wrong unsure, skipped, wrong sure-high-confidence): all fields verified together ✅
+
+---
+
+#### Sanity focus items (11)
+
+1. `ALTER TABLE` uses `ADD COLUMN IF NOT EXISTS` — migration is re-runnable on an already-altered DB.
+2. Loop SELECT adds `q.difficulty` and `q.source` — both NOT NULL in schema, no null risk; no COALESCE needed (but defensive COALESCE to 'unknown' is acceptable).
+3. concept_scores CTE runs POST-loop — session_answers already have `is_correct` and `marks_awarded` set by the loop's UPDATE before this query executes.
+4. strategy_metrics SELECT runs POST-loop — same ordering guarantee as item 3.
+5. `submit_test_session` re-granted after `create or replace` — same signature `(uuid)`.
+6. `computeStrategyMetrics` TypeScript: skipped (isCorrect=null) returns zero `marksAwarded` → does NOT inflate `negativeMarksLost`.
+7. `computeStrategyMetrics` returns all-zero defaults for empty input (no division-by-zero, no NaN).
+8. concept_scores null-safe: if no `question_concepts` rows link to session's questions, `v_concept_scores` is null; `concept_scores` column is nullable — INSERT succeeds.
+9. ON CONFLICT DO UPDATE sets `difficulty_scores`, `source_scores`, `concept_scores`, `strategy_metrics` — all four new fields must appear in the SET clause.
+10. `result-types.ts` and `strategy-metrics.ts` do NOT import from `@/lib/test-session/scoring` — no circular dependency.
+11. **Drizzle schema sync** — `src/lib/db/schema/session.ts` `sessionResults` table has `difficultyScores: jsonb("difficulty_scores")` and `sourceScores: jsonb("source_scores")` added. `conceptScores` and `strategyMetrics` already existed; only these two are new. Verify the column order matches the migration.
+
+---
+
+### 2026-06-01 - Session 11 Plan Review - Observing Agent (Gemini CLI)
+
+**Review scope:** Session 11 architect plan in HANDOFF.md.
+
+**Finding: Critical omission (incorporated into plan above)**
+
+- `src/lib/db/schema/session.ts` `sessionResults` table was missing `difficultyScores` and `sourceScores` Drizzle column definitions. Without this edit the migration adds the columns at the DB level but TypeScript/Drizzle type inference stays stale. Plan updated: file edit added as item 5 in the files table; sanity focus item 11 added.
+- Note: `conceptScores` and `strategyMetrics` already existed in the Drizzle schema (lines 171-172) -- the observing agent's suggestion to add those was partially stale, but the two new columns were a genuine gap.
+
+**Finding: SQL aggregation analysis (no action required)**
+
+- Post-loop concept CTE is correct: separate aggregate after loop writes `is_correct`/`marks_awarded`; LEFT JOIN correctly treats unattempted questions as skipped.
+- Zero-session fallback: `strategy_metrics` aggregate returns all-zero row for blank submit, not NULL -- protects client deserialisation.
+
+**Finding: Parity guidance (already handled in plan)**
+
+- SQL JSONB key casing (`negativeMarksLost`, `highConfidenceWrong`, etc.) matches TypeScript `StrategyMetrics` type exactly. Skipped (isCorrect=null) correctly excluded from `negativeMarksLost` (sanity item 6).
+
+---
+
+### 2026-06-01 - Session 11 Builder Handoff - Codex
+
+Scope completed locally and live:
+
+- Implemented `TSP-053` and `TSP-054` from the Session 11 Architect plan, including the observing-agent Drizzle schema correction.
+- Opened `TSP-050` as the M3 scoring parent epic.
+- Left both rows in `Review` pending Sanity review. No browser smoke gate applies to this slice.
+
+Files changed:
+
+- `supabase/migrations/202606010003_result_aggregates.sql`
+- `src/lib/db/schema/session.ts`
+- `src/lib/scoring/result-types.ts`
+- `src/lib/scoring/strategy-metrics.ts`
+- `src/tests/unit/strategy-metrics.test.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/CHANGELOG.md`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added additive nullable JSONB columns `session_results.difficulty_scores` and `session_results.source_scores`.
+- Replaced `submit_test_session(uuid)` with an expanded version that preserves existing auth ownership checks, idempotency, marking-rule parsing, scoring, result upsert, status transition, return shape, and grant hygiene.
+- Added `q.difficulty` and `q.source` to the submit loop and accumulated `difficulty_scores` and `source_scores` using the same bucket shape as `topic_scores`.
+- Added post-loop `concept_scores` via a CTE over `question_concepts` after `session_answers.is_correct` and `marks_awarded` are written.
+- Added post-loop `strategy_metrics` with JSON keys `negativeMarksLost`, `highConfidenceWrong`, `correctGuessed`, `totalRevisits`, `timeOnWrongSec`, and `timeOnSkippedSec`.
+- Added Drizzle schema fields `difficultyScores` and `sourceScores` in `sessionResults` immediately after `topicScores`.
+- Added TypeScript result types and pure `computeStrategyMetrics` with unit coverage.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/strategy-metrics.test.ts` exited 0.
+- `node --check scripts/check-rpc-grants.js` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed to spawn lint.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- `node run-migrations.js` applied all migrations through `202606010003_result_aggregates.sql` after elevated rerun because the sandbox failed to spawn the migration runner.
+- `node scripts/check-rpc-grants.js` exited 0 after migration and verified all 10 tracked public RPC grants.
+- Existing live test-session smoke passed after loading `DATABASE_URL` from `.env`: start, answer save, submit, answer-key isolation, scoring, and idempotent resubmit all passed.
+
+Dev server:
+
+- Not started; Session 11 is a backend SQL/type/test slice with no UI route or component changes.
+
+Git state:
+
+- No commits were created. `git status --short` still shows the project tree as untracked alongside pre-existing deleted root docs, so staging row-sized commits would risk capturing unrelated repository state.
+
+Sanity review focus:
+
+- Confirm `ALTER TABLE` uses `ADD COLUMN IF NOT EXISTS`.
+- Confirm `submit_test_session` re-grants execute to `authenticated` after `create or replace`.
+- Confirm `concept_scores` and `strategy_metrics` are computed after the answer-scoring loop writes `session_answers.is_correct` and `marks_awarded`.
+- Confirm `ON CONFLICT DO UPDATE` sets all four aggregate fields: `difficulty_scores`, `source_scores`, `concept_scores`, and `strategy_metrics`.
+- Confirm `concept_scores` can be null when no concept links exist.
+- Confirm `strategy_metrics.negativeMarksLost` ignores skipped answers.
+- Confirm `computeStrategyMetrics([])` returns all zeroes.
+- Confirm new scoring files do not import from `@/lib/test-session/scoring`.
+- Confirm `src/lib/db/schema/session.ts` includes `difficultyScores` and `sourceScores` in the expected position.
+
+Next recommended step:
+
+- Sanity Test reviews Session 11 and either marks `TSP-053`/`TSP-054` ready for `Done` or hands back exact findings.
+
+---
+
+### 2026-06-01 - Session 11 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Scope:** TSP-053 + TSP-054. Files reviewed: `supabase/migrations/202606010003_result_aggregates.sql`, `src/lib/db/schema/session.ts`, `src/lib/scoring/result-types.ts`, `src/lib/scoring/strategy-metrics.ts`, `src/tests/unit/strategy-metrics.test.ts`.
+
+**Verdict: PASS (11/11)**
+
+| # | Focus item | Result |
+|---|-----------|--------|
+| 1 | `ALTER TABLE` uses `ADD COLUMN IF NOT EXISTS` | ✅ Lines 1-3 of migration |
+| 2 | Loop SELECT gains `q.difficulty` + `q.source`; both NOT NULL | ✅ Lines 109-110; defensive `coalesce(...,'unknown')` harmless |
+| 3 | concept_scores CTE runs post-loop (after `is_correct`/`marks_awarded` written) | ✅ Line 234, after `end loop;` at line 228 |
+| 4 | strategy_metrics SELECT runs post-loop | ✅ Line 265 |
+| 5 | `submit_test_session` re-granted after `create or replace` | ✅ Lines 349-350 |
+| 6 | TypeScript: skipped (`isCorrect===null`) excluded from `negativeMarksLost` | ✅ `isCorrect === false` guard; SQL `CASE WHEN is_correct = false` mirrors it |
+| 7 | `computeStrategyMetrics([])` returns all-zero defaults | ✅ `reduce` initial value + dedicated test |
+| 8 | `concept_scores` nullable when no concept links exist | ✅ Column declared without `NOT NULL` in migration and Drizzle schema |
+| 9 | ON CONFLICT DO UPDATE sets all 4 new fields | ✅ Lines 323-326 |
+| 10 | No import from `@/lib/test-session/scoring` in new scoring files | ✅ `result-types.ts` has zero imports; `strategy-metrics.ts` imports only `./result-types` |
+| 11 | Drizzle schema `difficultyScores`/`sourceScores` added in correct order | ✅ Lines 170-171 of session.ts; order matches migration |
+
+**Additional notes (non-blocking):**
+- `v_max_score = 0` guard raises for empty sessions — safe addition, consistent with submit semantics.
+- SQL uses `abs(coalesce(marks_awarded, 0))` for nullable DB `marks_awarded`; TypeScript uses `Math.abs` on non-nullable `ScoredAnswerInput.marksAwarded` — both correct for their respective contexts.
+- Mixed-session test uses `toEqual` with `negativeMarksLost: 1.32` — floating-point addition of `0.66 + 0.66` evaluates to `1.32` exactly in V8; individual test uses `toBeCloseTo` as belt-and-suspenders. Both pass.
+
+**Tracker:** TSP-053 → Done, TSP-054 → Done.
+
+---
+
+### 2026-06-01 - Session 12 Plan (M3 third slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone advanced:** M3 — Scoring & Learning Model  
+**Ticket:** TSP-055 — Implement mastery update job  
+**Depends on:** TSP-053 (Done) — session_results.topic_scores and concept_scores exist and are populated post-submit.
+
+---
+
+#### Context
+
+`mastery_records` does not exist in the live DB. TSP-055 is the first M3 learning model row — it creates the table and wires mastery updates into the post-submit path. TSP-056 (readiness score) and TSP-057 (forgetting-curve decay) depend on this table.
+
+FINAL_TRD Section 12.1 mandates a **conservative weighted update** combining old mastery, latest accuracy, difficulty weight, confidence weight, benchmark weight, and recency weight. The formula must not overreact to a single bad session but must penalise high-confidence-wrong answers (misconception signal) strongly.
+
+This is a **backend-only** session. No UI routes. One commit per file.
+
+---
+
+#### Architectural decisions locked for this session
+
+**A. Mastery score range: 0–100.** Percentage-based, intuitive for the dashboard.
+
+**B. Conservative blend formula: 60% old + 40% new.** Prevents wild swings. `newMastery = oldMastery * 0.6 + weightedSignal * 0.4`. On the very first attempt (no prior row) initialize from accuracy × confidence adjustment (floor ~70%).
+
+**C. Session type weight multiplier.** Benchmark and mock sessions carry 1.5× weight; all other types carry 1.0×. This reflects TRD §12.1: "Benchmark sessions have stronger measurement weight than adaptive practice."
+
+**D. Confidence signal weighting per answer.**  
+- Correct + sure → full positive signal.  
+- Correct + guessed → 0.5× signal (guessing doesn't prove mastery).  
+- Wrong + sure → negative signal × 1.5 (misconception penalty; TRD §12.1: "Wrong + sure reduces mastery strongly").  
+- Wrong + unsure → negative signal × 0.5.  
+- Skipped → excluded from confidence aggregate.
+
+**E. High-confidence-wrong misconception trigger.** If topic accuracy < 50% AND aggregated confidence signal > 80%, apply an additional floor-pull: `penalised = oldMastery - min(oldMastery, 1.5 * (oldMastery - topicAccuracy * 100))`. Clamped to 0–100.
+
+**F. Stability factor.** Starts at 1.0. Increases by 0.1 (capped 2.0) when the session is a "success" (accuracy > oldMastery × 0.8). Resets to 1.0 on failure. Stored on the mastery_records row so the Session 13 forgetting-curve decay job can use it.
+
+**G. Confidence level (metadata, not the mastery score itself).**  
+- `low`: < 3 total attempts.  
+- `medium`: 3–9 total attempts.  
+- `high`: ≥ 10 total attempts.
+
+**H. Unique constraint:** `(user_id, exam_id, topic_id, concept_id)`. Because the schema's CHECK enforces exactly one of `topic_id`/`concept_id` per row, this means one row per user-exam-topic and one per user-exam-concept. Upsert pattern: INSERT on first attempt, UPDATE on subsequent.
+
+**I. Job enqueue hook (out of scope for this session — noted for Builder).** The ideal trigger is an `insert into jobs` at the end of `submit_test_session`. That touches the Session 11 RPC. For this session, Builder should implement the job handler function and the mastery computation layer; wire the enqueue hook in a follow-up or treat it as an optional bonus within the same PR if trivial. The Sanity reviewer must check whether the enqueue was wired or explicitly deferred.
+
+---
+
+#### Files to create or modify
+
+| Action | Path |
+|--------|------|
+| Create | `supabase/migrations/202606010004_mastery_records.sql` |
+| Create | `src/lib/scoring/mastery-types.ts` |
+| Create | `src/lib/scoring/compute-mastery.ts` |
+| Create | `src/lib/jobs/handlers/update-mastery.ts` |
+| Create | `src/lib/db/schema/learning.ts` |
+| Create | `src/tests/unit/compute-mastery.test.ts` |
+| Edit | `src/lib/db/schema/index.ts` (export `learning` schema) |
+| Edit | `trackers/JIRA_TRACKER.csv`, `docs/process/SESSION_STATE.md`, `docs/process/HANDOFF.md` |
+
+Full plan with annotated code for each file is at `docs/SESSIONS/SESSION_12_PLAN.md`.
+
+---
+
+#### Migration contract (`202606010004_mastery_records.sql`)
+
+```sql
+create table if not exists mastery_records (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exam_id uuid not null references exams(id) on delete cascade,
+  topic_id uuid references topics(id) on delete cascade,
+  concept_id uuid references concepts(id) on delete cascade,
+  mastery_score numeric not null default 0,
+  confidence_level text not null default 'low'
+    check (confidence_level in ('low', 'medium', 'high')),
+  baseline_score numeric,
+  stability_factor numeric not null default 1.0,
+  questions_attempted int not null default 0,
+  questions_correct int not null default 0,
+  last_tested_at timestamptz,
+  updated_at timestamptz not null default now(),
+  check (
+    (topic_id is not null and concept_id is null) or
+    (topic_id is null and concept_id is not null)
+  ),
+  unique (user_id, exam_id, topic_id, concept_id)
+);
+-- + indexes: mastery_user_exam, mastery_topic_query, mastery_concept_query, mastery_last_tested
+-- + RLS: alter table mastery_records enable row level security
+-- + policy mastery_own_rows: for all using (auth.uid() = user_id)
+-- + grant select, insert, update on mastery_records to authenticated
+```
+
+**No `revoke all from public` needed here** — mastery_records is a user-owned table (RLS enforced), not a security-definer RPC. Grant is to `authenticated`, not `public`.
+
+---
+
+#### Computation signature
+
+```typescript
+function computeTopicMastery(
+  oldMastery: number | null,         // null on first attempt
+  topicAccuracy: number,             // 0–1 from topic_scores bucket
+  sessionType: SessionType,          // 'benchmark' | 'mock' → 1.5x; others → 1.0x
+  confidenceInTopic: number,         // 0–1 aggregated from per-answer confidence signals
+  difficultyInTopic: number,         // 0–1 (easy=0.33, medium=0.67, hard=1.0)
+  questionsAttempted: number,        // this session
+  questionsCorrect: number,          // this session
+  oldQuestionsAttempted?: number,    // from existing mastery_records row
+  oldQuestionsCorrect?: number
+): { masteryScore: number; confidenceLevel: ConfidenceLevel; stabilityFactor: number }
+```
+
+Pure function. No DB calls. Fully unit-testable.
+
+---
+
+#### Verification gate
+
+- Standard: `corepack pnpm typecheck` + `corepack pnpm lint` + `corepack pnpm test` (includes new unit tests).
+- Database gate: Migration applies with `node run-migrations.js`; `mastery_records` table exists; RLS and indexes present.
+- Unit test gate: All compute-mastery tests pass (empty/first/blend/misconception/benchmark/stability/confidence-level cases).
+- No dev server needed — backend-only slice.
+
+---
+
+#### Sanity review focus (flag for reviewer)
+
+1. **CHECK constraint**: migration enforces exactly one of `topic_id`/`concept_id` is non-null per row. Verify the SQL CHECK matches this exactly.
+2. **UNIQUE constraint**: `(user_id, exam_id, topic_id, concept_id)` — upsert pattern must use this. A NULL in either column participates in the unique index differently in PostgreSQL (NULLs are not equal); confirm the unique index handles this correctly (may need `where topic_id is not null` and `where concept_id is not null` partial indexes instead).
+3. **Misconception penalty**: high-confidence-wrong penalty (`topicAccuracy < 0.5 && confidence > 0.8`) must reduce mastery materially. Unit test must confirm.
+4. **First-attempt initialization**: `oldMastery === null` branch must set `confidence_level = 'low'`, `stability_factor = 1.0`, and `baseline_score = topicAccuracy * 100`.
+5. **No circular imports**: `mastery-types.ts` → no imports from scoring; `compute-mastery.ts` → imports only `mastery-types`; `update-mastery.ts` → imports from compute-mastery and db schema.
+6. **Drizzle schema column order**: `learning.ts` columns must match migration column order exactly (same discipline as Session 11 TSP-035).
+7. **RLS policy covers all operations**: INSERT from job handler (running as `authenticated` user via service role or JWT) must pass RLS.
+8. **Job enqueue wire-up**: confirm whether Builder wired the enqueue hook into `submit_test_session` or explicitly deferred it; document either way.
+
+---
+
+#### Next session (Session 13 — TSP-056)
+
+Readiness score and confidence: weighted average of mastery_records topic scores by exam manifest weights, adjusted by recency and benchmark coverage. Requires `mastery_records` to be populated (this session). Architect must read FINAL_TRD Section 12.3 before planning.
+
+---
+
+**Current Recommended Next Task:** Builder implements TSP-055 against this plan. Session 12 plan is at `docs/SESSIONS/SESSION_12_PLAN.md`.
+
+---
+
+### 2026-06-02 - Session 12 Completion Plan - Architect (Claude Sonnet 4.6)
+
+**Ticket:** TSP-055 — Mastery update job (completion pass)
+**Milestone:** M3 — Scoring & Learning Model
+
+---
+
+#### What was already built by prior partial Builder pass
+
+All pure/infrastructure pieces are in place. Do NOT re-create these:
+
+| File | Status |
+|---|---|
+| `supabase/migrations/202606010004_mastery_records.sql` | Created — not yet applied to live DB |
+| `src/lib/scoring/mastery-types.ts` | Done |
+| `src/lib/scoring/compute-mastery.ts` | Done — formula + helpers |
+| `src/lib/jobs/handlers/update-mastery.ts` | Done — repository-pattern job handler |
+| `src/lib/db/schema/learning.ts` | Done — Drizzle schema |
+| `src/lib/db/schema/index.ts` | Done — exports `learning` |
+| `src/tests/unit/compute-mastery.test.ts` | Done — 8 passing unit tests |
+
+---
+
+#### What the Builder must complete
+
+Three remaining pieces close the loop: a concrete Supabase adapter, the `submitSessionAction` wire-up, and a DB smoke script.
+
+---
+
+##### Piece 1 — Supabase repository adapter
+
+**Create** `src/lib/jobs/handlers/update-mastery-supabase.ts`
+
+Implement `MasteryUpdateRepository` (from `update-mastery.ts`) using the Supabase JS client. This is the only place that touches the database for mastery.
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type {
+  ExistingMasteryRecord,
+  MasteryJobSource,
+  MasteryLookupKey,
+  MasteryRecordUpsert,
+  MasteryUpdateRepository
+} from "@/lib/jobs/handlers/update-mastery";
+
+export function createSupabaseMasteryRepository(supabase: SupabaseClient): MasteryUpdateRepository {
+  return {
+    loadMasterySource,
+    findMasteryRecord,
+    upsertMasteryRecord
+  };
+
+  async function loadMasterySource(resultId: string): Promise<MasteryJobSource | null> { ... }
+  async function findMasteryRecord(key: MasteryLookupKey): Promise<ExistingMasteryRecord | null> { ... }
+  async function upsertMasteryRecord(record: MasteryRecordUpsert): Promise<void> { ... }
+}
+```
+
+**`loadMasterySource` — five sequential Supabase queries (no joined RPC needed):**
+
+1. Load `session_results` by `id = resultId`:  
+   select `session_id`, `exam_id`, `user_id`, `topic_scores`, `concept_scores`. Return `null` if not found.
+
+2. Load `test_sessions` by `id = session_id`:  
+   select `type` (maps to `SessionType`). Return `null` if not found.
+
+3. Load `session_answers` by `session_id`:  
+   select `question_id`, `is_correct`, `confidence`, `marks_awarded`, `time_spent_sec`, `revisit_count`.
+
+4. Load `session_questions` joined to `questions` by `session_id`:  
+   select `question_id`, `questions.topic_id`, `questions.difficulty`.
+   Build `Map<string, string>` for `questionTopics` and `Map<string, QuestionDifficulty>` for `questionDifficulties`.
+
+5. Load `question_concepts` for all `question_id`s in the session:  
+   select `question_id`, `concept_id`.
+   Build `Map<string, string[]>` for `questionConcepts`.
+
+Combine into `MasteryJobSource`:
+```typescript
+return {
+  resultId,
+  userId: result.user_id,
+  examId: result.exam_id,
+  sessionId: result.session_id,
+  sessionType: session.type as SessionType,
+  topicScores: (result.topic_scores as Record<string, ScoreBucket>) ?? {},
+  conceptScores: (result.concept_scores as Record<string, ScoreBucket>) ?? null,
+  sessionAnswers: /* mapped from query 3 */,
+  questionDifficulties: /* Map from query 4 */,
+  questionTopics: /* Map from query 4 */,
+  questionConcepts: /* Map from query 5 */,
+  testedAt: new Date()
+};
+```
+
+**`findMasteryRecord`:**
+```sql
+SELECT id, mastery_score, questions_attempted, questions_correct, stability_factor
+FROM mastery_records
+WHERE user_id = $1 AND exam_id = $2
+  AND (topic_id = $3 OR ($3 IS NULL AND topic_id IS NULL))
+  AND (concept_id = $4 OR ($4 IS NULL AND concept_id IS NULL))
+LIMIT 1
+```
+Via Supabase JS: `.eq('user_id', key.userId).eq('exam_id', key.examId)` plus conditional `.eq('topic_id', key.topicId)` or `.is('topic_id', null)` depending on which is set.
+
+**`upsertMasteryRecord`:**
+```typescript
+await supabase.from('mastery_records').upsert(
+  {
+    id: record.id,              // undefined on insert → server generates uuid
+    user_id: record.userId,
+    exam_id: record.examId,
+    topic_id: record.topicId ?? null,
+    concept_id: record.conceptId ?? null,
+    mastery_score: record.masteryScore,
+    confidence_level: record.confidenceLevel,
+    baseline_score: record.baselineScore,
+    stability_factor: record.stabilityFactor,
+    questions_attempted: record.questionsAttempted,
+    questions_correct: record.questionsCorrect,
+    last_tested_at: record.lastTestedAt.toISOString(),
+    updated_at: record.updatedAt.toISOString()
+  },
+  {
+    onConflict: record.topicId
+      ? 'user_id,exam_id,topic_id'
+      : 'user_id,exam_id,concept_id'
+  }
+);
+```
+
+**Important:** The `mastery_records` table grants `select, insert, update` to `authenticated` with owner-level RLS — no security-definer RPC needed. The Supabase JS client runs as the signed-in user, so RLS passes naturally.
+
+---
+
+##### Piece 2 — Wire up in `submitSessionAction`
+
+**Edit** `src/app/test/actions.ts`
+
+After the `submit_test_session` RPC call succeeds and `result.resultId` is present, run the mastery update. **Mastery failure must NOT fail the submit response** — it is a post-processing step. Wrap in try/catch and log.
+
+```typescript
+// After: const result = toSubmitSessionResult(data);
+if (result.resultId) {
+  try {
+    const masteryRepo = createSupabaseMasteryRepository(supabase);
+    await updateMasteryJob(result.resultId, masteryRepo);
+  } catch (masteryError) {
+    // Non-fatal: submit already scored; log and continue
+    console.error("[mastery] update failed for result", result.resultId, masteryError);
+  }
+}
+```
+
+Add the import:
+```typescript
+import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
+import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
+```
+
+**Why non-fatal:** the student's score is already written to `session_results`. A mastery update failure silently delays the learning model by one session — far better than crashing the submit response.
+
+---
+
+##### Piece 3 — DB smoke script
+
+**Create** `scripts/smoke-mastery-update.js`
+
+Pattern: mirror `smoke-test-session.js` but extend the verify step.
+
+```javascript
+// 1. Seed 3+ live MCQ questions across 2 topics
+// 2. start_test_session → get session_id
+// 3. For each question: saveAnswerAction with mixed confidence (sure/unsure/guessed)
+//    — ensure at least one correct+sure and one wrong+sure to exercise misconception penalty
+// 4. submit_test_session
+// 5. SELECT from mastery_records WHERE user_id = $1 AND exam_id = $2
+//    — assert at least 2 rows (one per topic)
+//    — assert mastery_score is between 0 and 100
+//    — assert confidence_level is 'low' (first attempt < 3 questions per topic)
+//    — assert questions_attempted > 0, questions_correct <= questions_attempted
+// 6. Submit the same session again (idempotency: mastery_records rows should not change)
+// 7. Cleanup: delete sessions, questions, mastery_records by test user
+console.log("smoke-mastery-update: PASS");
+```
+
+**Key idempotency assertion (step 6):** Because `submitSessionAction` calls mastery update after every `submit_test_session`, but `submit_test_session` itself is idempotent (returns early if already `scored`), mastery update will NOT re-run on a second submit (the RPC returns before returning a new `resultId`). The smoke must verify mastery rows remain unchanged on a duplicate submit call.
+
+---
+
+#### Migration status
+
+`202606010004_mastery_records.sql` exists locally but has **not been applied to the live DB**.
+
+After building Pieces 1–3:
+
+```powershell
+node run-migrations.js
+```
+
+Expected: migration `202606010004_mastery_records.sql` applies cleanly. No new RPCs in this migration — grant checker is unchanged.
+
+Then run:
+
+```powershell
+node scripts/smoke-mastery-update.js
+```
+
+---
+
+#### Files to create or modify
+
+| Action | Path |
+|---|---|
+| Create | `src/lib/jobs/handlers/update-mastery-supabase.ts` |
+| Edit | `src/app/test/actions.ts` (import + wire-up) |
+| Create | `scripts/smoke-mastery-update.js` |
+| Edit | `trackers/JIRA_TRACKER.csv` (TSP-055 → Done after gates pass) |
+| Edit | `docs/process/SESSION_STATE.md`, `docs/process/CHANGELOG.md`, `docs/process/HANDOFF.md` |
+
+---
+
+#### Verification gate
+
+- Unit: `corepack pnpm exec vitest run src/tests/unit/compute-mastery.test.ts` — already passes; must still pass after this session.
+- Standard: `corepack pnpm typecheck` + `corepack pnpm lint` + `corepack pnpm test` + `corepack pnpm build`.
+- Database: `node run-migrations.js` applies `202606010004`; `node scripts/smoke-mastery-update.js` asserts mastery rows inserted with correct shape and idempotency.
+- No browser smoke gate for this session — mastery is invisible to the student until the M4 dashboard row.
+
+---
+
+#### Sanity review focus (critical items for reviewer)
+
+1. **Mastery does NOT fail submit.** Verify that a thrown error inside `updateMasteryJob` is caught and logged without affecting the `SubmitSessionActionState` returned to the UI.
+
+2. **Idempotency of mastery update.** The second submit call to `submit_test_session` returns early (status already `scored`) before mastery update is triggered — confirm `result.resultId` is still returned from the already-scored branch and that mastery is NOT double-applied. (Check `submit_test_session` return shape for the `scored` early-return branch.)
+
+3. **`onConflict` column correctness.** Supabase upsert `onConflict` must reference the correct partial unique index columns. Topic rows use `(user_id, exam_id, topic_id)`; concept rows use `(user_id, exam_id, concept_id)`. A wrong conflict column silently inserts duplicates instead of updating.
+
+4. **RLS ownership.** `createSupabaseMasteryRepository` is called with the authenticated Supabase client inside `submitSessionAction` (after `requireAuth` passes). Mastery rows are written as `user_id = auth.uid()` — RLS `with check` must pass. Verify the upsert includes `user_id: auth.userId` matching the session owner.
+
+5. **Null `topic_id` / `concept_id` handling in `findMasteryRecord`.** PostgreSQL treats `NULL != NULL` in equality comparisons. A query `WHERE topic_id = NULL` returns zero rows; must use `IS NULL`. Verify the Supabase JS query uses `.is('topic_id', null)` not `.eq('topic_id', null)` when the key has no topic.
+
+6. **`sessionType` cast.** `test_sessions.type` is a text column. The adapter casts it to `SessionType`. If the DB contains a type not in the union (e.g. `'retest'`), `computeTopicMastery` falls through to weight `1.0` — acceptable. Verify no `unknown` type silently skips mastery.
+
+7. **`baseline_score` set only on first insert.** When `record.id` is `undefined` (first insert), `baseline_score` should be `accuracy * 100`. When it is an update (`record.id` defined), `baseline_score` is passed from the existing row via `oldMasteryScore === null ? accuracy * 100 : oldMasteryScore` — verify the handler logic in `update-mastery.ts` line 160 passes the correct value to the upsert.
+
+---
+
+#### Next session (Session 13 — TSP-056)
+
+Readiness score: weighted average of `mastery_records` topic scores by exam manifest `topic_weights`, adjusted for recency and benchmark coverage. Requires `mastery_records` to be populated (this session). Architect must read FINAL_TRD §12.3 before planning.
+
+---
+
+The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
+
+**Tracker rows:** TSP-149, TSP-090, TSP-091
+**Estimated effort:** One builder session (~4–5 hours)
+**Planned by:** Architect, 2026-05-29
+
+---
+
+### Step 0 — Attempt pnpm install first
+
+Before writing any code:
+
+```powershell
+corepack pnpm install
+```
+
+If it succeeds, verification is fully open for this session — run `typecheck`, `lint`, `test`, `build` normally.
+If it fails, record the exact error in `docs/process/BLOCKERS.md` and proceed coding. Mark completed rows `Review` (not `Done`) with a remark that verification is pending pnpm repair.
+
+---
+
+### TSP-149 — Audit and complete .env.example
+
+**Priority:** Do this first — 15 minutes, zero risk.
+**Gate:** Standard (typecheck only — no TS impact).
+
+Edit `.env.example`. The current file has the right keys but is missing `DATABASE_URL` and all inline comments. Replace the full file content with:
+
+```dotenv
+# ── App ──────────────────────────────────────────────────────────────────────
+# Public base URL. Used in server actions for redirects and email links.
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+# ── Supabase ──────────────────────────────────────────────────────────────────
+# Project URL and anon key — Supabase dashboard → Settings → API.
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+
+# Service role key — Supabase dashboard → Settings → API.
+# Never expose to the browser. Used only in server-side admin jobs.
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Transaction pooler connection string — Supabase dashboard → Settings →
+# Database → Connection string → Transaction pooler (port 6543).
+# Used by run-migrations.js and server-side admin scripts.
+DATABASE_URL=
+
+# ── AI providers ──────────────────────────────────────────────────────────────
+# Groq — first AI inference provider (TSP-066). https://console.groq.com/keys
+GROQ_API_KEY=
+
+# Anthropic — fallback / future use. https://console.anthropic.com/
+ANTHROPIC_API_KEY=
+
+# OpenAI — embeddings and fallback. https://platform.openai.com/api-keys
+OPENAI_API_KEY=
+
+# HuggingFace — auto-tagging (Phase 1.5, TSP-124). https://huggingface.co/settings/tokens
+HUGGINGFACE_API_KEY=
+
+# ── Email ─────────────────────────────────────────────────────────────────────
+# Resend — transactional email for reminders and digest (TSP-085). https://resend.com/api-keys
+RESEND_API_KEY=
+# From address for outbound email, e.g. noreply@yourdomain.com
+EMAIL_FROM=
+
+# ── Analytics and observability ───────────────────────────────────────────────
+# PostHog — product analytics. https://app.posthog.com/project/settings
+NEXT_PUBLIC_POSTHOG_KEY=
+NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
+
+# Sentry — error tracking (TSP-145). https://sentry.io/settings/
+SENTRY_DSN=
+```
+
+**Acceptance criteria:** A new developer can identify every secret, understand its purpose, and know where to obtain it without reading any source file.
+**Tracker:** Mark `Done`. Builder Remarks: what was added and why (`DATABASE_URL` was missing; comments added for developer orientation).
+
+---
+
+### TSP-090 — Admin role guard
+
+**Priority:** Second — security boundary. TSP-091 depends on it.
+**Gate:** Standard (typecheck + lint). App build gate also recommended since layout becomes async.
+
+**Context:**
+The middleware already redirects unauthenticated users from `/admin`. But any signed-in user can currently reach all admin pages — the role is never checked server-side. The DB `is_admin()` RLS function blocks writes, but errors arrive as generic PostgREST permission errors. This task adds a clean server-side role guard.
+
+**`public.is_admin()` in DB (already applied):**
+```sql
+select coalesce(
+  auth.jwt() -> 'app_metadata' ->> 'user_role',
+  auth.jwt() ->> 'user_role',
+  ''
+) = 'admin';
+```
+Mirror this exactly in TypeScript: check `app_metadata.user_role` first, `user_metadata.user_role` as fallback.
+
+---
+
+**Create `src/lib/auth/require-admin.ts`** (new file, new directory):
+
+```typescript
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+
+// For Server Component layouts and pages — throws a redirect.
+// In no-config scaffold mode (local dev without Supabase env values), this is
+// a no-op so the admin shell remains navigable during development.
+export async function requireAdmin(): Promise<void> {
+  if (!hasSupabaseConfig()) return;
+
+  const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login?redirectTo=/admin");
+  }
+
+  const role =
+    (user.app_metadata?.user_role as string | undefined) ??
+    (user.user_metadata?.user_role as string | undefined);
+
+  if (role !== "admin") {
+    redirect("/?error=unauthorized");
+  }
+}
+
+// For Server Actions — returns a typed result instead of redirecting.
+// Caller checks ok === false and returns the message as the action error state.
+export async function requireAdminForAction(): Promise<
+  { ok: false; message: string } | { ok: true; userId: string }
+> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return { ok: false, message: error?.message ?? "Sign in to continue." };
+  }
+
+  const role =
+    (user.app_metadata?.user_role as string | undefined) ??
+    (user.user_metadata?.user_role as string | undefined);
+
+  if (role !== "admin") {
+    return { ok: false, message: "Admin access required." };
+  }
+
+  return { ok: true, userId: user.id };
+}
+```
+
+**Constraints — do not change these:**
+- The no-config guard must stay. Removing it breaks local development without credentials.
+- `requireAdminForAction` must NOT call `redirect()` — server action result flows cannot catch redirects cleanly.
+- `requireAdminForAction` creates its own Supabase client. Callers still call `createClient()` separately for their own RPC calls — the guard only verifies the role.
+
+---
+
+**Update `src/app/admin/layout.tsx`** — make it `async` and add the guard:
+
+```typescript
+import Link from "next/link";
+import { requireAdmin } from "@/lib/auth/require-admin";
+
+export default async function AdminLayout({
+  children
+}: Readonly<{ children: React.ReactNode }>) {
+  await requireAdmin();
+
+  return (
+    <main className="min-h-screen bg-background">
+      <header className="border-b border-border bg-card">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
+          <Link className="text-sm font-semibold text-primary" href="/admin">
+            Admin Console
+          </Link>
+          {/* Replace with <AdminNav /> in TSP-091 */}
+          <nav className="flex items-center gap-4 text-sm text-muted-foreground">
+            <Link href="/admin">Overview</Link>
+            <Link href="/admin/manifests">Manifests</Link>
+            <Link href="/admin/questions">Questions</Link>
+            <Link href="/admin/questions/import">Import</Link>
+          </nav>
+        </div>
+      </header>
+      <div className="mx-auto w-full max-w-6xl px-6 py-8">{children}</div>
+    </main>
+  );
+}
+```
+
+---
+
+**Update `src/app/admin/questions/actions.ts`** — replace `requireSignedInUser` with `requireAdminForAction` at all three call sites (`createQuestionAction`, `updateQuestionAction`, `retireQuestionAction`).
+
+Change every block of this shape:
+```typescript
+const supabase = await createClient();
+const result = await requireSignedInUser(supabase);
+if (!result.ok) {
+  return result;
+}
+```
+
+To:
+```typescript
+const adminCheck = await requireAdminForAction();
+if (!adminCheck.ok) {
+  return { ok: false, message: adminCheck.message };
+}
+const supabase = await createClient();
+```
+
+Add import at top: `import { requireAdminForAction } from "@/lib/auth/require-admin";`
+
+Delete the `requireSignedInUser` helper function at the bottom of the file — it is no longer used.
+
+---
+
+**Update `src/app/admin/manifests/actions.ts`** — replace the inline auth block in `importManifestAction` (the `supabase.auth.getUser()` block before the RPC call):
+
+```typescript
+// Remove this block:
+const supabase = await createClient();
+const {
+  data: { user },
+  error: userError
+} = await supabase.auth.getUser();
+if (userError || !user) {
+  return { ok: false, message: ... };
+}
+
+// Replace with:
+const adminCheck = await requireAdminForAction();
+if (!adminCheck.ok) {
+  return { ok: false, message: adminCheck.message };
+}
+const supabase = await createClient();
+```
+
+Add import at top: `import { requireAdminForAction } from "@/lib/auth/require-admin";`
+
+---
+
+**Update `src/app/admin/questions/import/actions.ts`** — same pattern as manifests. Replace the inline auth block in `importQuestionsAction`. The error return here has extra fields — preserve them:
+
+```typescript
+const adminCheck = await requireAdminForAction();
+if (!adminCheck.ok) {
+  return {
+    ok: false,
+    message: adminCheck.message,
+    totalRows,
+    validRows: plan.questions.length,
+    importedRows: 0,
+    errors: []
+  };
+}
+const supabase = await createClient();
+```
+
+Add import at top: `import { requireAdminForAction } from "@/lib/auth/require-admin";`
+
+---
+
+**Acceptance criteria:**
+- Unauthenticated user hitting `/admin` → redirected to `/login?redirectTo=/admin`.
+- Authenticated non-admin user hitting `/admin` → redirected to `/?error=unauthorized`.
+- No-config scaffold mode (no `.env`) → admin shell renders normally (no crash, no redirect).
+- All three action files (`questions/actions.ts`, `manifests/actions.ts`, `questions/import/actions.ts`) use `requireAdminForAction` — no inline `getUser()` auth-only checks remain.
+- `requireSignedInUser` helper is deleted from `questions/actions.ts`.
+
+**Tracker:** Mark `Done`. Builder Remarks: what changed, that no-config bypass is intentional, browser smoke still blocked until admin user is created.
+**Rollback notes:** Revert `src/lib/auth/require-admin.ts` and the three action file changes. Layout revert removes the `async` keyword and `requireAdmin` import.
+
+---
+
+### TSP-091 — Admin nav with active links + Phase 1 section overview
+
+**Priority:** Third — depends on TSP-090 Done.
+**Gate:** App build gate (layout + Client Component change → `corepack pnpm build` required).
+
+**Context:**
+Current nav has no active state — all links look identical on every page. The overview page only shows two sections; Phase 1 adds five more. New developers and admins landing on `/admin` have no orientation.
+
+---
+
+**Create `src/components/admin/admin-nav.tsx`** (new file — Client Component):
+
+```typescript
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils";
+
+const links = [
+  { href: "/admin", label: "Overview", exact: true },
+  { href: "/admin/manifests", label: "Manifests", exact: false },
+  { href: "/admin/questions/import", label: "Import", exact: true },
+  { href: "/admin/questions", label: "Questions", exact: true },
+];
+
+export function AdminNav() {
+  const pathname = usePathname();
+
+  return (
+    <nav className="flex items-center gap-4 text-sm">
+      {links.map(({ href, label, exact }) => {
+        const isActive = exact
+          ? pathname === href
+          : pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link
+            key={href}
+            href={href}
+            className={cn(
+              "transition-colors hover:text-foreground",
+              isActive ? "font-medium text-foreground" : "text-muted-foreground"
+            )}
+          >
+            {label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+```
+
+**Note on link order:** `Import` (`/admin/questions/import`, `exact: true`) appears before `Questions` (`/admin/questions`, `exact: true`) in the array. Both use exact matching so order does not affect correctness — but keep this order to make intent clear.
+
+---
+
+**Update `src/app/admin/layout.tsx`** — swap inline nav for `<AdminNav />`:
+
+```typescript
+import Link from "next/link";
+import { requireAdmin } from "@/lib/auth/require-admin";
+import { AdminNav } from "@/components/admin/admin-nav";
+
+export default async function AdminLayout({
+  children
+}: Readonly<{ children: React.ReactNode }>) {
+  await requireAdmin();
+
+  return (
+    <main className="min-h-screen bg-background">
+      <header className="border-b border-border bg-card">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
+          <Link className="text-sm font-semibold text-primary" href="/admin">
+            Admin Console
+          </Link>
+          <AdminNav />
+        </div>
+      </header>
+      <div className="mx-auto w-full max-w-6xl px-6 py-8">{children}</div>
+    </main>
+  );
+}
+```
+
+---
+
+**Update `src/app/admin/page.tsx`** — extend the overview grid to all Phase 1 sections:
+
+```typescript
+import Link from "next/link";
+
+type SectionStatus = "live" | "phase-1" | "phase-1.5";
+
+const sections: {
+  title: string;
+  description: string;
+  href?: string;
+  linkLabel?: string;
+  status: SectionStatus;
+}[] = [
+  {
+    title: "Exam manifest engine",
+    description:
+      "Import syllabus, topics, concepts, marking rules, and historical cutoffs via JSON manifest.",
+    href: "/admin/manifests",
+    linkLabel: "Open manifest validator",
+    status: "live"
+  },
+  {
+    title: "Question CRUD",
+    description:
+      "Create, edit, and retire individual questions while preserving full version history.",
+    href: "/admin/questions",
+    linkLabel: "Open question CRUD",
+    status: "live"
+  },
+  {
+    title: "Bulk question import",
+    description:
+      "Upload questions in bulk via JSON or CSV with per-row validation and error report.",
+    href: "/admin/questions/import",
+    linkLabel: "Open bulk import",
+    status: "live"
+  },
+  {
+    title: "Review and approval workflow",
+    description:
+      "Approve, reject, and publish draft questions. Only approved questions appear in tests.",
+    status: "phase-1"
+  },
+  {
+    title: "Flagged content queue",
+    description:
+      "Review questions and AI explanations flagged by users. Quarantine or restore after review.",
+    status: "phase-1"
+  },
+  {
+    title: "Jobs monitor",
+    description:
+      "Inspect failed, pending, and dead background jobs. Retry important jobs from this view.",
+    status: "phase-1"
+  },
+  {
+    title: "Audit log",
+    description:
+      "View admin actions — role changes, question approvals, manifest imports — with filters.",
+    status: "phase-1"
+  },
+  {
+    title: "Question quality analytics",
+    description:
+      "Track difficulty index, discrimination, flag spikes, and quality tier distribution per exam.",
+    status: "phase-1.5"
+  }
+];
+
+const statusLabel: Record<SectionStatus, string> = {
+  live: "Live",
+  "phase-1": "Phase 1",
+  "phase-1.5": "Phase 1.5"
+};
+
+const statusClass: Record<SectionStatus, string> = {
+  live: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
+  "phase-1": "bg-blue-50 text-blue-700 ring-blue-600/20",
+  "phase-1.5": "bg-slate-100 text-slate-600 ring-slate-500/20"
+};
+
+export default function AdminPage() {
+  return (
+    <section className="grid gap-6">
+      <div>
+        <p className="text-sm font-medium text-primary">Admin console</p>
+        <h1 className="mt-2 text-3xl font-semibold">Overview</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+          Content operations and platform management for the Test Series Portal.
+        </p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {sections.map((section) => (
+          <div key={section.title} className="rounded-lg border border-border bg-card p-5">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-sm font-semibold leading-5">{section.title}</h2>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusClass[section.status]}`}
+              >
+                {statusLabel[section.status]}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">{section.description}</p>
+            {section.href && section.linkLabel ? (
+              <Link
+                className="mt-4 inline-flex text-xs font-medium text-primary"
+                href={section.href}
+              >
+                {section.linkLabel} →
+              </Link>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+```
+
+---
+
+**Acceptance criteria:**
+- Active nav link is visually distinct (bold, `text-foreground`) on each admin page; inactive links are `text-muted-foreground`.
+- `/admin` overview shows all 8 sections with correct status badges (3 Live, 4 Phase 1, 1 Phase 1.5).
+- Live sections have working links. Phase 1 and 1.5 sections render without links.
+- `corepack pnpm build` passes — layout is `async` and includes a Client Component island.
+
+**Tracker:** Mark `Done`. Builder Remarks: what was added, that coming-soon sections have no routes yet, that badges give developer orientation at a glance.
+**Rollback notes:** Revert `src/components/admin/admin-nav.tsx` (delete), revert `src/app/admin/layout.tsx` to inline nav, revert `src/app/admin/page.tsx` to prior two-card layout.
+
+---
+
+### 2026-06-02 - Session 12 Builder Handoff - Codex
+
+Scope completed:
+
+- Completed `TSP-055` mastery update job.
+- Built the three remaining Session 12 pieces: Supabase adapter, `submitSessionAction` wire-up, and live DB smoke script.
+- Marked `TSP-055` `Done` after local and live DB verification passed.
+
+Files changed:
+
+- `src/lib/jobs/handlers/update-mastery-supabase.ts`
+- `src/app/test/actions.ts`
+- `scripts/smoke-mastery-update.js`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added `createSupabaseMasteryRepository`, implementing `MasteryUpdateRepository` with the planned five-query load path: `session_results`, `test_sessions`, `session_answers`, `session_questions` joined to `questions`, and `question_concepts`.
+- `findMasteryRecord` uses `.is("topic_id", null)` and `.is("concept_id", null)` for null lookups, not `.eq(..., null)`.
+- `upsertMasteryRecord` writes `user_id` from the scored session result and uses exact partial-unique conflict targets: `user_id,exam_id,topic_id` for topic rows and `user_id,exam_id,concept_id` for concept rows.
+- `submitSessionAction` now runs `updateMasteryJob(resultId, createSupabaseMasteryRepository(supabase))` after scoring, wrapped in `try/catch`; mastery failures are logged and never fail the submit response.
+- Added an already-scored pre-check before the submit RPC. This is required because the current `submit_test_session` RPC returns the existing `result_id` for duplicate submits; without the guard, duplicate submits would double-blend mastery.
+- Added `scripts/smoke-mastery-update.js`, which seeds fixed benchmark questions across 2 topics and 2 concepts, submits, verifies mastery row shape, and confirms duplicate-submit idempotency. The smoke has a self-contained JS copy of the mastery flow because this OneDrive/pnpm workspace fails with `UNKNOWN: unknown error, read` when loading the TypeScript runtime directly from `node_modules`.
+
+Verification:
+
+- `node --check scripts/smoke-mastery-update.js` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed to spawn lint.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- `node run-migrations.js` applied all migrations through `202606010004_mastery_records.sql`.
+- `node scripts/check-rpc-grants.js` verified authenticated execute privilege for all 10 tracked RPCs.
+- `node scripts/smoke-mastery-update.js` passed live with 2 topic mastery rows, 2 concept mastery rows, owner/shape checks, low first-attempt confidence, and unchanged mastery rows on duplicate submit.
+
+Sanity review focus:
+
+- Confirm mastery failure remains non-fatal in `submitSessionAction`.
+- Confirm duplicate submit skips mastery when the session was already `scored` before the RPC.
+- Confirm Supabase `onConflict` columns match the partial unique indexes exactly.
+- Confirm null lookup filters use `.is(..., null)`.
+- Confirm inserted rows use the scored session user id so owner RLS passes.
+
+Next recommended step:
+
+- Sanity reviewer should inspect `TSP-055`, especially the duplicate-submit guard and Supabase null/conflict handling. After that, proceed to `TSP-056` readiness scoring or `TSP-057` forgetting-curve decay for the next M3 slice.
+
+---
+
+## Parked Blockers — Do Not Start
+
+| Task | Waiting for |
+|---|---|
+| TSP-019, TSP-024 → Done | Admin user: `app_metadata.user_role = "admin"` in Supabase Auth |
+| TSP-025 → Done | Same + pnpm repair |
+| TSP-035, TSP-027, TSP-026, TSP-159 → Done | Correct Supabase transaction pooler `DATABASE_URL`, migration application, grant verification, and browser/admin smoke |
+| TSP-039, TSP-040, TSP-041 → Done | Same `DATABASE_URL` fix, Session 3 migration application, grant verification, and start/save/submit smoke with a plain test user |
+| TSP-068 AI analysis job | `GROQ_API_KEY` |
+| TSP-085 reminder job | `RESEND_API_KEY` |
+| TSP-102 staging env | Vercel + Supabase project setup |
+
+Supabase URL, anon key, and `DATABASE_URL` are in local `.env`, but the 2026-05-30 Session 2 and Session 3 migration attempts failed with `tenant/user postgres.iwzerbplanzlzwtiiska not found`. Confirm the current project and replace the pooler connection string before DB smoke.
+
+---
+
+## Commands
+
+Verification:
+
+```powershell
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+
+Dev server:
+
+```powershell
+corepack pnpm exec next dev --hostname 127.0.0.1 --port 3000
+```
+
+---
+
+## Tracker Discipline
+
+Before coding:
+
+- Set task row to `In Progress`.
+- Set `Owner` and `Built By`.
+
+After coding:
+
+- Add `Builder Remarks`.
+- Add `Rollback Notes` for infra/schema/process changes.
+- Run verification.
+- Mark `Done` only if gates pass.

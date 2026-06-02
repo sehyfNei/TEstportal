@@ -1,0 +1,185 @@
+{
+  "schemaVersion": "1.0",
+  "exam": {
+    "slug": "upsc-prelims",
+    "name": "UPSC Civil Services Preliminary Examination",
+    "description": "General Studies Paper I focused diagnostic and test-series configuration for UPSC Prelims.",
+    "languages": ["en"],
+    "supportedQuestionTypes": ["mcq", "statement", "assertion", "match"],
+    "aiPersona": "Strict UPSC mentor focused on conceptual clarity, elimination strategy, factual precision, and PYQ-style traps."
+  },
+  "marking": {
+    "totalQuestions": 100,
+    "durationMinutes": 120,
+    "marksPerCorrect": 2,
+    "negativeMarkingFraction": 0.6667,
+    "sections": [
+      {
+        "slug": "general-studies",
+        "name": "General Studies",
+        "questionCount": 100
+      }
+    ]
+  },
+  "topics": [
+    {
+      "slug": "polity",
+      "name": "Indian Polity and Governance",
+      "weightPercent": 18,
+      "children": [
+        {
+          "slug": "constitution",
+          "name": "Constitutional Framework",
+          "weightPercent": 5
+        },
+        {
+          "slug": "parliament",
+          "name": "Parliament and Lawmaking",
+          "weightPercent": 5
+        },
+        {
+          "slug": "judiciary",
+          "name": "Judiciary and Constitutional Bodies",
+          "weightPercent": 4
+        }
+      ]
+    },
+    {
+      "slug": "modern-history",
+      "name": "Modern Indian History",
+      "weightPercent": 14,
+      "children": [
+        {
+          "slug": "freedom-struggle",
+          "name": "Freedom Struggle",
+          "weightPercent": 8
+        },
+        {
+          "slug": "social-reform",
+          "name": "Social and Religious Reform Movements",
+          "weightPercent": 3
+        }
+      ]
+    },
+    {
+      "slug": "geography",
+      "name": "Indian and World Geography",
+      "weightPercent": 16,
+      "children": [
+        {
+          "slug": "physical-geography",
+          "name": "Physical Geography",
+          "weightPercent": 5
+        },
+        {
+          "slug": "indian-geography",
+          "name": "Indian Geography",
+          "weightPercent": 7
+        }
+      ]
+    },
+    {
+      "slug": "economy",
+      "name": "Indian Economy",
+      "weightPercent": 14,
+      "children": [
+        {
+          "slug": "macro-economy",
+          "name": "Macroeconomy and Growth",
+          "weightPercent": 5
+        },
+        {
+          "slug": "banking-finance",
+          "name": "Banking, Finance and Monetary Policy",
+          "weightPercent": 5
+        }
+      ]
+    },
+    {
+      "slug": "environment",
+      "name": "Environment and Ecology",
+      "weightPercent": 18,
+      "children": [
+        {
+          "slug": "biodiversity",
+          "name": "Biodiversity and Conservation",
+          "weightPercent": 6
+        },
+        {
+          "slug": "climate-change",
+          "name": "Climate Change and International Agreements",
+          "weightPercent": 5
+        }
+      ]
+    },
+    {
+      "slug": "science-tech",
+      "name": "Science and Technology",
+      "weightPercent": 10
+    },
+    {
+      "slug": "current-affairs",
+      "name": "Current Affairs",
+      "weightPercent": 10
+    }
+  ],
+  "conceptClusters": [
+    {
+      "slug": "rights-and-review",
+      "name": "Fundamental Rights and Judicial Review",
+      "description": "Frequently linked concepts around rights, writs, due process, and constitutional review."
+    },
+    {
+      "slug": "parliamentary-procedure",
+      "name": "Parliamentary Procedure",
+      "description": "Money bills, financial bills, joint sitting, committees, and speaker powers."
+    }
+  ],
+  "concepts": [
+    {
+      "slug": "article-21",
+      "name": "Article 21",
+      "topicSlug": "constitution",
+      "clusterSlug": "rights-and-review"
+    },
+    {
+      "slug": "judicial-review",
+      "name": "Judicial Review",
+      "topicSlug": "judiciary",
+      "clusterSlug": "rights-and-review"
+    },
+    {
+      "slug": "money-bill",
+      "name": "Money Bill",
+      "topicSlug": "parliament",
+      "clusterSlug": "parliamentary-procedure"
+    },
+    {
+      "slug": "financial-bill",
+      "name": "Financial Bill",
+      "topicSlug": "parliament",
+      "clusterSlug": "parliamentary-procedure"
+    }
+  ],
+  "historicalCutoffs": [
+    {
+      "year": 2024,
+      "category": "general",
+      "cutoffScore": 87.98,
+      "maxScore": 200,
+      "metadata": {
+        "source": "to_be_verified_before_public_launch"
+      }
+    },
+    {
+      "year": 2023,
+      "category": "general",
+      "cutoffScore": 75.41,
+      "maxScore": 200,
+      "metadata": {
+        "source": "to_be_verified_before_public_launch"
+      }
+    }
+  ]
+}
+
