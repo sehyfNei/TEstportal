@@ -235,7 +235,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 17 builder completion (2026-06-03). TSP-078 and TSP-079 Done. First visible `/dashboard` page is implemented and statically verified. Next recommended builder work: Session 18 - TSP-080 progress timeline or TSP-081 strategy metrics widget.**
+**Session 17 Sanity PASS (2026-06-03). TSP-078 + TSP-079 Done. /dashboard is live: readiness card, weak topics, stat chips. M4 dashboard visible. Next: Session 18 — TSP-081 strategy metrics widget (data already in API response, fast win) then TSP-063 topic-prefilled retest CTA.**
 
 Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 row `TSP-062`, Session 16 row `TSP-076`, and Session 17 rows `TSP-078`/`TSP-079` are Done.
 

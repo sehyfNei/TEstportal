@@ -6582,6 +6582,56 @@ Next recommended step:
 
 - Session 18 can continue dashboard UI with `TSP-080` progress timeline or `TSP-081` strategy metrics widget, or pivot to `TSP-063` for topic-prefilled retest/practice CTAs.
 
+### 2026-06-03 - Session 17 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Scope:** TSP-078 — `ReadinessCard`, TSP-079 — `WeakTopics`, dashboard page shell replacement.
+
+**Overall: PASS. TSP-078 → Done. TSP-079 → Done.**
+
+---
+
+**S1 — Page data loading: PASS.**  
+Next.js 15 `searchParams` correctly `await`-ed. `DashboardData` discriminated union covers all four states: unconfigured, unauthenticated, no active exams, and full success. Each state has an early return before the success render — no null-dereference risk.
+
+**S2 — Exam selection: PASS.**  
+`isValidExamId` uses a `param is string` type predicate, correctly narrowing `examParam` to `string` at the call site. Falls back to `exams[0].id` when no valid param is present. Exam switcher pill links only render when `exams.length > 1`.
+
+**S3 — Direct `fetchDashboardOverview` call: PASS.**  
+Server component correctly imports and calls the aggregation function directly rather than going through the action wrapper. This is the right pattern — action wrappers are for client components.
+
+**S4 — `ReadinessCard` (TSP-078): PASS.**  
+Score rounded, color-coded at 70/40 thresholds. `ConfidenceBadge` uses `Record<typeof level, string>` — stricter than spec, all three levels explicitly covered. Stale-topics warning conditional on `staleTopicIds.length > 0`. Benchmark nudge conditional on `!hasBenchmarkSession`. No client state, no `"use client"`.
+
+**S5 — `WeakTopics` (TSP-079): PASS.**  
+Builder destructures only `topics` from `Props` — `examId` accepted in the type but not destructured, so no unused-variable lint warning. `TopicRow` adds `Math.min(100, Math.max(0, ...))` clamping on mastery before rendering — prevents any CSS overflow if upstream data is out of range. Correct empty state. `&rarr;` HTML entity renders as `→`.
+
+**S6 — Visual consistency: PASS.**  
+`masteryBarColorClass` uses the same 70/40 thresholds as `scoreColorClass` — consistent green/amber/red signaling across both widgets.
+
+**S7 — `StatChip`: PASS.**  
+Wraps in `<Link>` only when `href` is provided; otherwise plain div. JSX fragment variable pattern is correct. `sm:grid-cols-3` responsive layout.
+
+**S8 — No browser verification: acknowledged.**  
+All gates passed through static analysis (typecheck + lint + test + build). Browser rendering unverified due to persistent OneDrive dev-server issue (S17-C). First browser verification will happen when the founder creates the admin/test users and resolves the M0 blocker.
+
+---
+
+**Known issues (carry forward):**  
+- **S17-A** — "Practice →" links in `WeakTopics` go to `/tests` without topic context. TSP-063 adds the direct topic/concept retest CTA.  
+- **S17-B** — Exam switcher uses pill links, not a dropdown. Acceptable for MVP.  
+- **S17-C** — Browser rendering unverified in this workspace.
+
+---
+
+**M4 dashboard is now visible.** With TSP-076 through TSP-079 Done, a logged-in user can see their readiness score, topic weaknesses, due retests count, and unresolved mistakes at `/dashboard`.
+
+**Session 18 options:**
+- **TSP-081** (strategy metrics widget) — consumes `overview.strategyMetrics` already in the response, minimal new code
+- **TSP-080** (progress timeline) — needs a new query for historical `session_results`
+- **TSP-063** (concept retest sessions) — adds the topic-prefilled "Practice" CTA that S17-A deferred, bridges to M4 complete
+
+Recommended: **TSP-081 first** (fastest — data already in the API response, just a new display widget), then **TSP-063** to close the retest loop.
+
 ---
 
 ## Parked Blockers — Do Not Start
