@@ -4379,6 +4379,46 @@ Sanity review focus:
 4. `question_concepts` RLS can still return no concept if a question is retired between start and submit; the job stores `concept_id = null` in that case.
 5. `retest_queue` remains unpopulated until `TSP-062`.
 
+### 2026-06-02 - Session 14 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Scope:** TSP-059 — migration, TSP-060 — `classifyMistake`, `createMistakeItemsJob`, wire-up, unit tests, smoke.
+
+**Overall: PASS. TSP-059 → Done. TSP-060 → Done.**
+
+---
+
+**S1 — Migration (TSP-059): PASS.**  
+`mistake_items` has `UNIQUE (user_id, session_id, question_id)`, all seven `mistake_type` values, all five `status` values, owner RLS policies with both `using` and `with check`, and authenticated grants. `retest_queue` has the topic/concept XOR check, matching RLS, grants, and an `updated_at` trigger wired to `public.set_updated_at()` which was defined in migration 1. Both tables enable RLS before policies are attached. All indexes from spec present.
+
+**S2 — `classifyMistake` priority order (TSP-060): PASS.**  
+Priority is exact: overconfidence (wrong+sure) → conceptual_gap (wrong, any other confidence) → not_attempted (null is_correct) → lucky_guess (correct+guessed) → bookmarked (correct+marked_review) → null. The `toAnswerConfidence` guard sanitizes raw DB strings before they reach the classifier.
+
+**S3 — `createMistakeItemsJob` idempotency and error handling: PASS.**  
+Upsert uses `onConflict: "user_id,session_id,question_id"` with `ignoreDuplicates: true`. This matches the unique constraint exactly. Both `loadQuestionTopics` and `loadPrimaryConcepts` throw on DB error, which propagates to the non-fatal catch in `submitSessionAction` — submit always returns `ok: true`. If queries return zero rows (RLS filtered, non-live question), maps are simply empty and `topic_id`/`concept_id` land as null — job still runs.
+
+**S4 — Wire-up in `submitSessionAction`: PASS.**  
+Mistake job runs inside `if (result.resultId && !wasAlreadyScored)`, same guard as mastery. Both jobs have separate try/catch blocks. Mastery runs first. Mistake failure never breaks submit or mastery.
+
+**S5 — Unit tests: PASS.**  
+All 12 planned cases present and correctly mapped. Table-driven structure is clean.
+
+**S6 — Smoke: PASS.**  
+Live smoke produced 4 rows (overconfidence, conceptual_gap, not_attempted, lucky_guess). Two idempotency checks: second job run on same result_id, and duplicate submit. Both confirmed 4 rows unchanged. Builder used a fixed benchmark template (same pattern as mastery smoke) instead of diagnostic random selection — this is correct, guarantees the seeded questions are selected.
+
+---
+
+**Known issues:**
+
+**S14-A (non-blocking, carry forward):** `questions` RLS filters to `status = 'live'` only. If a question is retired after session start but before submit, `topic_id` will be null in the mistake_item. Acceptable for MVP.
+
+**S14-B (by design):** `retest_queue` schema created here but unpopulated. TSP-062 (Session 15) adds the scheduler.
+
+**S14-C (note):** Questions the student never interacted with (no `session_answers` row) are not captured as `not_attempted`. Only explicitly saved skips (upserted with `selected_answer = null`) produce a `not_attempted` row. This is a reasonable scope boundary for the autosave-driven UI flow. Revisit if session analysis needs full coverage of unattempted questions.
+
+---
+
+**Next session:** Session 15 — TSP-062 (simple retest scheduler). Reads `mistake_items` to populate `retest_queue` based on priority, recency, and repeated failure. TSP-062 completion unblocks TSP-076 (dashboard overview API).
+
 ---
 
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
