@@ -231,7 +231,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 16 builder completion (2026-06-03). TSP-076 Done. Dashboard overview backend aggregation is implemented and verified. Next recommended builder work: Session 17 — TSP-078 readiness card UI and TSP-079 weak topics widget consuming `getDashboardOverviewAction`.**
+**Session 16 Sanity PASS (2026-06-03). TSP-076 Done. Dashboard overview API complete: readiness, weak topics, due retests, recent sessions, unresolved mistake count, strategy metrics — all via Promise.allSettled with per-source fallbacks. S16-A resolved by Builder. Next: Session 17 — TSP-078 + TSP-079 readiness card + weak topics widget, first visible /dashboard page.**
 
 Session 4–6 M1 rows remain in Review pending browser smoke. Session 7–9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 row `TSP-062`, and Session 16 row `TSP-076` are Done.
 

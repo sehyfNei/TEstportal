@@ -6069,6 +6069,47 @@ Next recommended step:
 
 - Session 17 should build the readiness card and weak topics widget (`TSP-078`/`TSP-079`) using `getDashboardOverviewAction`.
 
+### 2026-06-03 - Session 16 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Scope:** TSP-076 — `overview.ts`, `actions.ts`, 16 unit tests.
+
+**Overall: PASS. TSP-076 → Done.**
+
+---
+
+**S1 — Pure helpers: PASS.**  
+`computeWeakTopicPriority` clamps weight ≥ 0 and mastery to `[0, 100]` — bonus improvement over spec (prevents negative priority if mastery ever exceeds 100). `buildWeakTopics` correctly filters `priority > 0`, sorts descending, slices 5. Unstarted topics (no mastery record) default to masteryScore 0 and rank by weight alone.
+
+**S2 — `toStrategyMetrics`: PASS.**  
+Guards null, non-object, array. Missing keys fall back to 0. String values parsed through `toNumber`. Correct for Supabase JSONB which may return strings.
+
+**S3 — `Promise.allSettled` isolation: PASS.**  
+All five data sources called concurrently. Each failure resolves to its typed fallback — no source kill propagates to the final return shape.
+
+**S4 — `loadWeakTopics` resolves S16-A: PASS.**  
+Builder correctly throws on both `topicResult.error` AND `masteryResult.error`. The spec's S16-A (mastery error swallowed) does not apply — both propagate to the `allSettled` fallback. No known issues remain for weak topics.
+
+**S5 — Due retests: PASS.**  
+Full (unbounded) query, count computed before slicing. ISO string comparison `row.due_at <= now` is correct for UTC ISO 8601 timestamps (lexicographic order is chronological). List capped to 10.
+
+**S6 — Recent sessions: PASS.**  
+Two separate queries merged by `session_id`. Test sessions query has no error throw — type silently falls back to `"unknown"` if that query fails, which is the correct non-fatal behavior for a derived field.
+
+**S7 — Mistake count: PASS.**  
+`{ count: "exact", head: true }` used correctly. Throws on error. Returns `count ?? 0` for empty tables.
+
+**S8 — Server action: PASS.**  
+`hasSupabaseConfig()`, local `isUuid()` guard, `auth.getUser()` (not `getSession()`), structured `{ ok: true/false }` return. Consistent with the existing actions pattern.
+
+**S9 — Unit tests: PASS.**  
+All 16 planned cases present. The `topic()` helper keeps tests concise. Table-driven structure for `computeWeakTopicPriority` cases.
+
+---
+
+**No known issues.** S16-A was resolved by the Builder. S16-B and S16-C from the plan are informational notes, not blocking issues.
+
+**Next session:** Session 17 — TSP-078 (readiness card) + TSP-079 (weak topics widget). First visible `/dashboard` page. Consumes `getDashboardOverviewAction`. Creates `src/app/dashboard/page.tsx` with two server-rendered widgets.
+
 ---
 
 ## Parked Blockers — Do Not Start
