@@ -6634,6 +6634,425 @@ Recommended: **TSP-081 first** (fastest — data already in the API response, ju
 
 ---
 
+### 2026-06-03 - Session 18 Plan (M4 fifth slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M4 Dashboard & Retention  
+**Tickets:** TSP-081 (strategy metrics widget), TSP-063 (concept retest sessions)  
+**Dependencies complete:** TSP-054 strategy metrics ✅, TSP-076 dashboard API ✅, TSP-062 retest queue ✅, TSP-037 topic practice ✅
+
+---
+
+#### Overview
+
+Session 18 closes out the two remaining M4 dashboard actions: surface strategy signals to the user (TSP-081) and give them a one-click path to start a retest from the due-retests list (TSP-063).
+
+**TSP-081** is display-only. `overview.strategyMetrics` is already in every `fetchDashboardOverview` response — just needs a widget component.
+
+**TSP-063** needs a new server action (`startRetestAction`) and a client component (`DueRetests`). It reuses the existing `start_test_session` RPC with `type='concept_retest'` — **no new SQL migration** (see S18-A for the known quality gap). The retest session sends the user directly to the existing test-runner at `/tests/:sessionId`.
+
+**No new migration. No unit tests. No smoke script.**  
+Verification: typecheck + lint + test + build.
+
+---
+
+#### File plan
+
+| Action | Path |
+|---|---|
+| Create | `src/components/dashboard/strategy-metrics.tsx` |
+| Create | `src/components/dashboard/due-retests.tsx` |
+| Modify | `src/app/dashboard/actions.ts` |
+| Modify | `src/app/(app)/dashboard/page.tsx` |
+
+---
+
+#### TSP-081: `src/components/dashboard/strategy-metrics.tsx`
+
+Pure display. No client state. Renders only when `strategyMetrics !== null`. Warn threshold: `negativeMarksLost > 0` and `highConfidenceWrong > 2` render the value in amber.
+
+```tsx
+import type { StrategyMetrics } from "@/lib/dashboard/overview";
+
+type Props = {
+  metrics: StrategyMetrics;
+};
+
+export function StrategyMetricsCard({ metrics }: Props) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <h2 className="text-lg font-semibold">Strategy signals</h2>
+      <p className="mt-1 text-xs text-muted-foreground">From your most recent session</p>
+
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        <MetricRow
+          label="Negative marks lost"
+          value={metrics.negativeMarksLost.toFixed(1)}
+          warn={metrics.negativeMarksLost > 0}
+        />
+        <MetricRow
+          label="High-confidence wrong"
+          value={String(metrics.highConfidenceWrong)}
+          warn={metrics.highConfidenceWrong > 2}
+        />
+        <MetricRow label="Correct guesses" value={String(metrics.correctGuessed)} />
+        <MetricRow label="Total revisits" value={String(metrics.totalRevisits)} />
+        <MetricRow
+          label="Time on wrong (s)"
+          value={String(Math.round(metrics.timeOnWrongSec))}
+        />
+        <MetricRow
+          label="Time on skipped (s)"
+          value={String(Math.round(metrics.timeOnSkippedSec))}
+        />
+      </dl>
+    </div>
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  warn,
+}: {
+  label: string;
+  value: string;
+  warn?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={`text-sm font-semibold tabular-nums ${warn ? "text-amber-600" : ""}`}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+```
+
+---
+
+#### TSP-063: `startRetestAction` in `src/app/dashboard/actions.ts`
+
+Add new exports to the existing file. Do not modify the existing `getDashboardOverviewAction`.
+
+**New types and action:**
+
+```typescript
+export type StartRetestState = {
+  ok: boolean;
+  message: string;
+  sessionId?: string;
+};
+
+export const initialStartRetestState: StartRetestState = { ok: false, message: "" };
+
+export async function startRetestAction(
+  _prev: StartRetestState,
+  formData: FormData
+): Promise<StartRetestState> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+
+  const retestQueueId = getString(formData, "retestQueueId");
+  const examId = getString(formData, "examId");
+
+  if (!isUuid(retestQueueId) || !isUuid(examId)) {
+    return { ok: false, message: "Invalid retest or exam id." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: authError?.message ?? "Sign in to continue." };
+  }
+
+  // 1. Load and ownership-check the retest_queue row
+  const { data: retestRow, error: retestError } = await supabase
+    .from("retest_queue")
+    .select("id,user_id,concept_id,topic_id")
+    .eq("id", retestQueueId)
+    .eq("exam_id", examId)
+    .maybeSingle();
+
+  if (retestError || !retestRow) {
+    return { ok: false, message: "Retest item not found." };
+  }
+
+  const row = retestRow as {
+    id: string;
+    user_id: string;
+    concept_id: string | null;
+    topic_id: string | null;
+  };
+
+  if (row.user_id !== user.id) {
+    return { ok: false, message: "Retest item not found." };
+  }
+
+  // 2. Resolve topic_id (concept rows need a lookup)
+  let topicId: string | null = row.topic_id;
+
+  if (!topicId && row.concept_id) {
+    const { data: conceptRow } = await supabase
+      .from("concepts")
+      .select("topic_id")
+      .eq("id", row.concept_id)
+      .maybeSingle();
+
+    topicId =
+      (conceptRow as { topic_id: string | null } | null)?.topic_id ?? null;
+  }
+
+  if (!topicId) {
+    return { ok: false, message: "Could not resolve topic for this retest." };
+  }
+
+  // 3. Start the concept_retest session
+  const { data, error: startError } = await supabase.rpc("start_test_session", {
+    p_exam_id: examId,
+    p_type: "concept_retest",
+    p_template_id: null,
+    p_topic_id: topicId,
+    p_count: 10,
+    p_duration_minutes: null,
+    p_min_quality_tier: "bronze",
+  });
+
+  if (startError) {
+    return { ok: false, message: startError.message };
+  }
+
+  const sessionId = toSessionId(data);
+  if (!sessionId) {
+    return { ok: false, message: "Failed to start retest session." };
+  }
+
+  revalidatePath("/dashboard");
+  return { ok: true, message: "Retest started.", sessionId };
+}
+```
+
+**Private helpers to add at the bottom of `src/app/dashboard/actions.ts`:**
+
+```typescript
+function getString(formData: FormData, key: string): string {
+  const value = formData.get(key);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
+function toSessionId(data: unknown): string | undefined {
+  const record =
+    data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  return typeof record.session_id === "string" ? record.session_id : undefined;
+}
+```
+
+Also add `import { revalidatePath } from "next/cache";` at the top if not already present.
+
+**S18-A note:** `concept_retest` sessions use the `else` branch of `start_test_session` (minimal live filter — random questions from the topic, no recency exclusion, no difficulty balancing). A follow-on migration can add a dedicated `concept_retest` routing branch that calls `select_topic_practice_questions` with recency exclusion. This is non-blocking for MVP.
+
+---
+
+#### TSP-063: `src/components/dashboard/due-retests.tsx`
+
+Client component. Each item has its own `useActionState` instance pointing at `startRetestAction`. On success, redirects to the new session.
+
+```tsx
+"use client";
+
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import {
+  startRetestAction,
+  initialStartRetestState,
+  type StartRetestState,
+} from "@/app/dashboard/actions";
+import type { DueRetest } from "@/lib/dashboard/overview";
+
+type Props = {
+  retests: DueRetest[];
+  examId: string;
+};
+
+export function DueRetests({ retests, examId }: Props) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <h2 className="text-lg font-semibold">Due retests</h2>
+
+      {retests.length === 0 ? (
+        <p className="mt-4 text-sm leading-6 text-muted-foreground">
+          No retests due yet. Keep practicing and reviewing mistakes to build
+          your queue.
+        </p>
+      ) : (
+        <ul className="mt-4 grid gap-3">
+          {retests.map((retest) => (
+            <RetestItem examId={examId} key={retest.id} retest={retest} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function RetestItem({
+  retest,
+  examId,
+}: {
+  retest: DueRetest;
+  examId: string;
+}) {
+  const router = useRouter();
+  const [state, formAction, isPending] = useActionState<StartRetestState, FormData>(
+    startRetestAction,
+    initialStartRetestState
+  );
+
+  useEffect(() => {
+    if (state.ok && state.sessionId) {
+      router.push(`/tests/${state.sessionId}`);
+    }
+  }, [router, state]);
+
+  const dueDate = new Date(retest.dueAt);
+  const isOverdue = dueDate <= new Date();
+
+  return (
+    <li className="flex items-center justify-between gap-3 rounded-md bg-muted px-3 py-2">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">
+          {retest.conceptId ? "Concept retest" : "Topic retest"}
+        </p>
+        <p
+          className={`mt-0.5 text-xs ${
+            isOverdue ? "text-red-600" : "text-muted-foreground"
+          }`}
+        >
+          {isOverdue ? "Overdue" : `Due ${dueDate.toLocaleDateString()}`}
+        </p>
+        {!state.ok && state.message ? (
+          <p className="mt-1 text-xs text-red-600">{state.message}</p>
+        ) : null}
+      </div>
+
+      <form action={formAction}>
+        <input name="retestQueueId" type="hidden" value={retest.id} />
+        <input name="examId" type="hidden" value={examId} />
+        <button
+          className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          disabled={isPending}
+          type="submit"
+        >
+          {isPending ? "Starting…" : "Start →"}
+        </button>
+      </form>
+    </li>
+  );
+}
+```
+
+**S18-C note:** Retest items show generic "Concept retest" / "Topic retest" labels with no concept or topic name. The `DueRetest` type doesn't include names. A follow-on pass can extend `loadDueRetests` in `overview.ts` to join concept/topic names.
+
+---
+
+#### Updated `src/app/(app)/dashboard/page.tsx`
+
+Add imports and wire up the two new widgets. The full updated render section (inside the success branch):
+
+```tsx
+// Add to imports:
+import { DueRetests } from "@/components/dashboard/due-retests";
+import { StrategyMetricsCard } from "@/components/dashboard/strategy-metrics";
+
+// In the JSX (replace the existing success return):
+return (
+  <section className="grid gap-6">
+    {/* header + exam switcher — unchanged */}
+
+    <div className="grid gap-6 lg:grid-cols-2">
+      <ReadinessCard readiness={overview.readiness} />
+      <WeakTopics examId={examId} topics={overview.weakTopics} />
+    </div>
+
+    {/* NEW: due retests — always shown (empty state included) */}
+    <DueRetests examId={examId} retests={overview.dueRetests} />
+
+    {/* existing stats chips */}
+    <div className="grid gap-4 sm:grid-cols-3">
+      <StatChip href="/tests" label="Due retests" value={overview.overdueRetestCount} />
+      <StatChip label="Unresolved mistakes" value={overview.unresolvedMistakeCount} />
+      <StatChip href="/tests" label="Recent sessions" value={overview.recentSessions.length} />
+    </div>
+
+    {/* NEW: strategy metrics — only when data exists */}
+    {overview.strategyMetrics !== null ? (
+      <StrategyMetricsCard metrics={overview.strategyMetrics} />
+    ) : null}
+  </section>
+);
+```
+
+The `DueRetests` is a client component — it requires `"use client"` in its own file. The page itself remains a server component. Next.js handles the boundary correctly when the client component is imported into a server component.
+
+---
+
+#### Verification gates
+
+```powershell
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+
+No migration. No smoke. **Browser verification blocked** on this workspace (S18-D, same environment issue as S17-C).
+
+---
+
+#### Tracker and process doc updates (Builder)
+
+1. `trackers/JIRA_TRACKER.csv` — TSP-081: `Backlog → Done`. TSP-063: `Backlog → Done`.
+2. `docs/process/SESSION_STATE.md` — add Session 18 completed note.
+3. Append Builder Handoff to `docs/process/HANDOFF.md`.
+4. Commits:
+   - `git commit -m "TSP-081: strategy metrics widget"`
+   - `git commit -m "TSP-063: concept retest sessions from dashboard"`
+
+---
+
+#### Known issues
+
+**S18-A:** `concept_retest` sessions use `minimal_live_filter` (random live questions from the resolved topic, no recency exclusion, no difficulty balancing). Fix: add a `concept_retest` routing branch in `start_test_session` that calls `select_topic_practice_questions`. Migration needed. Non-blocking for MVP.
+
+**S18-B:** `retest_queue.status` not updated when a retest starts or completes. Items remain `'due'` until TSP-063 completion handler is built. The `'due'` count in the stats chip may over-report active retests.
+
+**S18-C:** `DueRetests` shows "Concept retest" / "Topic retest" with no concept or topic name. Requires extending `loadDueRetests` to join concept/topic name tables.
+
+**S18-D:** Browser rendering unverified (OneDrive dev-server issue).
+
+---
+
+#### Next session (Session 19)
+
+**M4 is now substantially complete** after Session 18. Options:
+- **TSP-080** (progress timeline) — historical readiness + score chart over sessions
+- **S18-A fix** (concept_retest SQL routing) — upgrade retest quality before launch
+- **M0 browser smoke** — if admin/test users are now available, close 19 pending Review rows in one pass
+- **TSP-057** (forgetting-curve decay nightly job) — deferred M3 row, needed before M4 data stales
+
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |
