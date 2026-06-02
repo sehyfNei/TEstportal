@@ -6538,6 +6538,52 @@ Or pivot to TSP-063 (concept retest sessions) which adds the "Practice this topi
 
 ---
 
+### 2026-06-03 - Session 17 Builder Handoff - Codex
+
+Scope completed:
+
+- Completed `TSP-078` readiness score card.
+- Completed `TSP-079` weak topics widget.
+- Replaced the Phase 0 `/dashboard` shell with a server-rendered dashboard page backed by `fetchDashboardOverview`.
+- Marked `TSP-078` and `TSP-079` `Done` after the static verification gates passed.
+
+Files changed:
+
+- `src/app/(app)/dashboard/page.tsx`
+- `src/components/dashboard/readiness-card.tsx`
+- `src/components/dashboard/weak-topics.tsx`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- `/dashboard` now awaits Next.js 15 `searchParams`, loads active exams, defaults to the first active exam when no valid `exam` query param is present, and calls `fetchDashboardOverview` directly from the server component.
+- The page handles unconfigured Supabase, unauthenticated users, and no-active-exam states with simple server-rendered notices.
+- Added `ReadinessCard`, showing rounded readiness score, color thresholds, confidence badge, coverage percentage, stale-topic warning, and benchmark calibration nudge.
+- Added `WeakTopics`, showing up to five weak topics with topic name, mastery progress bar, weight badge, empty state, and current `/tests` practice links.
+- Added dashboard stat chips for due retests, unresolved mistakes, and recent sessions.
+
+Verification:
+
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- Browser verification was not possible in this workspace because the dev server remains blocked by the documented OneDrive/node_modules issue.
+
+Known issues:
+
+- S17-A remains by design: weak-topic practice links go to `/tests` without topic context. Topic-prefilled CTAs are deferred to TSP-063.
+- S17-B remains acceptable for MVP: multiple exams render as pill links, not a dropdown.
+- S17-C remains environmental: no browser rendering was verified in this workspace.
+
+Next recommended step:
+
+- Session 18 can continue dashboard UI with `TSP-080` progress timeline or `TSP-081` strategy metrics widget, or pivot to `TSP-063` for topic-prefilled retest/practice CTAs.
+
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |
