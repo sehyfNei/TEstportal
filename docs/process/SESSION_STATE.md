@@ -1,7 +1,7 @@
 # Session State
 
 **Last updated:** 2026-06-02  
-**Updated by:** Codex - Session 14 builder completion  
+**Updated by:** Codex - Session 15 builder completion  
 **Project:** Modular AI-Powered Test Series And Self-Study Portal
 
 ---
@@ -47,6 +47,7 @@ Completed foundations:
 - Session 12 completed for the M3 mastery update job (TSP-055): `mastery_records` migration/schema, deterministic formula, repository-pattern handler, Supabase adapter, submit action wire-up, and live mastery smoke are done.
 - Session 13 completed for the M3 readiness score (TSP-056): pure formula, Supabase query helper, and 12 unit tests. All gates passed. TSP-056 is Done.
 - Session 14 completed for the M4 mistake notebook foundation (TSP-059, TSP-060): `mistake_items` and `retest_queue` schema are live, `createMistakeItemsJob` runs non-fatally after mastery on first submit, and the live mistake-items smoke passed with duplicate-run/duplicate-submit idempotency.
+- Session 15 completed for the M4 simple retest scheduler (TSP-062): pure scheduler functions, retest queue update job, submit action wire-up, 15 scheduler tests, and live retest queue smoke are done.
 
 ---
 
@@ -89,6 +90,7 @@ Completed foundations:
 | `TSP-055` | Done | Mastery update job is complete. Added the Supabase repository adapter, wired `submitSessionAction` to run mastery non-fatally after first scoring, skipped already-scored duplicate submits, applied the `mastery_records` migration, and passed live smoke with topic and concept mastery rows plus duplicate-submit idempotency. |
 | `TSP-059` | Done | Mistake notebook schema is complete. Added `mistake_items` and `retest_queue` with owner RLS, authenticated grants, required indexes, idempotent mistake item uniqueness, and topic/concept XOR for retest queue. |
 | `TSP-060` | Done | Mistake item creation is complete. Added pure classification, Supabase job handler, submit-action non-fatal wiring after mastery, 12 classification tests, and live smoke for four mistake types plus idempotency. |
+| `TSP-062` | Done | Simple retest scheduler is complete. Added pure schedule computation, retest queue update job, submit-action non-fatal wiring after mistake creation, 15 scheduler tests, and live smoke for due queue rows plus idempotency. |
 | `TSP-128` | Done | Session 10 scoring unit tests cover all six question types, marking rules, manifest parsing, malformed single-choice selections, and session/topic aggregation. Sanity review passed. |
 | `TSP-090` | Review | S1-A is fixed: admin guard trusts only `app_metadata.user_role` and JWT role claims, not `user_metadata`. Browser admin/non-admin smoke still needs a real admin user and reachable Supabase session. |
 | `TSP-159` | Done | `question_status_events` migration/schema and review-history integration are implemented and live migration gate is cleared. |
@@ -220,14 +222,15 @@ Notes:
 - 2026-06-02 Session 12 local verification passed: `node --check scripts/smoke-mastery-update.js`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0.
 - 2026-06-02 Session 12 DB verification passed: `node run-migrations.js` applied all migrations through `202606010004_mastery_records.sql`; `node scripts/check-rpc-grants.js` verified the unchanged 10 RPC grants; `node scripts/smoke-mastery-update.js` passed with 2 topic mastery rows, 2 concept mastery rows, owner/user shape checks, and duplicate-submit idempotency.
 - 2026-06-02 Session 14 DB/local verification passed: `node run-migrations.js` applied all migrations through `202606020001_mistake_notebook.sql`; `node --check scripts/smoke-mistake-items.js`, `corepack pnpm exec vitest run src/tests/unit/mistake-classification.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, `corepack pnpm build`, and `node scripts/smoke-mistake-items.js` all exited 0. Live smoke created 4 mistake rows and verified overconfidence, conceptual_gap, not_attempted, lucky_guess, owner/status/topic/concept shape, and idempotency.
+- 2026-06-02 Session 15 verification passed: `node --check scripts/smoke-retest-queue.js`, `corepack pnpm exec vitest run src/tests/unit/simple-scheduler.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, `corepack pnpm build`, and `node scripts/smoke-retest-queue.js` all exited 0. Live smoke created 4 due retest rows, verified simple scheduler state, overconfidence as highest priority, and idempotent rerun behavior.
 
 ---
 
 ## Next Recommended Work
 
-**Session 14 Sanity PASS (2026-06-02). TSP-059 and TSP-060 are Done. M4 mistake notebook foundation is live. Session 15 architect plan written (2026-06-02): TSP-062 simple retest scheduler — reads mistake_items, populates retest_queue, unblocks TSP-076. Builder: follow Session 15 plan in HANDOFF.md.**
+**Session 15 Builder pass complete (2026-06-02). TSP-062 is Done. M4 now has mistake_items and due retest_queue rows after first submit. TSP-076 dashboard overview API is unblocked by TSP-056 and TSP-062.**
 
-Session 4–6 M1 rows remain in Review pending browser smoke. Session 7–9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, and Session 14 rows `TSP-059`/`TSP-060` are Done.
+Session 4–6 M1 rows remain in Review pending browser smoke. Session 7–9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, and Session 15 row `TSP-062` are Done.
 
 Status outcome:
 
@@ -254,11 +257,12 @@ Status outcome:
 - **TSP-055** - Done; mastery records, formula, Supabase adapter, submit wire-up, and live smoke are complete.
 - **TSP-059** - Done; mistake_items and retest_queue schema, RLS, grants, and indexes are live.
 - **TSP-060** - Done; mistake item classifier/job, submit wire-up, tests, and live smoke are complete.
+- **TSP-062** - Done; simple retest scheduler, retest queue job, submit wire-up, tests, and live smoke are complete.
 - **TSP-128** - Done; scoring unit tests are implemented and sanity-passed.
 
 Next immediate steps:
 
-1. **Session 15 - TSP-062 retest scheduler** - create due retest queue rows from `mistake_items` and define the scheduler update behavior.
+1. **Session 16 - TSP-076 dashboard overview API** - combine readiness, weak topics, due retests, recent tests, and next action data now that `TSP-056` and `TSP-062` are done.
 2. **Browser smoke when users are available** — admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
 3. **Founder creates two users** (whenever available) — admin with `app_metadata.user_role = "admin"` and one plain test student — unblocks all pending browser-smoke rows.
 

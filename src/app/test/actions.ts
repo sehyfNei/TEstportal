@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createMistakeItemsJob } from "@/lib/jobs/handlers/create-mistake-items";
 import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
+import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
 import { createClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
@@ -352,6 +353,12 @@ export async function submitSessionAction(
       await createMistakeItemsJob(result.resultId, supabase);
     } catch (mistakeError) {
       console.error("[mistake] create failed for result", result.resultId, mistakeError);
+    }
+
+    try {
+      await updateRetestQueueJob(result.resultId, supabase);
+    } catch (retestError) {
+      console.error("[retest] update failed for result", result.resultId, retestError);
     }
   }
 

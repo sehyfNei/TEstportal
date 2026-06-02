@@ -4864,6 +4864,67 @@ insert into public.retest_queue (
 
 ---
 
+### 2026-06-02 - Session 15 Builder Handoff - Codex
+
+Scope completed:
+
+- Implemented `TSP-062` simple retest scheduler from the Session 15 Architect plan.
+- Marked `TSP-062` Done after local gates and live DB smoke passed.
+
+Files changed:
+
+- `src/lib/adaptive/simple-scheduler.ts`
+- `src/tests/unit/simple-scheduler.test.ts`
+- `src/lib/jobs/handlers/update-retest-queue.ts`
+- `scripts/smoke-retest-queue.js`
+- `src/app/test/actions.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added pure scheduler constants and functions: `MISTAKE_TYPE_PRIORITY`, `INTERVAL_DAYS_SEQUENCE`, `MAX_PRIORITY`, `TOPIC_BOOST_SCALE`, `computeInitialSchedule`, and `computeRetestSchedule`.
+- Added 15 deterministic scheduler tests covering initial priority, topic boost, cap behavior, empty/bookmarked cases, pass/fail interval behavior, lapse priority, and `lastReviewedAt`.
+- Added `updateRetestQueueJob`, which loads the scored result, reads unresolved current-session mistake rows, groups by concept with topic fallback, loads topic weights for fallback rows, then creates or updates active retest queue rows.
+- `findActiveRetestRow` uses `.is("concept_id", null)` for topic-level lookup and `.is("topic_id", null)` for concept-level lookup.
+- Wired `submitSessionAction` to run `updateRetestQueueJob` after mastery and mistake item creation, guarded by `!wasAlreadyScored` and wrapped in a non-fatal try/catch.
+- Added a self-contained raw-SQL smoke script that seeds the same four mistake scenarios, creates mistake rows, populates `retest_queue`, and checks idempotency.
+
+Verification:
+
+- `node --check scripts/smoke-retest-queue.js` exited 0.
+- `corepack pnpm exec vitest run src/tests/unit/simple-scheduler.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed to spawn lint.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- `node scripts/smoke-retest-queue.js` exited 0 live:
+
+```json
+{
+  "ok": true,
+  "sessionId": "7f27ed00-82f3-4e72-a99f-8f32760f5b42",
+  "resultId": "1b518337-e1c3-4a28-b307-176af617376a",
+  "retestRows": 4,
+  "highestPriority": 3,
+  "highestPriorityMistakeType": "overconfidence",
+  "idempotent": true
+}
+```
+
+Sanity review focus:
+
+1. Retest queue update remains non-fatal and runs only on first submit inside `!wasAlreadyScored`.
+2. Topic-level active-row lookup uses `.is("concept_id", null)`, not `.eq("concept_id", null)`.
+3. Concept-level rows store `concept_id` and `topic_id = null` to satisfy the retest queue XOR constraint.
+4. Existing active rows are updated only when the new priority is higher; priority is never decremented.
+5. Current-session mistake rows only are considered; historical unresolved mistake aggregation remains deferred per S15-A.
+6. No unique constraint exists on `retest_queue`, so the job is idempotent for serial reruns but not concurrency-safe per S15-B.
+
+---
+
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
 
 **Tracker rows:** TSP-149, TSP-090, TSP-091

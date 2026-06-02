@@ -6,6 +6,25 @@ Human-readable implementation log.
 
 ## 2026-06-02
 
+### Session 15 M4 Simple Retest Scheduler
+
+- Completed `TSP-062` for the simple retest scheduler.
+- Added `src/lib/adaptive/simple-scheduler.ts` with exported priority/interval constants, `computeInitialSchedule`, and `computeRetestSchedule`.
+- Added `src/lib/jobs/handlers/update-retest-queue.ts` to read current-session `mistake_items`, group by concept/topic fallback, and create or update active `retest_queue` rows.
+- Wired `submitSessionAction` to run the retest queue job after mastery and mistake item creation, guarded by `!wasAlreadyScored` and logged as non-fatal.
+- Added `src/tests/unit/simple-scheduler.test.ts` with 15 deterministic scheduler cases.
+- Added `scripts/smoke-retest-queue.js` to seed fixed mistake scenarios, create mistake items, populate retest queue rows, and verify idempotency.
+
+### Session 15 Verification
+
+- `node --check scripts/smoke-retest-queue.js` exited 0.
+- `corepack pnpm exec vitest run src/tests/unit/simple-scheduler.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed to spawn lint.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- `node scripts/smoke-retest-queue.js` passed live with 4 due `retest_queue` rows, simple scheduler state, overconfidence highest priority, and idempotent rerun behavior.
+
 ### Session 14 M4 Mistake Notebook Foundation
 
 - Completed `TSP-059` and `TSP-060` for mistake notebook schema and post-submit mistake item creation.
