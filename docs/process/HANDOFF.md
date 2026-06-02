@@ -3763,6 +3763,66 @@ Forgetting-curve decay: nightly job that reads mastery_records with `last_tested
 
 ---
 
+### 2026-06-02 - Session 13 Builder Handoff - Codex
+
+Scope completed:
+
+- Implemented `TSP-056` from the Session 13 Architect plan.
+- All three files created; tracker and process docs not updated in this pass (handled by Architect Sanity below).
+
+Files changed:
+
+- `src/lib/scoring/readiness.ts`
+- `src/lib/scoring/readiness-query.ts`
+- `src/tests/unit/readiness.test.ts`
+
+What changed:
+
+- Added pure `computeReadinessScore` with injectable `nowMs`, exported constants, and `zeroReadiness` fallback.
+- Added `fetchReadinessScore` Supabase query helper with three non-fatal queries (mastery records, topic weights, benchmark session check).
+- Added 12 unit test cases covering zero input, benchmark factor, uncovered topics, stale topics, recency floor, confidence levels, weight normalization, string mastery parsing, and the Supabase mock path.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/readiness.test.ts` — passed.
+- `corepack pnpm typecheck` — passed after elevated rerun.
+- `corepack pnpm lint` — passed after elevated rerun.
+- `corepack pnpm test` — passed after elevated rerun.
+- `corepack pnpm build` — passed after elevated rerun.
+- No migration or DB smoke gate applies to this slice.
+
+---
+
+### 2026-06-02 - Session 13 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Scope:** TSP-056 — `readiness.ts`, `readiness-query.ts`, `readiness.test.ts`
+
+**Overall: PASS. TSP-056 → Done.**
+
+**Focus 1 — Uncovered topic contributes mastery 0: PASS.** Loop at line 75 iterates `normalizedWeights` (not `masteryByTopic`). Missing record → `masteryScore = 0`, `covered = false`. The test at line 196 confirms `topic-b` (no record) has `contribution = 0`.
+
+**Focus 2 — Zero-sum guard: PASS.** Line 53: `!Number.isFinite(totalWeight) || totalWeight <= 0` → `zeroReadiness`. Handles both empty array and all-zero weights.
+
+**Focus 3 — Recency floor: PASS.** Line 101: `Math.max(RECENCY_FLOOR, 1.0 - staleCount × 0.02)`. Test case (10 stale topics) asserts `score = 80`, not 60.
+
+**Focus 4 — Benchmark from scored sessions only: PASS.** `readiness-query.ts` line 66: `.eq("status", "scored").in("type", ["benchmark", "mock"])`. In-progress sessions excluded.
+
+**Focus 5 — Query failures non-fatal: PASS.** All three queries have error guards; outer `try/catch` at line 31 catches unexpected errors. **Non-blocking S13-A:** on `benchmarkError`, the function discards already-fetched mastery/topic data and returns zero-readiness (lines 72-79). Spec intended `hasBenchmarkSession = false` with other data preserved. Over-pessimistic but safe. Fix in a future cleanup pass.
+
+**Focus 6 — Concept rows excluded: PASS.** Line 37: `.not("topic_id", "is", null)`.
+
+**Focus 7 — `nowMs` injectable: PASS.** All unit tests use `NOW = Date.UTC(2026, 5, 2, 12, 0, 0, 0)`. No wall-clock dependency.
+
+**Focus 8 — No circular imports: PASS.** `readiness.ts` has zero project imports. `readiness-query.ts` imports only from `@/lib/scoring/readiness` and `@supabase/supabase-js`.
+
+**All 12 spec cases covered.**
+
+**Track S13-A** for a future cleanup pass. Does not block Done or M4 work.
+
+**Next session:** TSP-057 (forgetting-curve decay nightly job) OR pivot to M4 dashboard (TSP-076 overview API). TSP-076 depends on TSP-056 (Done) and TSP-062 (retest queue, not yet built). Recommend discussing with founder whether to complete M3 decay first or start M4 dashboard in parallel.
+
+---
+
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
 
 **Tracker rows:** TSP-149, TSP-090, TSP-091

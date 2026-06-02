@@ -45,7 +45,7 @@ Completed foundations:
 - Session 10 implementation and Sanity review completed for the M3 first TypeScript scoring slice: marking rules engine, answer evaluation by type, and scoring unit tests (TSP-051, TSP-052, TSP-128).
 - Session 11 implementation completed locally and applied live for M3 result aggregates and strategy metrics (TSP-053, TSP-054). Sanity review passed (11/11). TSP-053 and TSP-054 are Done.
 - Session 12 completed for the M3 mastery update job (TSP-055): `mastery_records` migration/schema, deterministic formula, repository-pattern handler, Supabase adapter, submit action wire-up, and live mastery smoke are done.
-- Session 13 architecture planned for M3 readiness score (TSP-056): weighted topic mastery × benchmark factor × recency factor, with readiness confidence level and stale-topic surfacing. Builder implementation pending.
+- Session 13 completed for the M3 readiness score (TSP-056): pure formula, Supabase query helper, and 12 unit tests. All gates passed. TSP-056 is Done.
 
 ---
 
@@ -221,7 +221,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 13 plan written (2026-06-02). TSP-055 Done. Next: Builder implements TSP-056 readiness score — `src/lib/scoring/readiness.ts` (pure formula), `src/lib/scoring/readiness-query.ts` (Supabase query helper), and `src/tests/unit/readiness.test.ts` (12 cases). No migration needed.**
+**Session 13 Sanity PASS (2026-06-02). TSP-056 Done. M3 learning model foundations complete (TSP-051–056). Next: Session 14 — TSP-057 forgetting-curve decay, OR pivot to M4 dashboard (TSP-076/077/078) which now has all M3 dependencies satisfied.**
 
 Session 4–6 M1 rows remain in Review pending browser smoke. Session 7–9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055` is Done after live DB smoke.
 
