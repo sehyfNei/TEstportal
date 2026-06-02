@@ -221,7 +221,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 13 Sanity PASS (2026-06-02). TSP-056 Done. M3 learning model foundations complete (TSP-051–056). Next: Session 14 — TSP-057 forgetting-curve decay, OR pivot to M4 dashboard (TSP-076/077/078) which now has all M3 dependencies satisfied.**
+**Session 13 Sanity PASS (2026-06-02). TSP-056 Done. M3 learning model foundations complete (TSP-051–056). Session 14 architect plan written (2026-06-02): TSP-059 mistake notebook schema + TSP-060 create mistake items on submit. Builder: follow Session 14 plan in HANDOFF.md.**
 
 Session 4–6 M1 rows remain in Review pending browser smoke. Session 7–9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055` is Done after live DB smoke.
 

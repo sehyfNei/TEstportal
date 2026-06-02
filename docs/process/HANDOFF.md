@@ -3823,6 +3823,498 @@ Verification:
 
 ---
 
+### 2026-06-02 - Session 14 Plan (M4 first slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M4 Dashboard & Retention  
+**Tickets:** TSP-059 (mistake notebook schema), TSP-060 (create mistake items on submit)  
+**Prerequisites complete:** TSP-053 result aggregates (Done), TSP-055 mastery update (Done), TSP-056 readiness score (Done)
+
+---
+
+#### Overview
+
+Session 14 builds the M4 mistake notebook foundation. Two tickets, one commit each.
+
+**TSP-059** creates the database schema for `mistake_items` and `retest_queue`. Schema-only — no application logic.
+
+**TSP-060** adds a TypeScript job (`createMistakeItemsJob`) that classifies each scored answer into a mistake type and persists a row to `mistake_items`. Wired into `submitSessionAction` non-fatally, same pattern as mastery. Pure classification function extracted so it has unit tests.
+
+After Session 14 the closed loop is: submit → score → mastery update → mistake notebook update. Session 15 (TSP-062) adds the retest scheduler that populates `retest_queue` from mistake_items. Session 16 (TSP-076) builds the dashboard API that reads both.
+
+**Skip `fsrs_cards`** — that is TSP-064 (Phase 1.5). Create `retest_queue` schema here because TSP-062 (Session 15) depends on it, and TSP-076 (Session 16) depends on TSP-062.
+
+---
+
+#### TSP-059: Mistake Notebook Schema
+
+**Migration file:** `supabase/migrations/202606020001_mistake_notebook.sql`
+
+---
+
+##### Table 1: `mistake_items`
+
+One row per qualifying answer per session. The unique constraint on `(user_id, session_id, question_id)` makes idempotent upsert safe.
+
+```sql
+-- TSP-059: mistake notebook and retest queue schema.
+-- mistake_items: one classified mistake row per question per session.
+-- retest_queue: scheduler state for concept/topic retests (populated by TSP-062).
+
+create table if not exists public.mistake_items (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exam_id uuid not null references public.exams(id) on delete cascade,
+  question_id uuid not null references public.questions(id) on delete cascade,
+  session_id uuid not null references public.test_sessions(id) on delete cascade,
+  topic_id uuid references public.topics(id) on delete set null,
+  concept_id uuid references public.concepts(id) on delete set null,
+  mistake_type text not null check (mistake_type in (
+    'conceptual_gap','time_pressure','silly_mistake','not_attempted',
+    'overconfidence','lucky_guess','bookmarked'
+  )),
+  confidence text check (confidence in ('sure','unsure','guessed')),
+  status text not null default 'unresolved' check (status in (
+    'unresolved','scheduled','reviewed','resolved','ignored'
+  )),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  unique (user_id, session_id, question_id)
+);
+```
+
+**Design notes vs TRD:**
+- `session_id` is `NOT NULL` — always known at creation time.
+- `status` is `NOT NULL DEFAULT 'unresolved'` — TRD had nullable.
+- `UNIQUE (user_id, session_id, question_id)` added — not in TRD but required for idempotent upsert.
+- `topic_id` and `concept_id` use `ON DELETE SET NULL` so mistakes survive topic/concept restructuring.
+
+---
+
+##### Table 2: `retest_queue`
+
+One row per (user, topic/concept) that needs spaced-repetition scheduling. XOR check mirrors `mastery_records` pattern.
+
+```sql
+create table if not exists public.retest_queue (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exam_id uuid not null references public.exams(id) on delete cascade,
+  topic_id uuid references public.topics(id) on delete set null,
+  concept_id uuid references public.concepts(id) on delete set null,
+  due_at timestamptz not null,
+  scheduler text not null default 'simple' check (scheduler in ('simple','sm2','fsrs')),
+  scheduler_state jsonb,
+  priority numeric not null default 0,
+  status text not null default 'due' check (status in (
+    'due','scheduled','completed','snoozed','cancelled'
+  )),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (
+    (topic_id is not null and concept_id is null) or
+    (topic_id is null and concept_id is not null)
+  )
+);
+```
+
+---
+
+##### Indexes
+
+```sql
+-- mistake_items
+create index if not exists mistake_user_status
+  on public.mistake_items (user_id, status);
+
+create index if not exists mistake_user_exam
+  on public.mistake_items (user_id, exam_id);
+
+create index if not exists mistake_session
+  on public.mistake_items (session_id);
+
+-- retest_queue
+create index if not exists retest_due
+  on public.retest_queue (status, due_at);
+
+create index if not exists retest_user_exam
+  on public.retest_queue (user_id, exam_id, status);
+```
+
+---
+
+##### RLS: `mistake_items`
+
+```sql
+alter table public.mistake_items enable row level security;
+
+drop policy if exists mistake_items_owner_select on public.mistake_items;
+create policy mistake_items_owner_select on public.mistake_items
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists mistake_items_owner_insert on public.mistake_items;
+create policy mistake_items_owner_insert on public.mistake_items
+  for insert to authenticated
+  with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists mistake_items_owner_update on public.mistake_items;
+create policy mistake_items_owner_update on public.mistake_items
+  for update to authenticated
+  using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
+grant select, insert, update on public.mistake_items to authenticated;
+```
+
+---
+
+##### RLS: `retest_queue`
+
+```sql
+alter table public.retest_queue enable row level security;
+
+drop policy if exists retest_queue_owner_select on public.retest_queue;
+create policy retest_queue_owner_select on public.retest_queue
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists retest_queue_owner_insert on public.retest_queue;
+create policy retest_queue_owner_insert on public.retest_queue
+  for insert to authenticated
+  with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists retest_queue_owner_update on public.retest_queue;
+create policy retest_queue_owner_update on public.retest_queue
+  for update to authenticated
+  using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
+grant select, insert, update on public.retest_queue to authenticated;
+```
+
+---
+
+##### TSP-059 verification gate
+
+```powershell
+node run-migrations.js
+```
+
+Expected: migration `202606020001_mistake_notebook.sql` applies cleanly. No `check-rpc-grants.js` update needed (no new RPCs).
+
+---
+
+#### TSP-060: Create Mistake Items After Submit
+
+**New files:**
+- `src/lib/jobs/handlers/create-mistake-items.ts`
+- `src/tests/unit/mistake-classification.test.ts`
+- `scripts/smoke-mistake-items.js`
+
+**Modified file:**
+- `src/app/test/actions.ts`
+
+---
+
+##### Mistake classification rules
+
+One `mistake_items` row per qualifying answer. Priority order (first match wins):
+
+| Priority | Condition | `mistake_type` |
+|---|---|---|
+| 1 | `is_correct = false AND confidence = 'sure'` | `overconfidence` |
+| 2 | `is_correct = false` (any other confidence) | `conceptual_gap` |
+| 3 | `is_correct IS NULL` (skipped — no selected answer) | `not_attempted` |
+| 4 | `is_correct = true AND confidence = 'guessed'` | `lucky_guess` |
+| 5 | `is_correct = true AND marked_review = true` | `bookmarked` |
+| — | `is_correct = true AND marked_review = false` | no row |
+
+Rules applied in order: overconfidence check before conceptual_gap check; `is_correct = null` means no selected answer (the RPC sets null when skipped); `lucky_guess` only fires on a correct-but-guessed answer; `bookmarked` only fires on a correct, non-guessed, manually flagged answer.
+
+---
+
+##### `src/lib/jobs/handlers/create-mistake-items.ts` — full TypeScript spec
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type MistakeType =
+  | "conceptual_gap"
+  | "overconfidence"
+  | "not_attempted"
+  | "lucky_guess"
+  | "bookmarked";
+
+export type MistakeClassificationInput = {
+  isCorrect: boolean | null;
+  confidence: "sure" | "unsure" | "guessed" | null;
+  markedReview: boolean;
+};
+
+/**
+ * Pure classifier. Returns null when the answer does not qualify as a mistake.
+ * Priority: overconfidence > conceptual_gap > not_attempted > lucky_guess > bookmarked.
+ */
+export function classifyMistake(answer: MistakeClassificationInput): MistakeType | null {
+  if (answer.isCorrect === false && answer.confidence === "sure") return "overconfidence";
+  if (answer.isCorrect === false) return "conceptual_gap";
+  if (answer.isCorrect === null) return "not_attempted";
+  if (answer.isCorrect === true && answer.confidence === "guessed") return "lucky_guess";
+  if (answer.isCorrect === true && answer.markedReview) return "bookmarked";
+  return null;
+}
+
+type ResultRow = { session_id: string; user_id: string; exam_id: string };
+type AnswerRow = {
+  question_id: string;
+  is_correct: boolean | null;
+  confidence: "sure" | "unsure" | "guessed" | null;
+  marked_review: boolean;
+};
+type QuestionRow = { id: string; topic_id: string | null };
+type ConceptRow = { question_id: string; concept_id: string; relevance: number };
+
+/**
+ * Loads scored session answers, classifies each, and upserts mistake_items rows.
+ * Non-fatal: caller must wrap in try/catch.
+ * Idempotent: unique constraint (user_id, session_id, question_id) + ignoreDuplicates.
+ */
+export async function createMistakeItemsJob(
+  resultId: string,
+  supabase: SupabaseClient
+): Promise<void> {
+  // 1. Session context
+  const { data: resultRow, error: resultError } = await supabase
+    .from("session_results")
+    .select("session_id,user_id,exam_id")
+    .eq("id", resultId)
+    .maybeSingle();
+
+  if (resultError || !resultRow) {
+    throw new Error(
+      `[mistake] session_results lookup failed for ${resultId}: ${resultError?.message ?? "not found"}`
+    );
+  }
+
+  const { session_id: sessionId, user_id: userId, exam_id: examId } = resultRow as ResultRow;
+
+  // 2. Scored answers (is_correct is set by submit_test_session RPC)
+  const { data: answerRows, error: answerError } = await supabase
+    .from("session_answers")
+    .select("question_id,is_correct,confidence,marked_review")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId);
+
+  if (answerError) {
+    throw new Error(`[mistake] session_answers lookup failed: ${answerError.message}`);
+  }
+
+  const answers = (answerRows ?? []) as AnswerRow[];
+  if (answers.length === 0) return;
+
+  const questionIds = answers.map((a) => a.question_id);
+
+  // 3. Topic per question (from questions.topic_id)
+  const { data: questionRows } = await supabase
+    .from("questions")
+    .select("id,topic_id")
+    .in("id", questionIds);
+
+  const topicByQuestion = new Map<string, string | null>();
+  for (const q of (questionRows ?? []) as QuestionRow[]) {
+    topicByQuestion.set(q.id, q.topic_id);
+  }
+
+  // 4. Primary concept per question (highest relevance first)
+  const { data: conceptRows } = await supabase
+    .from("question_concepts")
+    .select("question_id,concept_id,relevance")
+    .in("question_id", questionIds)
+    .order("relevance", { ascending: false });
+
+  const primaryConcept = new Map<string, string>();
+  for (const row of (conceptRows ?? []) as ConceptRow[]) {
+    if (!primaryConcept.has(row.question_id)) {
+      primaryConcept.set(row.question_id, row.concept_id);
+    }
+  }
+
+  // 5. Classify and build insert rows
+  const insertRows = [];
+  for (const answer of answers) {
+    const mistakeType = classifyMistake({
+      isCorrect: answer.is_correct,
+      confidence: answer.confidence,
+      markedReview: answer.marked_review,
+    });
+    if (!mistakeType) continue;
+
+    insertRows.push({
+      user_id: userId,
+      exam_id: examId,
+      question_id: answer.question_id,
+      session_id: sessionId,
+      topic_id: topicByQuestion.get(answer.question_id) ?? null,
+      concept_id: primaryConcept.get(answer.question_id) ?? null,
+      mistake_type: mistakeType,
+      confidence: answer.confidence ?? null,
+      status: "unresolved",
+    });
+  }
+
+  if (insertRows.length === 0) return;
+
+  // 6. Upsert — unique(user_id, session_id, question_id) + ignoreDuplicates = idempotent
+  const { error: insertError } = await supabase
+    .from("mistake_items")
+    .upsert(insertRows, { onConflict: "user_id,session_id,question_id", ignoreDuplicates: true });
+
+  if (insertError) {
+    throw new Error(`[mistake] upsert failed: ${insertError.message}`);
+  }
+}
+```
+
+**RLS note:** `questions` RLS allows authenticated reads only for `status = 'live'`. Questions in a just-submitted session are live. If a question was retired between session start and submit, `topicByQuestion` entry is absent and `topic_id` is stored as null — acceptable.
+
+---
+
+##### Wire-up in `src/app/test/actions.ts`
+
+Add import at top:
+
+```typescript
+import { createMistakeItemsJob } from "@/lib/jobs/handlers/create-mistake-items";
+```
+
+In `submitSessionAction`, after the existing mastery try/catch block, add a second non-fatal block:
+
+```typescript
+if (result.resultId && !wasAlreadyScored) {
+  try {
+    await updateMasteryJob(result.resultId, createSupabaseMasteryRepository(supabase));
+  } catch (masteryError) {
+    console.error("[mastery] update failed for result", result.resultId, masteryError);
+  }
+  try {
+    await createMistakeItemsJob(result.resultId, supabase);
+  } catch (mistakeError) {
+    console.error("[mistake] create failed for result", result.resultId, mistakeError);
+  }
+}
+```
+
+Mastery runs first (higher priority signal). Both are non-fatal and guarded by `!wasAlreadyScored`.
+
+---
+
+##### `src/tests/unit/mistake-classification.test.ts` — required test cases
+
+Use `describe("classifyMistake", ...)` with `it(...)` per case. All test pure `classifyMistake` — no Supabase mock needed.
+
+| # | isCorrect | confidence | markedReview | Expected |
+|---|---|---|---|---|
+| 1 | `false` | `"sure"` | `false` | `"overconfidence"` |
+| 2 | `false` | `"unsure"` | `false` | `"conceptual_gap"` |
+| 3 | `false` | `null` | `false` | `"conceptual_gap"` |
+| 4 | `false` | `"guessed"` | `false` | `"conceptual_gap"` (wrong takes priority over guessed) |
+| 5 | `false` | `"sure"` | `true` | `"overconfidence"` (wrong+sure beats marked_review) |
+| 6 | `null` | `null` | `false` | `"not_attempted"` |
+| 7 | `null` | `"guessed"` | `false` | `"not_attempted"` (null is_correct beats confidence) |
+| 8 | `true` | `"guessed"` | `false` | `"lucky_guess"` |
+| 9 | `true` | `null` | `true` | `"bookmarked"` |
+| 10 | `true` | `"sure"` | `true` | `"bookmarked"` |
+| 11 | `true` | `"sure"` | `false` | `null` (correct, not guessed, not bookmarked → no mistake) |
+| 12 | `true` | `"unsure"` | `false` | `null` (correct, not guessed, not bookmarked → no mistake) |
+
+---
+
+##### `scripts/smoke-mistake-items.js` — structure
+
+Follow the same pattern as `scripts/smoke-mastery-update.js`:
+
+- Uses `postgres` client with `DATABASE_URL` directly.
+- Self-contained JS implementation of the job logic (no TypeScript import).
+- Seed data: 4 questions (mcq, UPSC exam, one per scenario).
+- Fixed diagnostic session (not benchmark — simpler, no template needed).
+
+**Seed scenario → classification mapping:**
+
+| Q# | Answer saved | Confidence | `marked_review` | Expected `mistake_type` |
+|---|---|---|---|---|
+| Q1 | wrong option | `"sure"` | `false` | `"overconfidence"` |
+| Q2 | wrong option | `"unsure"` | `false` | `"conceptual_gap"` |
+| Q3 | no answer (skip) | `null` | `false` | `"not_attempted"` |
+| Q4 | correct option | `"guessed"` | `false` | `"lucky_guess"` |
+
+**Post-job assertions:**
+
+1. `mistake_items` count for session = 4.
+2. One row per expected `mistake_type`.
+3. `topic_id` is non-null for each row (questions have `topic_id`).
+4. `user_id` matches the seeded user.
+5. `status = 'unresolved'` for all rows.
+
+**Idempotency test:**
+
+Call `createMistakeItemsJob` logic a second time with the same `result_id`. Assert row count is still 4 (not 8). The `ignoreDuplicates: true` + unique constraint makes this safe.
+
+**JS job implementation in the smoke script:**
+
+The smoke script must reimplement `createMistakeItemsJob` using raw SQL, not the TypeScript module. Use the same five-step pattern (result lookup → answers → topics → concepts → classify + insert). For the insert, use:
+
+```sql
+insert into public.mistake_items (
+  user_id, exam_id, question_id, session_id,
+  topic_id, concept_id, mistake_type, confidence, status
+)
+values (...)
+on conflict (user_id, session_id, question_id) do nothing
+```
+
+**Diagnostic session note:** For a diagnostic session, use `start_test_session(examId, 'diagnostic', null, null, 4, null, 'bronze')`. No template needed. Seed the questions to be the only available live questions in a throwaway `topic_id` scope — or alternatively reuse the fixed-question approach from `smoke-mastery-update.js` but with a diagnostic session type.
+
+Actually the simpler approach: use UPSC Prelims existing topics and seed 4 questions there (same as mastery smoke), start a diagnostic session, manually set the session answers via direct insert, then run the submit RPC and the job.
+
+**Cleanup:** Delete `mistake_items` for the user, the `test_sessions` row, any seeded questions/concepts, and the `auth.users` row. Same cleanup pattern as mastery smoke.
+
+---
+
+##### TSP-060 verification gates
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/mistake-classification.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node scripts/smoke-mistake-items.js
+```
+
+All must exit 0 before marking TSP-060 Done.
+
+---
+
+#### Tracker and process doc updates (Builder)
+
+After both tickets pass gates:
+
+1. `trackers/JIRA_TRACKER.csv` — TSP-059: `Backlog → Done`, Owner = Builder, Builder Remarks = "mistake_items + retest_queue migration with RLS and indexes".
+2. `trackers/JIRA_TRACKER.csv` — TSP-060: `Backlog → Done`, Owner = Builder, Builder Remarks = "classifyMistake + createMistakeItemsJob + 12-case unit tests + smoke".
+3. `docs/process/SESSION_STATE.md` — add Session 14 completed note, update Next Recommended Work.
+4. Append Builder Handoff section to `docs/process/HANDOFF.md`.
+5. One commit per ticket (`git commit -m "TSP-059: mistake notebook schema"` and `git commit -m "TSP-060: create mistake items on submit"`).
+
+---
+
+#### Known issues to track
+
+**S14-A (non-blocking):** `question_concepts` RLS allows reads only for `status = 'live'` questions. If a question is retired between session start and submit, `concept_id` will be null in the mistake row. Acceptable for MVP; fix if it becomes a data quality issue.
+
+**S14-B (defer to TSP-062):** `retest_queue` table is created here but never populated by Session 14 code. TSP-062 (Session 15) adds the scheduler that creates retest queue rows from mistake_items.
+
+---
+
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
 
 **Tracker rows:** TSP-149, TSP-090, TSP-091
