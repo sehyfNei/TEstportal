@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { createMistakeItemsJob } from "@/lib/jobs/handlers/create-mistake-items";
 import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
@@ -345,6 +346,12 @@ export async function submitSessionAction(
       await updateMasteryJob(result.resultId, createSupabaseMasteryRepository(supabase));
     } catch (masteryError) {
       console.error("[mastery] update failed for result", result.resultId, masteryError);
+    }
+
+    try {
+      await createMistakeItemsJob(result.resultId, supabase);
+    } catch (mistakeError) {
+      console.error("[mistake] create failed for result", result.resultId, mistakeError);
     }
   }
 

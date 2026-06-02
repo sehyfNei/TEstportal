@@ -4315,6 +4315,72 @@ After both tickets pass gates:
 
 ---
 
+### 2026-06-02 - Session 14 Builder Handoff - Codex
+
+Scope completed:
+
+- Implemented `TSP-059` mistake notebook schema.
+- Implemented `TSP-060` mistake item creation after submit.
+- Committed `TSP-059` separately as `39a1955` (`TSP-059: mistake notebook schema`).
+
+Files changed:
+
+- `supabase/migrations/202606020001_mistake_notebook.sql`
+- `src/lib/jobs/handlers/create-mistake-items.ts`
+- `src/tests/unit/mistake-classification.test.ts`
+- `scripts/smoke-mistake-items.js`
+- `src/app/test/actions.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/CHANGELOG.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added `mistake_items` with `unique (user_id, session_id, question_id)`, owner RLS policies, authenticated grants, and the required query indexes.
+- Added `retest_queue` with topic/concept XOR, owner RLS policies, authenticated grants, due/status indexes, and an `updated_at` trigger.
+- Added pure `classifyMistake` with the locked priority order: overconfidence, conceptual_gap, not_attempted, lucky_guess, bookmarked.
+- Added `createMistakeItemsJob`, which loads result context, scored answers, question topics, primary concepts, classifies qualifying answers, and upserts with `ignoreDuplicates: true`.
+- Wired `submitSessionAction` to run mistake item creation after mastery, guarded by `!wasAlreadyScored` and wrapped in a non-fatal try/catch.
+- Added a self-contained raw-SQL smoke script. It uses a fixed benchmark template, not diagnostic random selection, to guarantee the four seeded questions are selected in live DB.
+
+Verification:
+
+- `node run-migrations.js` exited 0 and applied `202606020001_mistake_notebook.sql`.
+- `node --check scripts/smoke-mistake-items.js` exited 0.
+- `corepack pnpm exec vitest run src/tests/unit/mistake-classification.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed to spawn lint.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- `node scripts/smoke-mistake-items.js` exited 0 live:
+
+```json
+{
+  "ok": true,
+  "sessionId": "79e0996b-3bf8-4d5c-b0d1-2e63864ef40c",
+  "resultId": "03f5b243-94c7-4d2a-8543-64232ca6712b",
+  "mistakeRows": 4,
+  "mistakeTypes": [
+    "conceptual_gap",
+    "lucky_guess",
+    "not_attempted",
+    "overconfidence"
+  ],
+  "idempotent": true
+}
+```
+
+Sanity review focus:
+
+1. Duplicate submit is guarded by `!wasAlreadyScored` before the mistake job runs in the server action.
+2. Job idempotency is enforced by `unique (user_id, session_id, question_id)` plus `onConflict: "user_id,session_id,question_id"` and `ignoreDuplicates: true`.
+3. `not_attempted` requires a `session_answers` row with `selected_answer = null`; this matches the current save path when a skipped answer is saved.
+4. `question_concepts` RLS can still return no concept if a question is retired between start and submit; the job stores `concept_id = null` in that case.
+5. `retest_queue` remains unpopulated until `TSP-062`.
+
+---
+
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
 
 **Tracker rows:** TSP-149, TSP-090, TSP-091

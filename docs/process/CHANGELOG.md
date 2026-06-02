@@ -6,6 +6,26 @@ Human-readable implementation log.
 
 ## 2026-06-02
 
+### Session 14 M4 Mistake Notebook Foundation
+
+- Completed `TSP-059` and `TSP-060` for mistake notebook schema and post-submit mistake item creation.
+- Added `supabase/migrations/202606020001_mistake_notebook.sql` with `mistake_items`, `retest_queue`, owner RLS, authenticated grants, required indexes, unique mistake item idempotency, and retest topic/concept XOR.
+- Added `src/lib/jobs/handlers/create-mistake-items.ts` with pure `classifyMistake` and Supabase-backed `createMistakeItemsJob`.
+- Wired `submitSessionAction` to run mistake item creation after mastery, guarded by `!wasAlreadyScored` and logged as non-fatal.
+- Added `src/tests/unit/mistake-classification.test.ts` with the 12 required classification cases.
+- Added `scripts/smoke-mistake-items.js` to seed fixed questions, submit, assert the four expected mistake types, and verify idempotency.
+
+### Session 14 Verification
+
+- `node run-migrations.js` applied all migrations through `202606020001_mistake_notebook.sql`.
+- `node --check scripts/smoke-mistake-items.js` exited 0.
+- `corepack pnpm exec vitest run src/tests/unit/mistake-classification.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed to spawn lint.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- `node scripts/smoke-mistake-items.js` passed live with 4 mistake rows and duplicate-run/duplicate-submit idempotency.
+
 ### Session 12 M3 Mastery Update Job
 
 - Completed `TSP-055` for topic and concept mastery updates after scored sessions.
