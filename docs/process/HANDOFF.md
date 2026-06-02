@@ -3369,6 +3369,400 @@ Readiness score: weighted average of `mastery_records` topic scores by exam mani
 
 ---
 
+---
+
+### 2026-06-02 - Session 13 Plan (M3 fourth slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M3 — Scoring & Learning Model
+**Ticket:** TSP-056 — Implement readiness score and confidence
+**Depends on:** TSP-055 Done — `mastery_records` populated post-submit.
+
+---
+
+#### Context
+
+TRD §12.3 defines readiness as:
+
+```
+weighted average of topic/concept mastery by exam weights
+adjusted by recency, benchmark performance, and confidence
+```
+
+This is a **pure computation layer** — no new DB table, no migration. TSP-056 delivers the formula and the server-side query function that assembles inputs from the live DB. The M4 dashboard (TSP-076/078) consumes it. TSP-057 (forgetting-curve decay, nightly job) is out of scope this session — we surface stale topics here but do not decay stored mastery.
+
+This is a backend-only session. No UI routes. Two files of logic + one query helper + unit tests.
+
+---
+
+#### Architectural decisions locked for this session
+
+**A. Readiness is computed on demand, not stored.** No new table. The M4 dashboard API calls the query helper each time. The TRD's `session_results.readiness_delta` column is reserved for a future per-session snapshot (M4 integration, not this session).
+
+**B. Topic weights source.** Use `topics.weight_percent` (already in the DB schema). All topics with a non-null `weight_percent` participate — both root and subtopics. If `weight_percent` values don't sum to 100, normalize them (divide each by the actual sum) rather than error. Topics with null `weight_percent` are ignored in the weighted average. Uncovered topics (no mastery record but have a weight) contribute **mastery = 0** — they correctly drag the score down.
+
+**C. Readiness score range: 0–100.** Consistent with `mastery_score`.
+
+**D. Formula — four factors:**
+
+```typescript
+readinessScore = weightedMasterySum * benchmarkFactor * recencyFactor
+// clamped to [0, 100], rounded to 2dp
+```
+
+1. **`weightedMasterySum`** (0–100): sum over all weighted topics of `(normalizedWeight × mastery_score)`. Topics with no mastery record contribute 0.
+
+2. **`benchmarkFactor`** (0.9 or 1.0): `1.0` if the user has ≥1 `benchmark` or `mock` session for this exam in `test_sessions`; `0.9` otherwise. TRD §12.1: "Benchmark sessions have stronger measurement weight."
+
+3. **`recencyFactor`** (0.80–1.0): for every mastery record with `last_tested_at` older than 14 days, deduct 2% (floor 80%). Formula: `max(0.80, 1.0 - staleCount × 0.02)`. TSP-057 will apply the full exponential decay to stored `mastery_score` nightly; this factor is a soft display-time penalty only.
+
+4. **`coveragePercent`** (0–1): fraction of total normalized weight covered by topics with `questions_attempted > 0`. Returned alongside the score for the dashboard — not a multiplier.
+
+**E. Readiness confidence level (separate from per-topic `confidence_level`):**
+
+```typescript
+function deriveReadinessConfidence(coverage, hasBenchmark, avgTopicConfidence):
+  'low' | 'medium' | 'high'
+```
+- `low`: `coverage < 0.30` OR `avgTopicConfidence === 'low'`
+- `high`: `coverage >= 0.70` AND `hasBenchmark` AND `avgTopicConfidence !== 'low'`
+- `medium`: everything else
+
+`avgTopicConfidence` maps `low=0, medium=1, high=2`; average across all topic mastery records with attempts; rounds down.
+
+**F. Stale topics list.** Return `staleTopicIds: string[]` — topic IDs where `last_tested_at < now - 14 days`. Used by the dashboard "Retention may have dropped" warning (TRD §12.2).
+
+**G. First-session user (zero mastery records).** Return `{ score: 0, confidenceLevel: 'low', coveragePercent: 0, staleTopicIds: [], hasBenchmark: false, breakdown: {} }`. Never throw — null mastery is a valid state.
+
+**H. Benchmark check query.** One extra Supabase query against `test_sessions` filtered by `user_id`, `exam_id`, `type IN ('benchmark', 'mock')`, `status = 'scored'`, `LIMIT 1`. If the query errors, default `hasBenchmark = false` (non-fatal).
+
+---
+
+#### Files to create
+
+| Action | Path |
+|---|---|
+| Create | `src/lib/scoring/readiness.ts` — pure formula + types (no DB) |
+| Create | `src/tests/unit/readiness.test.ts` — unit tests (full formula coverage, no DB) |
+| Create | `src/lib/scoring/readiness-query.ts` — server-side Supabase query + compute assembly |
+| Edit | `trackers/JIRA_TRACKER.csv` (TSP-056 → In Progress → Done after gates pass) |
+| Edit | `docs/process/SESSION_STATE.md`, `docs/process/CHANGELOG.md`, `docs/process/HANDOFF.md` |
+
+**Do NOT create** any UI page, API route, or migration. Do NOT modify `submitSessionAction` — readiness is fetched on demand.
+
+---
+
+#### `src/lib/scoring/readiness.ts` — full spec
+
+```typescript
+export type ReadinessTopicWeight = {
+  topicId: string;
+  weightPercent: number; // from topics.weight_percent; >0
+};
+
+export type MasteryRecordForReadiness = {
+  topicId: string | null;
+  masteryScore: number;        // 0–100 numeric
+  confidenceLevel: 'low' | 'medium' | 'high';
+  questionsAttempted: number;
+  lastTestedAt: Date | null;
+};
+
+export type ReadinessInput = {
+  masteryRecords: MasteryRecordForReadiness[];  // topic-level only (concept rows ignored here)
+  topicWeights: ReadinessTopicWeight[];
+  hasBenchmarkSession: boolean;
+  nowMs?: number; // injectable for unit tests; defaults to Date.now()
+};
+
+export type TopicBreakdown = {
+  masteryScore: number;   // 0–100, or 0 if uncovered
+  weight: number;         // normalized weight 0–1
+  contribution: number;   // masteryScore × weight (raw contribution to weighted sum)
+  covered: boolean;       // questions_attempted > 0
+  stale: boolean;         // last_tested_at older than STALE_THRESHOLD_DAYS
+};
+
+export type ReadinessScore = {
+  score: number;                    // 0–100
+  confidenceLevel: 'low' | 'medium' | 'high';
+  coveragePercent: number;          // 0–1 fraction of weighted topics with attempts
+  staleTopicIds: string[];          // topic IDs last tested >14 days ago
+  hasBenchmarkSession: boolean;
+  breakdown: Record<string, TopicBreakdown>; // keyed by topicId
+};
+
+export const STALE_THRESHOLD_DAYS = 14;
+export const BENCHMARK_FACTOR_WITH = 1.0;
+export const BENCHMARK_FACTOR_WITHOUT = 0.9;
+export const RECENCY_DEDUCTION_PER_STALE = 0.02;
+export const RECENCY_FLOOR = 0.80;
+
+export function computeReadinessScore(input: ReadinessInput): ReadinessScore {
+  // Export the constants above so unit tests can use them without magic numbers
+  const now = input.nowMs ?? Date.now();
+  const { masteryRecords, topicWeights, hasBenchmarkSession } = input;
+
+  // Step 1 — normalize weights (guard zero-sum)
+  const totalWeight = topicWeights.reduce((s, t) => s + t.weightPercent, 0);
+  if (topicWeights.length === 0 || totalWeight === 0) {
+    return zeroReadiness(hasBenchmarkSession);
+  }
+  const normalizedWeights = topicWeights.map(t => ({
+    topicId: t.topicId,
+    weight: t.weightPercent / totalWeight
+  }));
+
+  // Step 2 — index mastery records by topicId (topic-level only)
+  const masteryByTopic = new Map<string, MasteryRecordForReadiness>();
+  for (const record of masteryRecords) {
+    if (record.topicId) masteryByTopic.set(record.topicId, record);
+  }
+
+  // Step 3 — build breakdown and compute weighted sum
+  let weightedSum = 0;
+  let coveredWeight = 0;
+  const staleTopicIds: string[] = [];
+  const breakdown: Record<string, TopicBreakdown> = {};
+
+  for (const { topicId, weight } of normalizedWeights) {
+    const record = masteryByTopic.get(topicId);
+    const masteryScore = record ? toNumber(record.masteryScore) : 0;
+    const covered = (record?.questionsAttempted ?? 0) > 0;
+    const stale = isStale(record?.lastTestedAt ?? null, now);
+
+    if (stale && record?.topicId) staleTopicIds.push(record.topicId);
+    if (covered) coveredWeight += weight;
+
+    weightedSum += masteryScore * weight;
+    breakdown[topicId] = {
+      masteryScore,
+      weight,
+      contribution: masteryScore * weight,
+      covered,
+      stale
+    };
+  }
+
+  const coveragePercent = coveredWeight; // already normalized
+
+  // Step 4 — benchmark factor
+  const benchmarkFactor = hasBenchmarkSession
+    ? BENCHMARK_FACTOR_WITH
+    : BENCHMARK_FACTOR_WITHOUT;
+
+  // Step 5 — recency factor (soft penalty, floor 0.80)
+  const recencyFactor = Math.max(
+    RECENCY_FLOOR,
+    1.0 - staleTopicIds.length * RECENCY_DEDUCTION_PER_STALE
+  );
+
+  // Step 6 — final score
+  const rawScore = weightedSum * benchmarkFactor * recencyFactor;
+  const score = roundScore(rawScore);
+
+  // Step 7 — readiness confidence
+  const avgTopicConfidence = averageConfidenceLevel(
+    Array.from(masteryByTopic.values())
+      .filter(r => (r.questionsAttempted ?? 0) > 0)
+      .map(r => r.confidenceLevel)
+  );
+  const confidenceLevel = deriveReadinessConfidence(
+    coveragePercent,
+    hasBenchmarkSession,
+    avgTopicConfidence
+  );
+
+  return {
+    score,
+    confidenceLevel,
+    coveragePercent,
+    staleTopicIds,
+    hasBenchmarkSession,
+    breakdown
+  };
+}
+
+function deriveReadinessConfidence(
+  coverage: number,
+  hasBenchmark: boolean,
+  avgTopicConfidence: 'low' | 'medium' | 'high'
+): 'low' | 'medium' | 'high' {
+  if (coverage < 0.30 || avgTopicConfidence === 'low') return 'low';
+  if (coverage >= 0.70 && hasBenchmark && avgTopicConfidence !== 'low') return 'high';
+  return 'medium';
+}
+
+function averageConfidenceLevel(
+  levels: ('low' | 'medium' | 'high')[]
+): 'low' | 'medium' | 'high' {
+  if (levels.length === 0) return 'low';
+  const numericMap = { low: 0, medium: 1, high: 2 };
+  const avg = levels.reduce((s, l) => s + numericMap[l], 0) / levels.length;
+  if (avg < 0.5) return 'low';
+  if (avg < 1.5) return 'medium';
+  return 'high';
+}
+
+function isStale(lastTestedAt: Date | null, nowMs: number): boolean {
+  if (!lastTestedAt) return false;
+  const days = (nowMs - lastTestedAt.getTime()) / (1000 * 60 * 60 * 24);
+  return days > STALE_THRESHOLD_DAYS;
+}
+
+function zeroReadiness(hasBenchmarkSession: boolean): ReadinessScore {
+  return {
+    score: 0,
+    confidenceLevel: 'low',
+    coveragePercent: 0,
+    staleTopicIds: [],
+    hasBenchmarkSession,
+    breakdown: {}
+  };
+}
+
+function roundScore(value: number): number {
+  return Math.round(Math.min(100, Math.max(0, value)) * 100) / 100;
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  const n = typeof value === 'string' ? Number(value) : (value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+```
+
+---
+
+#### `src/lib/scoring/readiness-query.ts` — full spec
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  computeReadinessScore,
+  type MasteryRecordForReadiness,
+  type ReadinessScore,
+  type ReadinessTopicWeight
+} from "@/lib/scoring/readiness";
+
+export async function fetchReadinessScore(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<ReadinessScore> {
+  // Query 1 — topic-level mastery records for this user+exam
+  const { data: masteryRows, error: masteryError } = await supabase
+    .from("mastery_records")
+    .select("topic_id,mastery_score,confidence_level,questions_attempted,last_tested_at")
+    .eq("user_id", userId)
+    .eq("exam_id", examId)
+    .not("topic_id", "is", null);  // topic-level only
+
+  if (masteryError) {
+    console.error("[readiness] mastery query failed", masteryError.message);
+    return computeReadinessScore({ masteryRecords: [], topicWeights: [], hasBenchmarkSession: false });
+  }
+
+  // Query 2 — topic weights for this exam
+  const { data: topicRows, error: topicError } = await supabase
+    .from("topics")
+    .select("id,weight_percent")
+    .eq("exam_id", examId)
+    .not("weight_percent", "is", null);
+
+  if (topicError) {
+    console.error("[readiness] topic weight query failed", topicError.message);
+    return computeReadinessScore({ masteryRecords: [], topicWeights: [], hasBenchmarkSession: false });
+  }
+
+  // Query 3 — check for any scored benchmark/mock session for this user+exam
+  const { data: benchmarkRows, error: benchmarkError } = await supabase
+    .from("test_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("exam_id", examId)
+    .eq("status", "scored")
+    .in("type", ["benchmark", "mock"])
+    .limit(1);
+
+  const hasBenchmarkSession = !benchmarkError && (benchmarkRows?.length ?? 0) > 0;
+
+  // Map to formula types
+  const masteryRecords: MasteryRecordForReadiness[] = (masteryRows ?? []).map(r => ({
+    topicId: r.topic_id as string,
+    masteryScore: Number(r.mastery_score ?? 0),
+    confidenceLevel: toConfidenceLevel(r.confidence_level),
+    questionsAttempted: Number(r.questions_attempted ?? 0),
+    lastTestedAt: r.last_tested_at ? new Date(r.last_tested_at) : null
+  }));
+
+  const topicWeights: ReadinessTopicWeight[] = (topicRows ?? [])
+    .filter(t => Number(t.weight_percent) > 0)
+    .map(t => ({
+      topicId: t.id as string,
+      weightPercent: Number(t.weight_percent)
+    }));
+
+  return computeReadinessScore({ masteryRecords, topicWeights, hasBenchmarkSession });
+}
+
+function toConfidenceLevel(value: string | null): 'low' | 'medium' | 'high' {
+  return value === 'medium' || value === 'high' ? value : 'low';
+}
+```
+
+---
+
+#### Unit tests required (`src/tests/unit/readiness.test.ts`)
+
+Cover these cases — no DB calls, all inputs are inline:
+
+1. **Zero records + zero weights → score 0, confidence low, coverage 0**
+2. **Single topic, full mastery, with benchmark → score ≈ 100 × 1.0 × 1.0**
+3. **Single topic, full mastery, no benchmark → score ≈ 100 × 0.9 × 1.0**
+4. **Two topics, one covered 80% one uncovered → coverage 0.5, score = weight₁ × 80**
+5. **Stale topic (last_tested_at = 20 days ago) → staleTopicIds populated, recency deduction applied**
+6. **10 stale topics → recency factor floored at 0.80 (not 0.60)**
+7. **Coverage < 0.30 → confidenceLevel 'low' regardless of benchmark**
+8. **Coverage ≥ 0.70 + benchmark + avg confidence 'medium' → confidenceLevel 'high'**
+9. **Coverage 0.50 + no benchmark → confidenceLevel 'medium'**
+10. **Un-normalized weights (don't sum to 100) → normalized correctly**
+11. **Topic with no mastery record contributes mastery = 0 to weighted sum**
+12. **Numeric mastery_score as string ('75.5') → parsed correctly**
+
+---
+
+#### Verification gate
+
+- Unit: `corepack pnpm exec vitest run src/tests/unit/readiness.test.ts`
+- Standard: `corepack pnpm typecheck` + `corepack pnpm lint` + `corepack pnpm test` + `corepack pnpm build`
+- No migration, no DB smoke script, no browser smoke — this is a pure computation + query helper session.
+
+---
+
+#### Sanity review focus (flag for reviewer)
+
+1. **Uncovered topic → mastery 0.** A topic in `topicWeights` with no matching `mastery_records` row must contribute `masteryScore = 0` to the weighted sum, not be skipped. Verify the loop iterates `normalizedWeights` (not `masteryByTopic`) and falls back to 0.
+2. **Weight normalization guards zero-sum.** `totalWeight === 0` or `topicWeights.length === 0` returns `zeroReadiness` immediately. No division-by-zero.
+3. **Recency floor.** 10 stale topics × 0.02 = 0.20 deduction → factor 0.80, not 0.60. `Math.max(RECENCY_FLOOR, ...)` enforces this.
+4. **Benchmark factor only from scored sessions.** Query filters `status = 'scored'` — in-progress or expired sessions do not count.
+5. **Query failures are non-fatal.** All three queries degrade gracefully: errors are logged, function returns zero-readiness rather than throwing. Never propagate DB errors to the caller.
+6. **Concept rows excluded from query.** `readiness-query.ts` filters `.not("topic_id", "is", null)` — concept-level mastery rows are excluded from topic-weight readiness. Concept readiness is a future row.
+7. **`nowMs` is injectable.** All stale-topic logic uses `input.nowMs ?? Date.now()` — unit tests must be able to inject a fixed timestamp to assert staleness deterministically.
+8. **No circular imports.** `readiness.ts` must not import from `compute-mastery.ts`, `update-mastery.ts`, or any job handler. It imports nothing from this project — pure functions + types only.
+
+---
+
+#### Open item for founder (non-blocking)
+
+**TSP-160 (S12-A):** The partial unique index `onConflict` fix for the Supabase JS mastery upsert UPDATE path should be addressed before M4 makes readiness visible to students. Recommend: a new migration `202606020001_mastery_unique_constraints.sql` that adds named non-partial unique constraints. This is a one-line fix but needs a migration slot.
+
+---
+
+#### Next session (Session 14 — TSP-057)
+
+Forgetting-curve decay: nightly job that reads mastery_records with `last_tested_at` older than a threshold and applies `decayedMastery = storedMastery × exp(-daysSince / (14 × stabilityFactor))`. Requires a jobs table (TSP-116) or can run as a Postgres cron/pg_cron call. Architect must decide between Supabase Edge Function cron and pg_cron before planning.
+
+---
+
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
 
 **Tracker rows:** TSP-149, TSP-090, TSP-091
