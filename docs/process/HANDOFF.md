@@ -6021,6 +6021,56 @@ Next recommended step:
 
 ---
 
+### 2026-06-03 - Session 16 Builder Handoff - Codex
+
+Scope completed:
+
+- Completed `TSP-076` dashboard overview API.
+- Added the backend aggregation layer that returns readiness, weak topics, due retests, overdue retest count, recent sessions, unresolved mistake count, and most-recent strategy metrics.
+- Added a guarded server action wrapper for dashboard callers.
+- Marked `TSP-076` `Done` after all local TypeScript gates passed.
+
+Files changed:
+
+- `src/lib/dashboard/overview.ts`
+- `src/app/dashboard/actions.ts`
+- `src/tests/unit/dashboard-overview.test.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- `fetchDashboardOverview` calls five data sources with `Promise.allSettled`: readiness, weak topics, due retests, recent sessions, and unresolved mistake count. One failed source falls back without failing the whole overview response.
+- `buildWeakTopics` merges all weighted topics with topic-level mastery records, defaults missing mastery to `0`, filters zero-priority topics, sorts by `weight_percent * mastery gap`, and caps to five rows.
+- Due retests are fetched in full for `status = 'due'`, counted locally for overdue rows, then sliced to ten returned items.
+- Recent sessions are pulled from `session_results`, enriched with `test_sessions.type`, and the most recent `strategy_metrics` payload is parsed defensively.
+- `getDashboardOverviewAction` checks Supabase config, validates the exam UUID, requires an authenticated user, and returns `{ ok: true, data }` on success.
+- Added 16 deterministic unit tests for `computeWeakTopicPriority`, `buildWeakTopics`, and `toStrategyMetrics`.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/dashboard-overview.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- No migration or smoke script was required for this TypeScript-only slice.
+
+Sanity review focus:
+
+- Confirm `Promise.allSettled` keeps dashboard overview non-fatal when any single data source fails.
+- Confirm weak topics include uncovered weighted topics with `masteryScore = 0`.
+- Confirm due retest count is computed before slicing the returned list to ten.
+- Confirm the server action performs auth and UUID validation before querying.
+- Confirm `strategyMetrics` parsing defaults missing/string values safely.
+
+Next recommended step:
+
+- Session 17 should build the readiness card and weak topics widget (`TSP-078`/`TSP-079`) using `getDashboardOverviewAction`.
+
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |
