@@ -225,7 +225,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 14 Sanity PASS (2026-06-02). TSP-059 and TSP-060 are Done. M4 mistake notebook foundation is live: submit → score → mastery update → mistake item update. Next: Session 15 — TSP-062 simple retest scheduler (reads mistake_items, populates retest_queue). Completion of TSP-062 unblocks TSP-076 dashboard overview API.**
+**Session 14 Sanity PASS (2026-06-02). TSP-059 and TSP-060 are Done. M4 mistake notebook foundation is live. Session 15 architect plan written (2026-06-02): TSP-062 simple retest scheduler — reads mistake_items, populates retest_queue, unblocks TSP-076. Builder: follow Session 15 plan in HANDOFF.md.**
 
 Session 4–6 M1 rows remain in Review pending browser smoke. Session 7–9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, and Session 14 rows `TSP-059`/`TSP-060` are Done.
 

@@ -4421,6 +4421,449 @@ Live smoke produced 4 rows (overconfidence, conceptual_gap, not_attempted, lucky
 
 ---
 
+### 2026-06-02 - Session 15 Plan (M4 second slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M4 Dashboard & Retention  
+**Ticket:** TSP-062 — Implement simple retest scheduler  
+**Prerequisites complete:** TSP-059 `retest_queue` schema (Done), TSP-060 `mistake_items` creation (Done)
+
+---
+
+#### Overview
+
+Session 15 adds the simple retest scheduler: logic that reads the current session's `mistake_items` and populates `retest_queue` so the dashboard can surface due retests.
+
+**No new migration** — `retest_queue` was created by TSP-059.
+
+The pure computation module lives at `src/lib/adaptive/simple-scheduler.ts` (per TRD file structure, Section 2). The job lives at `src/lib/jobs/handlers/update-retest-queue.ts`. Wire-up is a third non-fatal call in `submitSessionAction` after mastery and mistakes.
+
+**TSP-063 (concept retest sessions) and TSP-064 (FSRS) are out of scope.** `computeRetestSchedule` is defined here for completeness and so TSP-063 can import it, but it is not wired to any DB call in this session.
+
+---
+
+#### Key design decisions
+
+**1. Granularity: concept-level, topic fallback.**  
+One `retest_queue` row per `concept_id` per user per exam when concept is known. When `mistake_item.concept_id` is null, fall back to `topic_id`. The `retest_queue` XOR constraint enforces one or the other.
+
+**2. Dedup: check-then-insert/update.**  
+No unique constraint on `retest_queue`. Query for an existing `status IN ('due', 'scheduled', 'snoozed')` row for the same (user, exam, concept/topic). If found: `UPDATE priority = MAX(existing, new)`. If not found: `INSERT`. Completed/cancelled historical rows are left untouched.
+
+**3. Priority formula:**
+```
+basePriority = max of MISTAKE_TYPE_PRIORITY values for current session's mistakes on this concept
+  overconfidence → 3, conceptual_gap → 2, not_attempted → 1, lucky_guess → 1, bookmarked → 0.5
+topicBoost = (topicWeightPercent / 100) × 2   (0 if null or unknown)
+priority = clamp(basePriority + topicBoost, 0, 10)
+```
+
+**4. Initial `due_at`: now + 1 day.** After-retest update is TSP-063.
+
+**5. `scheduler_state` (JSONB):**
+```json
+{ "intervalDays": 1, "repetitions": 0, "lapses": 0, "lastReviewedAt": null }
+```
+
+---
+
+#### `src/lib/adaptive/simple-scheduler.ts` — full spec
+
+New directory and file. Exports named constants and two pure functions.
+
+```typescript
+export const MISTAKE_TYPE_PRIORITY: Record<string, number> = {
+  overconfidence: 3,
+  conceptual_gap: 2,
+  not_attempted: 1,
+  lucky_guess: 1,
+  bookmarked: 0.5,
+};
+
+export const INTERVAL_DAYS_SEQUENCE = [1, 2, 4, 8, 14, 21, 30] as const;
+export const MAX_PRIORITY = 10;
+export const TOPIC_BOOST_SCALE = 2; // max bonus for a 100%-weight topic
+
+export type SchedulerState = {
+  intervalDays: number;
+  repetitions: number;   // successful review count
+  lapses: number;        // failed review count
+  lastReviewedAt: string | null;
+};
+
+export type InitialScheduleInput = {
+  mistakeTypes: string[];
+  topicWeightPercent: number | null;
+};
+
+export type RetestOutcome = "pass" | "fail";
+
+export type ScheduleResult = {
+  dueAt: Date;
+  priority: number;
+  schedulerState: SchedulerState;
+};
+
+/**
+ * Computes the first retest schedule for a concept that just appeared
+ * in mistake_items. nowMs is injectable for deterministic tests.
+ */
+export function computeInitialSchedule(
+  input: InitialScheduleInput,
+  nowMs?: number
+): ScheduleResult {
+  const now = new Date(nowMs ?? Date.now());
+  const basePriority =
+    input.mistakeTypes.length > 0
+      ? Math.max(...input.mistakeTypes.map((t) => MISTAKE_TYPE_PRIORITY[t] ?? 0))
+      : 0;
+  const topicBoost =
+    input.topicWeightPercent !== null
+      ? (input.topicWeightPercent / 100) * TOPIC_BOOST_SCALE
+      : 0;
+  const priority = Math.min(MAX_PRIORITY, basePriority + topicBoost);
+  const intervalDays = INTERVAL_DAYS_SEQUENCE[0]; // 1
+  const dueAt = new Date(now.getTime() + intervalDays * 24 * 60 * 60 * 1000);
+  return {
+    dueAt,
+    priority,
+    schedulerState: { intervalDays, repetitions: 0, lapses: 0, lastReviewedAt: null },
+  };
+}
+
+/**
+ * Computes the updated schedule after a retest session outcome.
+ * Called by TSP-063 after concept retest scoring. Not wired in this session.
+ * Pass → doubles interval, lowers priority. Fail → resets to 1 day, raises priority.
+ */
+export function computeRetestSchedule(
+  outcome: RetestOutcome,
+  existingState: SchedulerState,
+  topicWeightPercent: number | null,
+  nowMs?: number
+): ScheduleResult {
+  const now = new Date(nowMs ?? Date.now());
+  const nowIso = now.toISOString();
+  const topicBoost =
+    topicWeightPercent !== null
+      ? (topicWeightPercent / 100) * TOPIC_BOOST_SCALE
+      : 0;
+
+  if (outcome === "pass") {
+    const newRepetitions = existingState.repetitions + 1;
+    const idx = Math.min(newRepetitions, INTERVAL_DAYS_SEQUENCE.length - 1);
+    const intervalDays = INTERVAL_DAYS_SEQUENCE[idx];
+    return {
+      dueAt: new Date(now.getTime() + intervalDays * 24 * 60 * 60 * 1000),
+      priority: Math.min(MAX_PRIORITY, 1 + topicBoost),
+      schedulerState: {
+        intervalDays,
+        repetitions: newRepetitions,
+        lapses: existingState.lapses,
+        lastReviewedAt: nowIso,
+      },
+    };
+  }
+
+  // fail
+  const newLapses = existingState.lapses + 1;
+  const lapseBoost = Math.min(newLapses, 3) * 0.5; // +0.5/lapse, max +1.5
+  return {
+    dueAt: new Date(now.getTime() + INTERVAL_DAYS_SEQUENCE[0] * 24 * 60 * 60 * 1000),
+    priority: Math.min(MAX_PRIORITY, 2 + lapseBoost + topicBoost),
+    schedulerState: {
+      intervalDays: INTERVAL_DAYS_SEQUENCE[0],
+      repetitions: 0, // reset on lapse
+      lapses: newLapses,
+      lastReviewedAt: nowIso,
+    },
+  };
+}
+```
+
+---
+
+#### `src/lib/jobs/handlers/update-retest-queue.ts` — full spec
+
+New file. Same structural pattern as `create-mistake-items.ts`.
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { computeInitialSchedule } from "@/lib/adaptive/simple-scheduler";
+
+type ResultRow = { session_id: string; user_id: string; exam_id: string };
+type MistakeRow = { concept_id: string | null; topic_id: string | null; mistake_type: string };
+type TopicRow = { id: string; weight_percent: number | string | null };
+type ActiveRetestRow = { id: string; priority: number | string };
+
+export async function updateRetestQueueJob(
+  resultId: string,
+  supabase: SupabaseClient
+): Promise<void> {
+  // 1. Session context
+  const { data: result, error: resultError } = await supabase
+    .from("session_results")
+    .select("session_id,user_id,exam_id")
+    .eq("id", resultId)
+    .maybeSingle();
+
+  if (resultError || !result) {
+    throw new Error(
+      `[retest] session_results lookup failed for ${resultId}: ${resultError?.message ?? "not found"}`
+    );
+  }
+
+  const { session_id: sessionId, user_id: userId, exam_id: examId } = result as ResultRow;
+
+  // 2. Unresolved mistake_items for this session
+  const { data: mistakes, error: mistakeError } = await supabase
+    .from("mistake_items")
+    .select("concept_id,topic_id,mistake_type")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .eq("status", "unresolved");
+
+  if (mistakeError) {
+    throw new Error(`[retest] mistake_items lookup failed: ${mistakeError.message}`);
+  }
+
+  const mistakeRows = (mistakes ?? []) as MistakeRow[];
+  if (mistakeRows.length === 0) return;
+
+  // 3. Group by concept_id (preferred) or topic_id (fallback).
+  // Key: "concept:<uuid>" or "topic:<uuid>"
+  const groups = new Map<
+    string,
+    { conceptId: string | null; topicId: string | null; mistakeTypes: string[] }
+  >();
+
+  for (const row of mistakeRows) {
+    const key = row.concept_id ? `concept:${row.concept_id}` : `topic:${row.topic_id}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.mistakeTypes.push(row.mistake_type);
+    } else {
+      groups.set(key, {
+        conceptId: row.concept_id,
+        topicId: row.concept_id ? null : row.topic_id,
+        mistakeTypes: [row.mistake_type],
+      });
+    }
+  }
+
+  // 4. Topic weights for all topic_ids involved
+  const topicIds = [...new Set(
+    [...groups.values()].map((g) => g.topicId).filter(Boolean) as string[]
+  )];
+  const topicWeightMap = new Map<string, number>();
+
+  if (topicIds.length > 0) {
+    const { data: topicRows } = await supabase
+      .from("topics")
+      .select("id,weight_percent")
+      .in("id", topicIds);
+
+    for (const t of (topicRows ?? []) as TopicRow[]) {
+      const w = typeof t.weight_percent === "string"
+        ? Number(t.weight_percent)
+        : (t.weight_percent ?? null);
+      if (t.id && w !== null && Number.isFinite(w)) {
+        topicWeightMap.set(t.id, w);
+      }
+    }
+  }
+
+  // 5. Insert or update priority for each group
+  const nowMs = Date.now();
+
+  for (const group of groups.values()) {
+    const topicWeight = group.topicId ? (topicWeightMap.get(group.topicId) ?? null) : null;
+    const { dueAt, priority, schedulerState } = computeInitialSchedule(
+      { mistakeTypes: group.mistakeTypes, topicWeightPercent: topicWeight },
+      nowMs
+    );
+
+    const activeRow = await findActiveRetestRow(
+      supabase, userId, examId, group.conceptId, group.topicId
+    );
+
+    if (activeRow) {
+      const existing = typeof activeRow.priority === "string"
+        ? Number(activeRow.priority)
+        : activeRow.priority;
+      if (priority > existing) {
+        await supabase
+          .from("retest_queue")
+          .update({ priority, updated_at: new Date(nowMs).toISOString() })
+          .eq("id", activeRow.id);
+      }
+    } else {
+      await supabase.from("retest_queue").insert({
+        user_id: userId,
+        exam_id: examId,
+        concept_id: group.conceptId,
+        topic_id: group.topicId,
+        due_at: dueAt.toISOString(),
+        scheduler: "simple",
+        scheduler_state: schedulerState,
+        priority,
+        status: "due",
+      });
+    }
+  }
+}
+
+async function findActiveRetestRow(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string,
+  conceptId: string | null,
+  topicId: string | null
+): Promise<ActiveRetestRow | null> {
+  if (conceptId) {
+    const { data } = await supabase
+      .from("retest_queue")
+      .select("id,priority")
+      .eq("user_id", userId)
+      .eq("exam_id", examId)
+      .eq("concept_id", conceptId)
+      .in("status", ["due", "scheduled", "snoozed"])
+      .limit(1);
+    return ((data ?? []) as ActiveRetestRow[])[0] ?? null;
+  }
+  // topic-level: use .is() for null column filter (not .eq())
+  const { data } = await supabase
+    .from("retest_queue")
+    .select("id,priority")
+    .eq("user_id", userId)
+    .eq("exam_id", examId)
+    .eq("topic_id", topicId)
+    .is("concept_id", null)
+    .in("status", ["due", "scheduled", "snoozed"])
+    .limit(1);
+  return ((data ?? []) as ActiveRetestRow[])[0] ?? null;
+}
+```
+
+---
+
+#### Wire-up in `src/app/test/actions.ts`
+
+Add import:
+```typescript
+import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
+```
+
+In `submitSessionAction`, after the existing mastery + mistake try/catch blocks, add:
+
+```typescript
+  try {
+    await updateRetestQueueJob(result.resultId, supabase);
+  } catch (retestError) {
+    console.error("[retest] update failed for result", result.resultId, retestError);
+  }
+```
+
+All three jobs remain inside `if (result.resultId && !wasAlreadyScored)`. Order: mastery → mistakes → retest queue.
+
+---
+
+#### `src/tests/unit/simple-scheduler.test.ts` — required test cases
+
+```typescript
+const NOW = Date.UTC(2026, 5, 2, 12, 0, 0, 0);
+const DAY_MS = 24 * 60 * 60 * 1000;
+```
+
+**`computeInitialSchedule` (9 cases):**
+
+| # | mistakeTypes | topicWeightPercent | Expected priority | dueAt offset |
+|---|---|---|---|---|
+| 1 | `["overconfidence"]` | `null` | `3` | `+1 day` |
+| 2 | `["conceptual_gap"]` | `null` | `2` | `+1 day` |
+| 3 | `["lucky_guess"]` | `null` | `1` | `+1 day` |
+| 4 | `["overconfidence","conceptual_gap"]` | `null` | `3` (takes max) | `+1 day` |
+| 5 | `["overconfidence"]` | `50` | `4` (3 + 1) | `+1 day` |
+| 6 | `["overconfidence"]` | `100` | `5` (3 + 2) | `+1 day` |
+| 7 | `["overconfidence"]` | `350` | `10` (capped) | `+1 day` |
+| 8 | `[]` | `null` | `0` | `+1 day` |
+| 9 | `["bookmarked"]` | `0` | `0.5` | `+1 day` |
+
+Case 1 also verify: `schedulerState = { intervalDays: 1, repetitions: 0, lapses: 0, lastReviewedAt: null }`.
+
+**`computeRetestSchedule` (6 cases):**
+
+| # | outcome | existing state | topicWeight | Expected intervalDays | Expected priority |
+|---|---|---|---|---|---|
+| 10 | `"pass"` | `{ intervalDays:1, repetitions:0, lapses:0, lastReviewedAt:null }` | `null` | `2` | `1` |
+| 11 | `"pass"` | `{ intervalDays:2, repetitions:1, lapses:0, lastReviewedAt:null }` | `null` | `4` | `1` |
+| 12 | `"pass"` | `{ intervalDays:21, repetitions:5, lapses:0, lastReviewedAt:null }` | `null` | `30` (last in seq) | `1` |
+| 13 | `"fail"` | `{ intervalDays:8, repetitions:3, lapses:0, lastReviewedAt:null }` | `null` | `1` (reset) | `2.5` (2 + 0.5) |
+| 14 | `"fail"` | `{ intervalDays:1, repetitions:0, lapses:2, lastReviewedAt:null }` | `null` | `1` | `3.5` (2 + 1.5) |
+| 15 | `"pass"` | `{ intervalDays:1, repetitions:0, lapses:0, lastReviewedAt:null }` | `50` | `2` | `2` (1 + 1) |
+
+Case 10: verify `repetitions = 1` and `lastReviewedAt` is non-null ISO string.
+Case 13: verify `repetitions = 0` (reset) and `lapses = 1`.
+
+---
+
+#### `scripts/smoke-retest-queue.js` — structure
+
+Same pattern as `smoke-mastery-update.js`. Direct `postgres` client, self-contained JS.
+
+**Seed:** Same 4-question fixed benchmark as mistake smoke (overconfidence, conceptual_gap, not_attempted, lucky_guess). Reuse the same seeding approach.
+
+**Inline JS functions:**
+1. `runMistakeJob(sql, userId, sessionId, examId)` — SQL insert for `mistake_items` (inline version of TSP-060 job)
+2. `runRetestQueueJob(sql, userId, sessionId, examId, topicId)` — SQL version of `updateRetestQueueJob`
+
+For `runRetestQueueJob`:
+```sql
+-- Step 1: load mistake_items
+select concept_id, topic_id, mistake_type
+from public.mistake_items
+where session_id = $sessionId and user_id = $userId and status = 'unresolved'
+
+-- Step 2: load topic weight
+select weight_percent from public.topics where id = $topicId
+
+-- Step 3: for each concept group
+-- Check active row:
+select id, priority from public.retest_queue
+where user_id = $userId and exam_id = $examId and concept_id = $conceptId
+  and status in ('due', 'scheduled', 'snoozed')
+limit 1
+
+-- If none: insert
+insert into public.retest_queue (
+  user_id, exam_id, concept_id, topic_id,
+  due_at, scheduler, scheduler_state, priority, status
+) values (...)
+```
+
+**Assertions:**
+1. At least 1 `retest_queue` row for `(user_id, exam_id)` with `status = 'due'`
+2. All rows have `scheduler = 'simple'`
+3. `due_at` is between now and now + 2 days
+4. Highest-priority row corresponds to the concept with `overconfidence` mistake type
+5. `scheduler_state` is valid JSON with `intervalDays = 1`
+
+**Idempotency:**
+- Run `runRetestQueueJob` again
+- Assert row count unchanged (same concepts, same active rows)
+- Assert priority same or higher (never decremented)
+
+**Cleanup:** Delete `retest_queue` rows, `mistake_items`, `test_sessions`, questions, concepts, `auth.users`.
+
+---
+
+#### Known issues
+
+**S15-A:** `updateRetestQueueJob` reads only the current session's `mistake_items`. Historical unresolved mistakes from prior sessions are not aggregated into priority. Priority is correct per-session but does not compound across sessions for repeated failures. Fix: add a second query counting all unresolved `mistake_items` for this concept to add a `failureCount` boost. Defer to TSP-062 follow-on or TSP-129.
+
+**S15-B:** No unique constraint on `retest_queue (user_id, exam_id, concept_id)`. Concurrent submits could create duplicate `due` rows. Acceptable for MVP (non-concurrent post-submit job).
+
+---
+
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
 
 **Tracker rows:** TSP-149, TSP-090, TSP-091
