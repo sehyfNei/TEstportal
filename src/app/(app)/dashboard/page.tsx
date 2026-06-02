@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ReadinessCard } from "@/components/dashboard/readiness-card";
+import { StrategyMetricsCard } from "@/components/dashboard/strategy-metrics";
 import { WeakTopics } from "@/components/dashboard/weak-topics";
 import { fetchDashboardOverview } from "@/lib/dashboard/overview";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
@@ -79,6 +80,10 @@ export default async function DashboardPage({
         <StatChip label="Unresolved mistakes" value={overview.unresolvedMistakeCount} />
         <StatChip href="/tests" label="Recent sessions" value={overview.recentSessions.length} />
       </div>
+
+      {overview.strategyMetrics !== null ? (
+        <StrategyMetricsCard metrics={overview.strategyMetrics} />
+      ) : null}
     </section>
   );
 }
