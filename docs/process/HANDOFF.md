@@ -4923,6 +4923,58 @@ Sanity review focus:
 5. Current-session mistake rows only are considered; historical unresolved mistake aggregation remains deferred per S15-A.
 6. No unique constraint exists on `retest_queue`, so the job is idempotent for serial reruns but not concurrency-safe per S15-B.
 
+### 2026-06-03 - Session 15 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Scope:** TSP-062 — `simple-scheduler.ts`, `update-retest-queue.ts`, unit tests, smoke, wire-up.
+
+**Overall: PASS. TSP-062 → Done.**
+
+---
+
+**S1 — Pure scheduler functions: PASS.**  
+`computeInitialSchedule`: priority = max(type priorities) + topicBoost, clamped 0–10. `computeTopicBoost` guards non-finite values. `clampPriority` guards negative and non-finite. `nowMs` injectable confirmed. Initial `schedulerState` correctly has `{ intervalDays:1, repetitions:0, lapses:0, lastReviewedAt:null }`.
+
+**S2 — `computeRetestSchedule` pass path: PASS.**  
+Interval advances via `INTERVAL_DAYS_SEQUENCE[min(newRepetitions, len-1)]`. `repetitions++`. `lapses` preserved. `lastReviewedAt` set to ISO string. Priority drops to `1 + topicBoost`.
+
+**S3 — `computeRetestSchedule` fail path: PASS.**  
+Interval resets to `INTERVAL_DAYS_SEQUENCE[0]` (1 day). `repetitions` resets to 0. `lapses++`. `lapseBoost = min(lapses, 3) × 0.5` (max +1.5). `lastReviewedAt` set. Priority = `2 + lapseBoost + topicBoost`.
+
+**S4 — `findActiveRetestRow` null-column filters: PASS.**  
+Concept-level path uses `.is("topic_id", null)` to enforce XOR. Topic-level path uses `.is("concept_id", null)`. Both use `.in("status", ACTIVE_RETEST_STATUSES)`. Both throw on DB error. This is one defensive step beyond spec — correct.
+
+**S5 — `groupMistakes` edge case: PASS.**  
+Rows where both `concept_id` and `topic_id` are null are silently skipped. Not in spec but correct — prevents a null-key group from entering the map and causing a meaningless insert.
+
+**S6 — Priority update guard: PASS.**  
+`updatePriorityIfHigher` uses strict `>` (not `>=`), so re-running with equal priority skips the update. Idempotent for same priority, bumping only on genuine escalation.
+
+**S7 — Insert error propagates: PASS.**  
+`insertError` throws rather than silently continuing. Combined with non-fatal catch in `submitSessionAction`, this ensures submit always returns `ok: true` while logging any insertion failure.
+
+**S8 — Wire-up: PASS.**  
+Third job inside `if (result.resultId && !wasAlreadyScored)`. Non-fatal. Order: mastery → mistakes → retest queue.
+
+**S9 — Unit tests: PASS.**  
+All 15 planned cases present. Constants are asserted inline on the first overconfidence case (S1-style contract test). `state()` helper keeps test cases concise. `lastReviewedAt` verified as ISO string on pass and fail cases.
+
+**S10 — Live smoke: PASS.**  
+4 `retest_queue` rows from 4 distinct concepts. Highest priority row corresponds to `overconfidence` mistake. Idempotent on second run. `scheduler = 'simple'`, initial `schedulerState` verified.
+
+---
+
+**Known issues (carry forward):**
+
+**S15-A (non-blocking):** Only current session's `mistake_items` are read. Historical unresolved mistakes for the same concept do not compound into priority. Fix: additional count query on all unresolved `mistake_items` for (user, exam, concept). Defer to TSP-129 or a cleanup pass before M4 launch.
+
+**S15-B (non-blocking):** No unique constraint on `retest_queue`. Serial rerun is idempotent (check-then-insert). Concurrent submits could create duplicate `due` rows. Acceptable for MVP.
+
+---
+
+**M4 learning loop is now complete:** submit → mastery update → mistake_items → retest_queue. All TSP-056, TSP-059, TSP-060, TSP-062 are Done.
+
+**Next session:** Session 16 — TSP-076 (dashboard overview API). Both dependencies now satisfied: TSP-056 ✅ and TSP-062 ✅. Session 16 builds the server-side API route that returns readiness score, due retest count, weak topics, and recent sessions — the data layer the dashboard widgets consume.
+
 ---
 
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
