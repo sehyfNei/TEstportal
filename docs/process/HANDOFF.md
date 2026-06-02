@@ -7053,6 +7053,59 @@ No migration. No smoke. **Browser verification blocked** on this workspace (S18-
 
 ---
 
+### 2026-06-03 - Session 18 Builder Handoff - Codex
+
+Scope completed:
+
+- Completed `TSP-081` strategy metrics widget.
+- Completed `TSP-063` concept retest sessions from dashboard.
+- Added two commits as requested: one for the display-only strategy metrics widget and one for the dashboard retest launch flow.
+- Marked `TSP-081` and `TSP-063` `Done` after the static verification gates passed.
+
+Files changed:
+
+- `src/components/dashboard/strategy-metrics.tsx`
+- `src/components/dashboard/due-retests.tsx`
+- `src/app/dashboard/actions.ts`
+- `src/app/(app)/dashboard/page.tsx`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Added `StrategyMetricsCard`, a pure server component that renders six strategy rows from the most recent session metrics and highlights negative marks lost or high-confidence wrong above threshold.
+- `/dashboard` now conditionally renders `StrategyMetricsCard` only when `overview.strategyMetrics !== null`.
+- Added `startRetestAction` with Supabase config check, auth check, retest queue ownership validation, topic resolution for concept rows, `start_test_session` RPC call with `type = 'concept_retest'`, dashboard revalidation, and session id return.
+- Added `DueRetests`, a client component that gives each due retest row its own `useActionState` instance, shows overdue rows in red, displays inline action errors, and redirects to `/tests/:sessionId` on success.
+- `/dashboard` now renders the due retest widget between the readiness/weak-topic grid and the overview stat chips.
+
+Verification:
+
+- `corepack pnpm typecheck` exited 0 for the `TSP-081` commit.
+- `corepack pnpm lint` exited 0 for the `TSP-081` commit.
+- `corepack pnpm test` exited 0 for the `TSP-081` commit.
+- `corepack pnpm build` exited 0 for the `TSP-081` commit.
+- `corepack pnpm typecheck` exited 0 for the `TSP-063` commit.
+- `corepack pnpm lint` exited 0 for the `TSP-063` commit.
+- `corepack pnpm test` exited 0 for the `TSP-063` commit.
+- `corepack pnpm build` exited 0 for the `TSP-063` commit.
+- No migration or smoke script was required.
+- Browser verification was not possible in this workspace because the dev server remains blocked by the documented OneDrive/node_modules issue.
+
+Known issues:
+
+- **S18-A:** `concept_retest` sessions currently use the existing minimal live topic selection path, with no recency exclusion or difficulty balancing. A follow-on migration should add a dedicated `concept_retest` branch that calls recency-aware topic selection.
+- **S18-B:** `retest_queue.status` is not updated when a retest starts or completes, so due counts can over-report active retests until the completion handler is added.
+- **S18-C:** `DueRetests` labels are generic "Concept retest" or "Topic retest" because the overview response does not include concept/topic names yet.
+- **S18-D:** Browser rendering and redirect behavior are unverified in this workspace.
+
+Next recommended step:
+
+- Session 19 can add `TSP-080` progress timeline, fix S18-A with `concept_retest` SQL routing, run M0 browser smoke if users are available, or implement `TSP-057` forgetting-curve decay.
+
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |

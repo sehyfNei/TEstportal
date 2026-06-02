@@ -1,7 +1,7 @@
 # Session State
 
 **Last updated:** 2026-06-03
-**Updated by:** Codex - Session 17 builder completion
+**Updated by:** Codex - Session 18 builder completion
 **Project:** Modular AI-Powered Test Series And Self-Study Portal
 
 ---
@@ -50,6 +50,7 @@ Completed foundations:
 - Session 15 completed for the M4 simple retest scheduler (TSP-062): pure scheduler functions, retest queue update job, submit action wire-up, 15 scheduler tests, and live retest queue smoke are done.
 - Session 16 completed for the M4 dashboard overview API (TSP-076): backend aggregation now returns readiness, weak topics, due retests, recent scored sessions, unresolved mistake count, and most-recent strategy metrics through a guarded server action.
 - Session 17 completed for the first visible M4 dashboard widgets (TSP-078, TSP-079): `/dashboard` now server-renders active exam selection, readiness score, weak topics, and overview stats from `fetchDashboardOverview`.
+- Session 18 completed for M4 strategy signals and dashboard retest launch (TSP-081, TSP-063): `/dashboard` now surfaces recent strategy metrics and lets users start due retests from the queue.
 
 ---
 
@@ -93,9 +94,11 @@ Completed foundations:
 | `TSP-059` | Done | Mistake notebook schema is complete. Added `mistake_items` and `retest_queue` with owner RLS, authenticated grants, required indexes, idempotent mistake item uniqueness, and topic/concept XOR for retest queue. |
 | `TSP-060` | Done | Mistake item creation is complete. Added pure classification, Supabase job handler, submit-action non-fatal wiring after mastery, 12 classification tests, and live smoke for four mistake types plus idempotency. |
 | `TSP-062` | Done | Simple retest scheduler is complete. Added pure schedule computation, retest queue update job, submit-action non-fatal wiring after mistake creation, 15 scheduler tests, and live smoke for due queue rows plus idempotency. |
+| `TSP-063` | Done | Concept retest sessions from dashboard are complete for MVP. Added `startRetestAction`, due retest client widget, and redirect into the existing test runner. Known gaps remain for retest selection quality, queue status updates, and display names. |
 | `TSP-076` | Done | Dashboard overview API is complete. Added backend aggregation for readiness, weak topics, due retests, recent sessions, unresolved mistakes, and strategy metrics, plus server action wrapper and 16 pure unit tests. |
 | `TSP-078` | Done | Readiness card is complete. The dashboard page loads active exams, calls `fetchDashboardOverview`, and renders score, confidence, coverage, stale-topic warning, and benchmark nudge. |
 | `TSP-079` | Done | Weak topics widget is complete. The dashboard renders up to five weak topics with mastery bars, weight badges, `/tests` practice links, empty state, and overview stat chips. |
+| `TSP-081` | Done | Strategy metrics widget is complete. The dashboard conditionally renders recent-session strategy signals and highlights negative marks lost or high-confidence wrong above threshold. |
 | `TSP-128` | Done | Session 10 scoring unit tests cover all six question types, marking rules, manifest parsing, malformed single-choice selections, and session/topic aggregation. Sanity review passed. |
 | `TSP-090` | Review | S1-A is fixed: admin guard trusts only `app_metadata.user_role` and JWT role claims, not `user_metadata`. Browser admin/non-admin smoke still needs a real admin user and reachable Supabase session. |
 | `TSP-159` | Done | `question_status_events` migration/schema and review-history integration are implemented and live migration gate is cleared. |
@@ -230,14 +233,15 @@ Notes:
 - 2026-06-02 Session 15 verification passed: `node --check scripts/smoke-retest-queue.js`, `corepack pnpm exec vitest run src/tests/unit/simple-scheduler.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, `corepack pnpm build`, and `node scripts/smoke-retest-queue.js` all exited 0. Live smoke created 4 due retest rows, verified simple scheduler state, overconfidence as highest priority, and idempotent rerun behavior.
 - 2026-06-03 Session 16 verification passed: `corepack pnpm exec vitest run src/tests/unit/dashboard-overview.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. No migration or smoke script applied to this backend TypeScript-only slice.
 - 2026-06-03 Session 17 verification passed: `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. Browser verification was not possible because the dev server remains blocked in this OneDrive workspace.
+- 2026-06-03 Session 18 verification passed for both commits: `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. No migration or smoke script applied. Browser verification was not possible because the dev server remains blocked in this OneDrive workspace.
 
 ---
 
 ## Next Recommended Work
 
-**Session 17 Sanity PASS (2026-06-03). TSP-078 + TSP-079 Done. Session 18 architect plan written (2026-06-03): TSP-081 strategy metrics widget + TSP-063 concept retest sessions. Builder: follow Session 18 plan in HANDOFF.md.**
+**Session 18 builder completion (2026-06-03). TSP-081 and TSP-063 Done. Dashboard now surfaces strategy signals and starts due retests. Next recommended builder work: Session 19 - TSP-080 progress timeline, S18-A concept_retest SQL routing, M0 browser smoke, or TSP-057 forgetting-curve decay.**
 
-Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 row `TSP-062`, Session 16 row `TSP-076`, and Session 17 rows `TSP-078`/`TSP-079` are Done.
+Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, and Session 18 row `TSP-081` are Done.
 
 Status outcome:
 
@@ -265,15 +269,17 @@ Status outcome:
 - **TSP-059** - Done; mistake_items and retest_queue schema, RLS, grants, and indexes are live.
 - **TSP-060** - Done; mistake item classifier/job, submit wire-up, tests, and live smoke are complete.
 - **TSP-062** - Done; simple retest scheduler, retest queue job, submit wire-up, tests, and live smoke are complete.
+- **TSP-063** - Done; due retest rows can start `concept_retest` sessions from the dashboard.
 - **TSP-076** - Done; dashboard overview aggregation, server action wrapper, and pure helper tests are complete.
 - **TSP-078** - Done; readiness card and dashboard data loading are complete.
 - **TSP-079** - Done; weak topics widget and dashboard overview stat chips are complete.
+- **TSP-081** - Done; strategy metrics widget is complete.
 - **TSP-128** - Done; scoring unit tests are implemented and sanity-passed.
 
 Next immediate steps:
 
-1. **Session 18 - TSP-080 or TSP-081** - add either the progress timeline or strategy metrics widget to the dashboard.
-2. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard` and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
+1. **Session 19 - TSP-080 or S18-A** - add the progress timeline, or upgrade `concept_retest` SQL routing to use recency-aware topic selection.
+2. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
 3. **Founder creates two users** (whenever available) - admin with `app_metadata.user_role = "admin"` and one plain test student - unblocks all pending browser-smoke rows.
 
 Still parked (need external inputs):

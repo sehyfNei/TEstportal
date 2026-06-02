@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DueRetests } from "@/components/dashboard/due-retests";
 import { ReadinessCard } from "@/components/dashboard/readiness-card";
 import { StrategyMetricsCard } from "@/components/dashboard/strategy-metrics";
 import { WeakTopics } from "@/components/dashboard/weak-topics";
@@ -74,6 +75,8 @@ export default async function DashboardPage({
         <ReadinessCard readiness={overview.readiness} />
         <WeakTopics examId={examId} topics={overview.weakTopics} />
       </div>
+
+      <DueRetests examId={examId} retests={overview.dueRetests} />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatChip href="/tests" label="Due retests" value={overview.overdueRetestCount} />
