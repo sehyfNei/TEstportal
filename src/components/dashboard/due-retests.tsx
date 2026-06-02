@@ -16,7 +16,7 @@ type Props = {
 
 export function DueRetests({ retests, examId }: Props) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
+    <div className="rounded-lg border border-border bg-card p-5" id="due-retests">
       <h2 className="text-lg font-semibold">Due retests</h2>
 
       {retests.length === 0 ? (

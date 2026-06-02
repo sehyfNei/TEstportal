@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { DueRetests } from "@/components/dashboard/due-retests";
+import { NextActionCard } from "@/components/dashboard/next-action-card";
+import { ProgressTimeline } from "@/components/dashboard/progress-timeline";
 import { ReadinessCard } from "@/components/dashboard/readiness-card";
 import { StrategyMetricsCard } from "@/components/dashboard/strategy-metrics";
 import { WeakTopics } from "@/components/dashboard/weak-topics";
 import { fetchDashboardOverview } from "@/lib/dashboard/overview";
+import { fetchProgressTimeline, type TimelinePoint } from "@/lib/dashboard/timeline";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -44,7 +47,7 @@ export default async function DashboardPage({
     );
   }
 
-  const { examId, exams, overview } = data;
+  const { examId, exams, overview, timeline } = data;
   const currentExam = exams.find((exam) => exam.id === examId) ?? exams[0];
 
   return (
@@ -71,6 +74,8 @@ export default async function DashboardPage({
         ) : null}
       </div>
 
+      <NextActionCard overview={overview} />
+
       <div className="grid gap-6 lg:grid-cols-2">
         <ReadinessCard readiness={overview.readiness} />
         <WeakTopics examId={examId} topics={overview.weakTopics} />
@@ -87,6 +92,8 @@ export default async function DashboardPage({
       {overview.strategyMetrics !== null ? (
         <StrategyMetricsCard metrics={overview.strategyMetrics} />
       ) : null}
+
+      <ProgressTimeline points={timeline} />
     </section>
   );
 }
@@ -101,6 +108,7 @@ type DashboardData =
       examId: string;
       exams: Exam[];
       overview: Awaited<ReturnType<typeof fetchDashboardOverview>>;
+      timeline: TimelinePoint[];
     };
 
 async function loadDashboardData(examParam: string | undefined): Promise<DashboardData> {
@@ -130,9 +138,12 @@ async function loadDashboardData(examParam: string | undefined): Promise<Dashboa
   }
 
   const examId = isValidExamId(examParam, exams) ? examParam : exams[0].id;
-  const overview = await fetchDashboardOverview(supabase, user.id, examId);
+  const [overview, timeline] = await Promise.all([
+    fetchDashboardOverview(supabase, user.id, examId),
+    fetchProgressTimeline(supabase, user.id, examId).catch((): TimelinePoint[] => [])
+  ]);
 
-  return { configured: true, authed: true, examId, exams, overview };
+  return { configured: true, authed: true, examId, exams, overview, timeline };
 }
 
 function isValidExamId(param: string | undefined, exams: Exam[]): param is string {

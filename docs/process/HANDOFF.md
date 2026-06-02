@@ -7428,6 +7428,331 @@ Next recommended step:
 - Sanity Test should review the two migrations closely, especially pg_cron idempotency and `start_test_session` behavior preservation for diagnostic/topic/benchmark/mock sessions.
 - Session 20 can proceed to `TSP-080` progress timeline, or browser smoke if admin and plain student users are available.
 
+### 2026-06-03 - Session 19 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Result: PASS (7/7 checks)**
+
+#### S18-A — `202606030001_concept_retest_routing.sql`
+
+**Check 1 — concept_retest branch is correct.** ✅ `elsif p_type = 'concept_retest'` at line 306 calls `select_topic_practice_questions(v_user_id, p_exam_id, p_topic_id, v_count, v_min_quality_tier, v_exposure_policies)` — identical args to the `topic` branch. `selected_by_reason = 'concept_retest_balanced'` is distinct and correct. `v_selection_mode = 'concept_retest_balanced'` is stored in session metadata for analytics.
+
+**Check 2 — exposure policies for concept_retest.** ✅ `concept_retest` falls through to the `else` in the `v_exposure_policies` assignment → `array['practice']`. Retests correctly exclude diagnostic_reserved and benchmark_reserved questions.
+
+**Check 3 — benchmark/mock bonus routing.** ✅ Builder went beyond spec and also wired `benchmark`/`mock` into `select_benchmark_questions` via a proper `elsif p_type in ('benchmark', 'mock')` branch (with `v_fixed_qids` template support). The `select_benchmark_questions` signature matches `202606010002_benchmark_selection.sql` exactly. This was an oversight in prior migrations — it's a correct improvement.
+
+**Check 4 — grant preserved, signature unchanged.** ✅ `revoke all ... from public` + `grant execute ... to authenticated` with same 7-parameter signature. Diagnostic/topic/benchmark/mock/else branches all preserved with identical logic to prior version.
+
+#### TSP-057 — `202606030002_mastery_decay.sql`
+
+**Check 5 — `apply_mastery_decay()` formula and guards.** ✅ Uses `greatest(updated_at, last_tested_at)` as the decay reference point in both the SET and WHERE clause. This is better than the spec'd `last_tested_at` alone: on the first nightly run the values are the same; on subsequent runs it prevents double-applying the same elapsed interval (since `updated_at` was set to `now()` by the previous run). The multiplicative property of exponential decay `A × exp(-t1/τ) × exp(-t2/τ) = A × exp(-(t1+t2)/τ)` means incremental nightly application produces the same cumulative result as a single full-time-span application. `GREATEST(0, ...)` floor applied. `last_tested_at IS NOT NULL` guard excludes untested rows. `security definer` + `revoke all from public` correct (pg_cron calls as `postgres` role; authenticated users cannot invoke it directly).
+
+**Check 6 — pg_cron idempotency.** ✅ DO block with `EXCEPTION WHEN others THEN null` handles missing job on first run. `cron.schedule` then creates the job. Verified live: `cron.job` returned one row with `jobname = 'decay-mastery-nightly'` and schedule `0 2 * * *`.
+
+**Check 7 — TypeScript formula and unit tests.** ✅ `computeDecayedMastery(storedMastery, daysSinceTested, stabilityFactor)` mirrors the SQL formula exactly. Guards for `daysSinceTested ≤ 0` and invalid `stabilityFactor` (non-finite or ≤ 0 → fallback to 1) are present. 12 tests cover: zero days, negative days, 14/28 days at stability 1.0 (e^-1, e^-2), 14/28 days at stability 2.0 (e^-0.5, e^-1), high mastery (100), low mastery (5), zero mastery, negative mastery floor, stability ordering, and invalid stability fallback. All test assertions use `toBeCloseTo` with precision 5 — appropriate for floating-point decay.
+
+Note: TypeScript takes `daysSinceTested` from `last_tested_at` while SQL uses `greatest(updated_at, last_tested_at)`. These diverge only after the first nightly run. TypeScript is purely for formula unit testing — the SQL is the canonical runtime. No mismatch risk.
+
+#### M3 milestone status
+
+All M3 rows are now Done: TSP-051, TSP-052, TSP-053, TSP-054, TSP-055, TSP-056, TSP-057, TSP-128. **M3 Scoring & Learning is complete.**
+
+**Session 20 options (priority order):**
+1. **TSP-080** — progress timeline widget (historical readiness/score chart over `session_results`). Requires a new query + server component + chart. Natural next M4 dashboard row.
+2. **M0 browser smoke** — if admin + test student users are now available in Supabase, one browser session closes ~19 Review rows.
+3. **TSP-077** — next-best-action recommendation (last unstarted M4 dashboard row).
+
+Committed as `335f923 TSP-057 S18-A: mastery decay and concept retest routing`.
+
+---
+
+### 2026-06-03 - Session 20 Plan (M4 sixth slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M4 Dashboard & Retention
+**Tickets:** TSP-077 (Next Best Action) + TSP-080 (Progress Timeline)
+**No migrations.** TypeScript + components only. No new npm dependencies — chart is inline SVG.
+
+#### Context
+
+Two dashboard widgets remain before M4 is fully built out. Both consume data already in `DashboardOverview` or a simple new query — no schema work needed.
+
+**TSP-077 — Next Best Action:** The dashboard currently shows the user a wall of data but no clear directive. A single "here's what to do next" banner at the top of the page removes decision fatigue and surfaces urgency (overdue retests, weakest topics). Logic is pure TypeScript — no new DB query — using fields already in `DashboardOverview`.
+
+**TSP-080 — Progress Timeline:** The `recentSessions` field is capped at 5 for the stat chip. A timeline needs 20 sessions in chronological order to be meaningful. A new `fetchProgressTimeline` query fetches this separately. The chart is a server-rendered inline SVG sparkline — no charting library, no `pnpm install` needed (which remains broken on OneDrive).
+
+#### Architecture
+
+##### `src/lib/dashboard/next-action.ts` (new)
+
+Pure, testable function. No Supabase dependency.
+
+```typescript
+import type { DashboardOverview } from "./overview";
+
+export type ActionType =
+  | "start_overdue_retest"
+  | "start_due_retest"
+  | "practice_weak_topic"
+  | "take_diagnostic"
+  | "keep_practicing";
+
+export type NextAction = {
+  type: ActionType;
+  title: string;
+  description: string;
+  href: string;
+};
+
+export function computeNextAction(
+  overview: Pick<DashboardOverview, "overdueRetestCount" | "dueRetests" | "weakTopics" | "readiness">
+): NextAction
+```
+
+Priority ladder (first match wins):
+
+| Priority | Condition | type | title | href |
+|---|---|---|---|---|
+| 1 | `overdueRetestCount > 0` | `start_overdue_retest` | `"${n} overdue retest(s) — start now"` | `"#due-retests"` |
+| 2 | `dueRetests.length > 0` | `start_due_retest` | `"${n} retest(s) due — keep the streak"` | `"#due-retests"` |
+| 3 | `weakTopics.length > 0` | `practice_weak_topic` | `"Practice ${weakTopics[0].topicName}"` | `"/tests"` |
+| 4 | `!readiness.hasBenchmarkSession` | `take_diagnostic` | `"Take a diagnostic test"` | `"/tests"` |
+| 5 | else | `keep_practicing` | `"Keep practicing"` | `"/tests"` |
+
+`description` values: overdue → `"Past due — address before they compound"`, due → `"On schedule"`, weak topic → `"${mastery.toFixed(0)}% mastery — highest priority topic"`, diagnostic → `"Establish your baseline readiness score"`, keep → `"All topics covered — steady progress"`.
+
+##### `src/tests/unit/next-action.test.ts` (new)
+
+Minimum 8 test cases:
+1. `overdueRetestCount > 0` → `start_overdue_retest` (overdue beats everything)
+2. `dueRetests.length > 0`, no overdue → `start_due_retest`
+3. Due retest beats weak topics (overdue=0, dueRetests has rows, weakTopics has rows → due retest wins)
+4. Weak topics, no retests, `hasBenchmarkSession = true` → `practice_weak_topic`; title contains `weakTopics[0].topicName`
+5. No retests, no weak topics, `hasBenchmarkSession = false` → `take_diagnostic`
+6. No retests, no weak topics, `hasBenchmarkSession = true` → `keep_practicing`
+7. All-empty overview (zeros, empty arrays, `hasBenchmarkSession = false`) → `take_diagnostic`
+8. `overdueRetestCount = 1` title contains `"1"` and `overdueRetestCount = 2` title contains `"2"` (count is surfaced)
+
+##### `src/components/dashboard/next-action-card.tsx` (new)
+
+Server component (no `"use client"`). Calls `computeNextAction` internally.
+
+```tsx
+import Link from "next/link";
+import { computeNextAction } from "@/lib/dashboard/next-action";
+import type { DashboardOverview } from "@/lib/dashboard/overview";
+
+export function NextActionCard({ overview }: { overview: DashboardOverview }) {
+  const action = computeNextAction(overview);
+  const isUrgent = action.type === "start_overdue_retest";
+  const isRetest =
+    action.type === "start_overdue_retest" || action.type === "start_due_retest";
+
+  return (
+    <div
+      className={`rounded-lg border p-5 ${
+        isUrgent
+          ? "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30"
+          : "border-primary/20 bg-primary/5"
+      }`}
+    >
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Next step
+      </p>
+      <p className="mt-1 text-lg font-semibold">{action.title}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{action.description}</p>
+      <Link
+        className="mt-3 inline-block rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground"
+        href={action.href}
+      >
+        {isRetest ? "View queue →" : "Start →"}
+      </Link>
+    </div>
+  );
+}
+```
+
+##### `src/lib/dashboard/timeline.ts` (new)
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type TimelinePoint = {
+  sessionId: string;
+  type: string;
+  scorePercent: number;   // clamped [0, 100]
+  accuracy: number;       // 0–100
+  createdAt: string;      // ISO string
+};
+
+export async function fetchProgressTimeline(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<TimelinePoint[]>
+```
+
+Implementation:
+1. `session_results` ordered `created_at ASC` limit 20, filtered by `user_id + exam_id`
+2. `test_sessions .in("id", sessionIds)` for `type` — same two-step pattern as `loadRecentSessions` in `overview.ts`
+3. `scorePercent = maxScore > 0 ? Math.min(100, Math.max(0, (score / maxScore) * 100)) : 0`
+4. Return `[]` if no results; never throws (caller wraps in `.catch((): TimelinePoint[] => [])`).
+
+##### `src/components/dashboard/progress-timeline.tsx` (new)
+
+Server component. Inline SVG sparkline — no library.
+
+Layout:
+```
+<div>
+  <h2>Progress</h2>
+  <p className="text-xs text-muted-foreground">Score % per session</p>
+  {points.length === 0 → empty state}
+  {points.length === 1 → single dot + "Need more sessions for a trend line"}
+  {points.length >= 2 → SVG chart + legend}
+</div>
+```
+
+SVG spec (when `points.length >= 2`):
+- Wrapping div: `className="mt-4 aspect-[5/1] w-full"` (prevents extreme distortion)
+- `<svg viewBox="0 0 500 100" className="h-full w-full" preserveAspectRatio="none">`
+- Score polyline: points at `x = i × 500/(n-1)`, `y = 100 - scorePercent`; `stroke` via inline style or a single class; `fill="none"`, `strokeWidth="2"`
+- Circle per point: `r="4"`, fill color by type:
+  - `diagnostic` → `#3b82f6` (blue-500)
+  - `benchmark` / `mock` → `#a855f7` (purple-500)
+  - `topic` → `#22c55e` (green-500)
+  - `concept_retest` → `#f59e0b` (amber-500)
+  - else → `#6b7280` (gray-500)
+- Y-axis labels: `<text x="2" y="10" fontSize="8">100%</text>` and `<text x="2" y="98" fontSize="8">0%</text>` in a lighter color
+- Legend row below SVG: `● Diagnostic  ● Topic  ● Retest  ● Benchmark` — small colored spans
+
+##### Dashboard page changes — `src/app/(app)/dashboard/page.tsx`
+
+In `loadDashboardData`, extend the success branch to fetch the timeline in parallel:
+
+```typescript
+import { fetchProgressTimeline, type TimelinePoint } from "@/lib/dashboard/timeline";
+import { NextActionCard } from "@/components/dashboard/next-action-card";
+import { ProgressTimeline } from "@/components/dashboard/progress-timeline";
+
+// Success branch:
+const [overview, timeline] = await Promise.all([
+  fetchDashboardOverview(supabase, user.id, examId),
+  fetchProgressTimeline(supabase, user.id, examId).catch((): TimelinePoint[] => []),
+]);
+return { configured: true, authed: true, examId, exams, overview, timeline };
+```
+
+`DashboardData` success variant gains `timeline: TimelinePoint[]`.
+
+Layout order:
+```tsx
+<NextActionCard overview={overview} />
+<div className="grid gap-6 lg:grid-cols-2">
+  <ReadinessCard ... />
+  <WeakTopics ... />
+</div>
+<DueRetests id="due-retests" examId={examId} retests={overview.dueRetests} />
+<div className="grid gap-4 sm:grid-cols-3">
+  {StatChips ×3}
+</div>
+{overview.strategyMetrics !== null && <StrategyMetricsCard ... />}
+<ProgressTimeline points={timeline} />
+```
+
+Also: add `id="due-retests"` to the outer `<div>` inside `src/components/dashboard/due-retests.tsx` (the card container, not the `<ul>`).
+
+#### Design decisions
+
+- **No chart library.** `pnpm install` is broken on OneDrive. Inline SVG polyline is sufficient and renders server-side.
+- **NBA card is pure server component.** Retest actions use `href="#due-retests"` — user clicks "View queue →" then uses the existing `DueRetests` form. No duplicate server action.
+- **`fetchProgressTimeline` is separate from `fetchDashboardOverview`.** Overview caps at 5 sessions newest-first for stat chip. Timeline needs 20 oldest-first for a trend. Separate queries keep concerns clean.
+- **`computeNextAction` takes `Pick<DashboardOverview, ...>`.** Minimal stub in tests; no full overview object needed.
+- **`accuracy` stored as 0–1 in DB; multiply by 100 in `fetchProgressTimeline`.** Consistent with `toNumber` rounding elsewhere.
+
+#### Risk notes
+
+- **`preserveAspectRatio="none"` + tall containers.** The wrapping `aspect-[5/1]` div constrains the chart height. Without it, a flex parent could stretch the SVG vertically.
+- **`#due-retests` anchor requires `id` on the card container.** Without it the anchor silently does nothing. Builder must add `id="due-retests"` to the outer `<div className="rounded-lg border ...">` in `due-retests.tsx`.
+- **`DashboardData` type is inferred.** The `timeline` field addition widens the inferred return type automatically — no manual interface update needed. Verify typecheck still passes.
+- **Single-session edge case.** With one data point a polyline has no line segment. Guard with `points.length >= 2` before rendering the `<polyline>`.
+
+#### Expected files
+
+| File | Action |
+|---|---|
+| `src/lib/dashboard/next-action.ts` | Create — pure NBA logic + types |
+| `src/lib/dashboard/timeline.ts` | Create — `fetchProgressTimeline` + `TimelinePoint` |
+| `src/components/dashboard/next-action-card.tsx` | Create — server component |
+| `src/components/dashboard/progress-timeline.tsx` | Create — server component + inline SVG |
+| `src/tests/unit/next-action.test.ts` | Create — ≥8 unit tests |
+| `src/app/(app)/dashboard/page.tsx` | Modify — parallel timeline fetch; NextActionCard; ProgressTimeline; updated DashboardData |
+| `src/components/dashboard/due-retests.tsx` | Modify — add `id="due-retests"` to outer card div |
+| `trackers/JIRA_TRACKER.csv` | TSP-077 + TSP-080 → Done |
+| `docs/process/SESSION_STATE.md` | Append Session 20 completion |
+| `docs/process/HANDOFF.md` | Append builder handoff |
+
+#### Tracker updates
+
+- **TSP-077** — Backlog → Done
+- **TSP-080** — Backlog → Done
+
+#### Verification gates
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/next-action.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+
+No migration. No smoke script.
+
+#### Next session (Session 21)
+
+After Session 20, M4 Dashboard is fully built. Options:
+1. **M0 browser smoke** — if admin + test student users are available, close ~19 Review rows in one pass.
+2. **M5 start** — AI gateway + Groq integration (TSP-066/067), blocked on `GROQ_API_KEY`.
+3. **TSP-160/S12-A** — add named UNIQUE constraints to `mastery_records` (hardening).
+
+---
+
+### 2026-06-03 - Session 20 Builder Handoff (Codex)
+
+**Tickets:** TSP-077 + TSP-080
+**Commit target:** `TSP-077 TSP-080: dashboard next action and timeline`
+
+#### What landed
+
+- `src/lib/dashboard/next-action.ts` - pure `computeNextAction` helper with the five-level priority ladder: overdue retest, due retest, weak topic practice, diagnostic, keep practicing.
+- `src/tests/unit/next-action.test.ts` - 8 deterministic tests covering all priority branches, count surfacing, and the all-empty diagnostic edge case.
+- `src/components/dashboard/next-action-card.tsx` - server component that renders an urgent red card for overdue retests, a primary-tinted card otherwise, `View queue ->` for retests, and `Start ->` for other actions.
+- `src/lib/dashboard/timeline.ts` - `fetchProgressTimeline` with up to 20 chronological `session_results`, clamped score percentage, 0-100 accuracy conversion, and session type lookup from `test_sessions`.
+- `src/components/dashboard/progress-timeline.tsx` - server-rendered inline SVG timeline with empty, single-point, and multi-point states, colored dots by session type, Y-axis labels, and legend.
+- `src/app/(app)/dashboard/page.tsx` - dashboard success branch fetches overview and timeline in parallel, renders `NextActionCard` above the readiness/weak-topic grid, and renders `ProgressTimeline` at the bottom.
+- `src/components/dashboard/due-retests.tsx` - outer card now has `id="due-retests"` so next-action retest links land on the queue.
+
+#### Verification
+
+All Session 20 gates passed:
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/next-action.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+
+No migration, DB smoke, or new npm dependency applies to this slice. Browser verification remains blocked by the known OneDrive/dev-server issue and still needs the admin/plain-student smoke pass.
+
+#### Next session
+
+M4 dashboard implementation is now complete. Next practical options:
+
+1. **M0 browser smoke** - with real admin and plain-student users, verify `/dashboard`, due retest launch, `#due-retests` anchor behavior, progress timeline rendering, and existing admin/test-taking Review rows.
+2. **M5 start** - AI gateway/prompt schema work once `GROQ_API_KEY` is available.
+3. **TSP-160/S12-A** - named unique constraints on `mastery_records` if M5 is still blocked.
+
 ---
 
 ## Parked Blockers — Do Not Start
