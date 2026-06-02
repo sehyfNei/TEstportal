@@ -1,7 +1,7 @@
 # Session State
 
 **Last updated:** 2026-06-03
-**Updated by:** Codex - Session 18 builder completion
+**Updated by:** Codex - Session 19 builder completion
 **Project:** Modular AI-Powered Test Series And Self-Study Portal
 
 ---
@@ -51,6 +51,7 @@ Completed foundations:
 - Session 16 completed for the M4 dashboard overview API (TSP-076): backend aggregation now returns readiness, weak topics, due retests, recent scored sessions, unresolved mistake count, and most-recent strategy metrics through a guarded server action.
 - Session 17 completed for the first visible M4 dashboard widgets (TSP-078, TSP-079): `/dashboard` now server-renders active exam selection, readiness score, weak topics, and overview stats from `fetchDashboardOverview`.
 - Session 18 completed for M4 strategy signals and dashboard retest launch (TSP-081, TSP-063): `/dashboard` now surfaces recent strategy metrics and lets users start due retests from the queue.
+- Session 19 completed for M3 mastery decay and M4 concept-retest routing (TSP-057 + S18-A): `concept_retest` now uses the recency-aware balanced topic selector, and pg_cron schedules nightly mastery decay.
 
 ---
 
@@ -91,10 +92,11 @@ Completed foundations:
 | `TSP-053` | Done | Result aggregates (difficulty_scores, source_scores, concept_scores) added to submit_test_session RPC and Drizzle schema. Sanity review passed 11/11. |
 | `TSP-054` | Done | Strategy metrics (negativeMarksLost, highConfidenceWrong, correctGuessed, totalRevisits, timeOnWrong/SkippedSec) implemented in SQL and TypeScript with full unit coverage. Sanity review passed 11/11. |
 | `TSP-055` | Done | Mastery update job is complete. Added the Supabase repository adapter, wired `submitSessionAction` to run mastery non-fatally after first scoring, skipped already-scored duplicate submits, applied the `mastery_records` migration, and passed live smoke with topic and concept mastery rows plus duplicate-submit idempotency. |
+| `TSP-057` | Done | Forgetting-curve decay is complete. Added pure `computeDecayedMastery`, 12 deterministic unit tests, a security-definer `apply_mastery_decay()` function, and an active pg_cron job named `decay-mastery-nightly` at `0 2 * * *`. |
 | `TSP-059` | Done | Mistake notebook schema is complete. Added `mistake_items` and `retest_queue` with owner RLS, authenticated grants, required indexes, idempotent mistake item uniqueness, and topic/concept XOR for retest queue. |
 | `TSP-060` | Done | Mistake item creation is complete. Added pure classification, Supabase job handler, submit-action non-fatal wiring after mastery, 12 classification tests, and live smoke for four mistake types plus idempotency. |
 | `TSP-062` | Done | Simple retest scheduler is complete. Added pure schedule computation, retest queue update job, submit-action non-fatal wiring after mistake creation, 15 scheduler tests, and live smoke for due queue rows plus idempotency. |
-| `TSP-063` | Done | Concept retest sessions from dashboard are complete for MVP. Added `startRetestAction`, due retest client widget, and redirect into the existing test runner. Known gaps remain for retest selection quality, queue status updates, and display names. |
+| `TSP-063` | Done | Concept retest sessions from dashboard are complete for MVP. Added `startRetestAction`, due retest client widget, redirect into the existing test runner, and Session 19 routing through the balanced recency-aware selector. Remaining known gaps: queue status updates and display names. |
 | `TSP-076` | Done | Dashboard overview API is complete. Added backend aggregation for readiness, weak topics, due retests, recent sessions, unresolved mistakes, and strategy metrics, plus server action wrapper and 16 pure unit tests. |
 | `TSP-078` | Done | Readiness card is complete. The dashboard page loads active exams, calls `fetchDashboardOverview`, and renders score, confidence, coverage, stale-topic warning, and benchmark nudge. |
 | `TSP-079` | Done | Weak topics widget is complete. The dashboard renders up to five weak topics with mastery bars, weight badges, `/tests` practice links, empty state, and overview stat chips. |
@@ -234,14 +236,15 @@ Notes:
 - 2026-06-03 Session 16 verification passed: `corepack pnpm exec vitest run src/tests/unit/dashboard-overview.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. No migration or smoke script applied to this backend TypeScript-only slice.
 - 2026-06-03 Session 17 verification passed: `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. Browser verification was not possible because the dev server remains blocked in this OneDrive workspace.
 - 2026-06-03 Session 18 verification passed for both commits: `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. No migration or smoke script applied. Browser verification was not possible because the dev server remains blocked in this OneDrive workspace.
+- 2026-06-03 Session 19 verification passed: `corepack pnpm exec vitest run src/tests/unit/mastery-decay.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. `node run-migrations.js` applied migrations through `202606030002_mastery_decay.sql`; `SELECT * FROM cron.job WHERE jobname = 'decay-mastery-nightly'` returned one active job; `SELECT public.apply_mastery_decay()` completed; live `start_test_session` source contains `concept_retest_balanced`.
 
 ---
 
 ## Next Recommended Work
 
-**Session 18 Sanity PASS (2026-06-03). TSP-081 + TSP-063 Done. M4 substantially complete: full loop from test → mastery → mistakes → retest queue → dashboard → start retest is live. Next: S18-A fix (concept_retest SQL routing) or TSP-057 forgetting-curve decay.**
+**Session 19 Builder complete (2026-06-03). S18-A and TSP-057 are done: concept retests now use balanced recency-aware selection, and mastery decay is scheduled nightly through pg_cron. Next: TSP-080 progress timeline or browser smoke when users are available.**
 
-Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, and Session 18 row `TSP-081` are Done.
+Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, Session 18 row `TSP-081`, and Session 19 row `TSP-057` are Done.
 
 Status outcome:
 
@@ -266,10 +269,11 @@ Status outcome:
 - **TSP-053** - Done; result aggregates implemented and sanity-passed.
 - **TSP-054** - Done; strategy metrics implemented and sanity-passed.
 - **TSP-055** - Done; mastery records, formula, Supabase adapter, submit wire-up, and live smoke are complete.
+- **TSP-057** - Done; pure decay helper/tests, pg_cron scheduler, active nightly job, and manual decay trigger verification are complete.
 - **TSP-059** - Done; mistake_items and retest_queue schema, RLS, grants, and indexes are live.
 - **TSP-060** - Done; mistake item classifier/job, submit wire-up, tests, and live smoke are complete.
 - **TSP-062** - Done; simple retest scheduler, retest queue job, submit wire-up, tests, and live smoke are complete.
-- **TSP-063** - Done; due retest rows can start `concept_retest` sessions from the dashboard.
+- **TSP-063** - Done; due retest rows can start `concept_retest` sessions from the dashboard, and those sessions now route through balanced recency-aware selection.
 - **TSP-076** - Done; dashboard overview aggregation, server action wrapper, and pure helper tests are complete.
 - **TSP-078** - Done; readiness card and dashboard data loading are complete.
 - **TSP-079** - Done; weak topics widget and dashboard overview stat chips are complete.
@@ -278,7 +282,7 @@ Status outcome:
 
 Next immediate steps:
 
-1. **Session 19 - TSP-080 or S18-A** - add the progress timeline, or upgrade `concept_retest` SQL routing to use recency-aware topic selection.
+1. **Session 20 - TSP-080** - add the progress timeline widget and historical readiness/score query.
 2. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
 3. **Founder creates two users** (whenever available) - admin with `app_metadata.user_role = "admin"` and one plain test student - unblocks all pending browser-smoke rows.
 

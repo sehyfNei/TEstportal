@@ -7150,6 +7150,286 @@ S18-A, S18-B, S18-C, S18-D — all logged by Builder, all non-blocking for MVP.
 
 ---
 
+### 2026-06-03 - Session 19 Plan (M3 completion + M4 fix) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M3 Scoring & Learning (TSP-057 completes it) + M4 hardening (S18-A)
+**Tickets:** S18-A (known gap on TSP-063) + TSP-057 (forgetting-curve decay)
+
+#### Context
+
+Two problems to fix before real users arrive:
+
+**S18-A:** `start_test_session` has `diagnostic` and `topic` branches that use smart selectors, but `concept_retest` falls through to the `else` branch (`minimal_live_filter`). This means retest sessions serve random live questions with no recency exclusion and no difficulty balance — the same questions the user may have just seen. Fix: add a `concept_retest` branch that routes to `select_topic_practice_questions`, which already handles recency exclusion (last-3-session deduplication) and 30/40/30 difficulty balance. `p_topic_id` is always non-null when `concept_retest` is called — `startRetestAction` resolves concept→topic before calling the RPC.
+
+**TSP-057:** `mastery_records` rows accumulate without decay. A user who aces a topic and then ignores it for 30 days should see their mastery drop on the dashboard (stale-topic warning is already wired to `staleTopicIds` in `readiness-card.tsx`). The formula is settled: `decayedMastery = storedMastery × exp(-daysSinceTested / (14 × stabilityFactor))`. pg_cron runs nightly inside Postgres — no extra infra, no service role key. The TypeScript side gets a pure `computeDecayedMastery` function + unit tests so the formula is independently verifiable.
+
+#### Architecture
+
+**Migration 1: `202606030001_concept_retest_routing.sql`** (S18-A)
+
+`create or replace function public.start_test_session(...)` — extend the `v_selection_mode` assignment and the question-selection IF block. Exact diff:
+
+```
+-- In v_selection_mode assignment (around line 166 of topic_practice_selection migration):
+v_selection_mode := case p_type
+  when 'diagnostic'     then 'diagnostic_weighted'
+  when 'topic'          then 'topic_practice_balanced'
+  when 'concept_retest' then 'concept_retest_balanced'   -- ADD THIS
+  else                       'minimal_live_filter'
+end;
+```
+
+Add a new `elsif p_type = 'concept_retest'` branch immediately after the `elsif p_type = 'topic'` block:
+
+```sql
+elsif p_type = 'concept_retest' then
+  for v_question in
+    select *
+    from public.select_topic_practice_questions(
+      v_user_id,
+      p_exam_id,
+      p_topic_id,
+      v_count,
+      v_min_quality_tier,
+      v_exposure_policies
+    )
+  loop
+    v_sequence := v_sequence + 1;
+    insert into public.session_questions (
+      session_id, question_id, question_version_id,
+      prompt_snapshot, sequence, selected_by_reason
+    )
+    values (
+      v_session_id,
+      v_question.question_id,
+      v_question.current_version_id,
+      public.build_session_prompt_snapshot(v_question.content, v_question.q_type),
+      v_sequence,
+      'concept_retest_balanced'
+    )
+    returning id into v_session_question_id;
+
+    v_questions := v_questions || jsonb_build_array(
+      jsonb_build_object(
+        'session_question_id', v_session_question_id,
+        'question_id',         v_question.question_id,
+        'sequence',            v_sequence,
+        'prompt_snapshot',     public.build_session_prompt_snapshot(v_question.content, v_question.q_type)
+      )
+    );
+  end loop;
+```
+
+Grant stays the same (existing `grant execute on function public.start_test_session(uuid, text, uuid, uuid, int, int, text) to authenticated`).
+
+**Migration 2: `202606030002_mastery_decay.sql`** (TSP-057)
+
+Two parts:
+
+*Part A — enable extension (idempotent):*
+```sql
+create extension if not exists pg_cron;
+```
+
+*Part B — decay function (security definer so pg_cron can call it without bypassing RLS per-row):*
+```sql
+create or replace function public.apply_mastery_decay()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.mastery_records
+  set
+    mastery_score = greatest(
+      0,
+      mastery_score * exp(
+        -extract(epoch from (now() - last_tested_at)) / 86400.0
+        / (14.0 * stability_factor)
+      )
+    ),
+    updated_at = now()
+  where
+    last_tested_at is not null
+    and last_tested_at < now() - interval '1 day';
+end;
+$$;
+
+revoke all on function public.apply_mastery_decay() from public;
+```
+
+*Part C — register pg_cron job (idempotent unschedule then schedule):*
+```sql
+do $$
+begin
+  perform cron.unschedule('decay-mastery-nightly');
+exception when others then null;
+end;
+$$;
+
+select cron.schedule(
+  'decay-mastery-nightly',
+  '0 2 * * *',
+  $job$ select public.apply_mastery_decay(); $job$
+);
+```
+
+**TypeScript — `src/lib/adaptive/mastery-decay.ts`** (pure formula, mirrors the SQL)
+
+```typescript
+export function computeDecayedMastery(
+  storedMastery: number,
+  daysSinceTested: number,
+  stabilityFactor: number
+): number {
+  if (daysSinceTested <= 0) return storedMastery;
+  const decayed = storedMastery * Math.exp(-daysSinceTested / (14 * stabilityFactor));
+  return Math.max(0, decayed);
+}
+```
+
+**Unit tests — `src/tests/unit/mastery-decay.test.ts`**
+
+Cover (minimum 10 test cases):
+- Zero days elapsed → no change
+- Negative days → no change (guard)
+- 14 days, stability=1.0 → `storedMastery × e^(-1)` ≈ 36.8% of original
+- 28 days, stability=1.0 → `storedMastery × e^(-2)` ≈ 13.5%
+- 14 days, stability=2.0 → `storedMastery × e^(-0.5)` ≈ 60.7%
+- High mastery (100) decays correctly
+- Low mastery (5) stays above 0
+- mastery_score = 0 → stays 0 (no negative)
+- stability_factor = 1.0 (minimum) is the fastest decay
+- stability_factor = 2.0 (maximum) is the slowest decay
+
+#### Design decisions
+
+- **Decay column:** `last_tested_at` not `updated_at`. Decay should reflect when the user last actually tested the concept, not when the row was last written (the decay job itself sets `updated_at`). Rows where `last_tested_at IS NULL` are untested — skip decay.
+- **Floor at 0:** `GREATEST(0, ...)` guards against floating-point underflow producing negative mastery. SQL and TypeScript both apply this.
+- **`security definer` on `apply_mastery_decay()`:** pg_cron runs as the `postgres` role which bypasses RLS by default. Making the function security definer (owned by postgres) is belt-and-suspenders — the UPDATE touches all users' rows, which is intentional for a nightly sweep.
+- **`selected_by_reason = 'concept_retest_balanced'`:** Distinct from `'topic_practice_balanced'` so analytics can later distinguish retest sessions from first-pass topic practice.
+- **No TypeScript worker for TSP-057:** The decay is pure SQL math on existing columns. An Edge Function would add infra complexity with zero benefit at this scale. Revisit when job monitoring (TSP-143) and M5 workers are built.
+
+#### Risk notes
+
+- **pg_cron not enabled:** `CREATE EXTENSION IF NOT EXISTS pg_cron` will fail on free Supabase plans if pg_cron is not available. Builder must check: `SELECT * FROM pg_extension WHERE extname = 'pg_cron'` after applying. If it fails, enable via Supabase Dashboard → Database → Extensions → pg_cron, then rerun the migration.
+- **Idempotency:** The `DO $$ BEGIN perform cron.unschedule(...) EXCEPTION WHEN others THEN null END $$` pattern handles re-runs cleanly.
+- **`select_topic_practice_questions` fallback:** If `concept_retest` has no eligible questions after recency exclusion, `v_sequence = 0` and the `'no eligible live questions found'` exception fires. This is the correct behaviour — better to surface a clear error than serve already-seen questions.
+
+#### Expected files
+
+| File | Action |
+|---|---|
+| `supabase/migrations/202606030001_concept_retest_routing.sql` | Create — S18-A |
+| `supabase/migrations/202606030002_mastery_decay.sql` | Create — TSP-057 |
+| `src/lib/adaptive/mastery-decay.ts` | Create — pure decay formula |
+| `src/tests/unit/mastery-decay.test.ts` | Create — unit tests |
+| `trackers/JIRA_TRACKER.csv` | Update TSP-057 → Done |
+| `docs/process/SESSION_STATE.md` | Append Session 19 completion note |
+| `docs/process/HANDOFF.md` | Append builder handoff |
+
+#### Tracker updates
+
+- **S18-A** — tracked as a known gap on TSP-063. No separate row. Mark the S18-A caveat resolved in Session 19 builder remarks on TSP-063.
+- **TSP-057** — Backlog → Done (after migration applied and cron job verified in `cron.job`).
+- **TSP-129** — "Add mastery scheduler unit tests" — mastery-decay tests satisfy the forgetting-curve portion. Builder may partially advance this row.
+
+#### Verification gates
+
+```powershell
+# TypeScript
+corepack pnpm exec vitest run src/tests/unit/mastery-decay.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+
+# Database
+node run-migrations.js
+# After applying, verify in psql or Supabase SQL editor:
+# SELECT * FROM cron.job WHERE jobname = 'decay-mastery-nightly';
+# SELECT public.apply_mastery_decay();   -- manual trigger to confirm no errors
+```
+
+#### Session 19 handoff checklist (Builder)
+
+1. `supabase/migrations/202606030001_concept_retest_routing.sql` — `create or replace function public.start_test_session(...)` with `concept_retest` branch added. Confirm `selected_by_reason = 'concept_retest_balanced'` on inserted rows.
+2. `supabase/migrations/202606030002_mastery_decay.sql` — pg_cron extension, `apply_mastery_decay()` function, cron job registration.
+3. `src/lib/adaptive/mastery-decay.ts` — pure formula, exported.
+4. `src/tests/unit/mastery-decay.test.ts` — ≥10 test cases, all pass.
+5. `node run-migrations.js` — both migrations applied to live DB.
+6. Verify `SELECT * FROM cron.job WHERE jobname = 'decay-mastery-nightly'` returns 1 row.
+7. `SELECT public.apply_mastery_decay()` — no error, returns void.
+8. `trackers/JIRA_TRACKER.csv` — TSP-057 → Done with builder remarks.
+9. `docs/process/SESSION_STATE.md` — append Session 19 completion.
+10. `docs/process/HANDOFF.md` — append builder handoff.
+
+#### Next session (Session 20)
+
+After Session 19:
+- **TSP-080** — progress timeline widget (historical readiness/score chart). Requires a new query over `session_results` and `mastery_records`. The `readiness-card.tsx` stale-topic warning will now respond to decayed mastery, making the timeline more meaningful.
+- **M0 browser smoke** — if admin + test student users are created in Supabase, one browser session closes ~19 Review rows.
+
+---
+
+### 2026-06-03 - Session 19 Builder Handoff - Codex
+
+Scope completed:
+
+- Completed S18-A for `TSP-063`: `concept_retest` sessions now route through the balanced, recency-aware topic-practice selector instead of the minimal live filter.
+- Completed `TSP-057`: forgetting-curve mastery decay is implemented and scheduled nightly with pg_cron.
+- Marked `TSP-057` `Done` and updated `TSP-063` remarks to remove the retest-selection-quality caveat.
+
+Files changed:
+
+- `supabase/migrations/202606030001_concept_retest_routing.sql`
+- `supabase/migrations/202606030002_mastery_decay.sql`
+- `src/lib/adaptive/mastery-decay.ts`
+- `src/tests/unit/mastery-decay.test.ts`
+- `trackers/JIRA_TRACKER.csv`
+- `docs/process/SESSION_STATE.md`
+- `docs/process/HANDOFF.md`
+
+What changed:
+
+- Replaced the current `public.start_test_session(uuid, text, uuid, uuid, int, int, text)` body with the latest benchmark/mock-aware version plus a dedicated `elsif p_type = 'concept_retest'` branch.
+- Added `concept_retest_balanced` to `v_selection_mode` and `selected_by_reason`.
+- Reused `public.select_topic_practice_questions(...)` for concept retests, preserving last-3-session recency exclusion, difficulty balance, quality-tier filtering, and exposure-policy filtering.
+- Added `public.apply_mastery_decay()` as a security-definer function.
+- Added a pg_cron job named `decay-mastery-nightly` on schedule `0 2 * * *`.
+- Added pure `computeDecayedMastery(storedMastery, daysSinceTested, stabilityFactor)` plus exported constants and 12 deterministic tests.
+
+Decay implementation note:
+
+- `last_tested_at` remains the semantic "last actual test" timestamp.
+- The SQL job uses `greatest(updated_at, last_tested_at)` as the decay checkpoint before setting `updated_at = now()`. This avoids reapplying the same elapsed interval on every nightly cron run while preserving the stale-topic semantics tied to `last_tested_at`.
+
+Verification:
+
+- `corepack pnpm exec vitest run src/tests/unit/mastery-decay.test.ts` exited 0.
+- `corepack pnpm typecheck` exited 0.
+- `corepack pnpm lint` exited 0 after elevated rerun because the Windows sandbox failed during the first lint spawn.
+- `corepack pnpm test` exited 0.
+- `corepack pnpm build` exited 0.
+- `node run-migrations.js` applied all migrations through `202606030002_mastery_decay.sql`.
+- `SELECT * FROM cron.job WHERE jobname = 'decay-mastery-nightly'` returned one active job with schedule `0 2 * * *`.
+- `SELECT public.apply_mastery_decay()` completed without error.
+- Live `pg_get_functiondef(...)` check confirmed `start_test_session` contains `concept_retest_balanced`.
+
+Remaining known issues:
+
+- S18-B remains: `retest_queue.status` is not updated when a retest starts or completes.
+- S18-C remains: due-retest labels are still generic because concept/topic names are not included in the overview response.
+- Browser verification remains blocked by the documented OneDrive dev-server issue.
+
+Next recommended step:
+
+- Sanity Test should review the two migrations closely, especially pg_cron idempotency and `start_test_session` behavior preservation for diagnostic/topic/benchmark/mock sessions.
+- Session 20 can proceed to `TSP-080` progress timeline, or browser smoke if admin and plain student users are available.
+
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |
