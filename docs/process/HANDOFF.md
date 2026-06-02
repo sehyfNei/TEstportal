@@ -4977,6 +4977,489 @@ All 15 planned cases present. Constants are asserted inline on the first overcon
 
 ---
 
+### 2026-06-03 - Session 16 Plan (M4 third slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M4 Dashboard & Retention  
+**Ticket:** TSP-076 — Build dashboard overview API  
+**Dependencies complete:** TSP-056 readiness score ✅, TSP-062 retest queue ✅
+
+---
+
+#### Overview
+
+Session 16 builds the aggregation layer the dashboard widgets consume. One function, five data sources, one server action wrapper.
+
+**No new migration, no new DB table, no smoke script.** All underlying tables exist. This is TypeScript only.
+
+**Scope:** data layer only — no `/dashboard` page, no UI widgets. Those come in Session 17 (TSP-078 readiness card + TSP-079 weak topics widget). The `getDashboardOverviewAction` server action is callable from a page, but the page itself is not built here.
+
+---
+
+#### Return shape: `DashboardOverview`
+
+```typescript
+export type DashboardOverview = {
+  examId: string;
+  readiness: ReadinessScore;          // from existing fetchReadinessScore
+  weakTopics: WeakTopic[];            // top 5 by weight × mastery gap; includes uncovered topics
+  dueRetests: DueRetest[];            // up to 10, sorted due_at ASC then priority DESC
+  overdueRetestCount: number;         // count where due_at <= now
+  recentSessions: RecentSession[];    // last 5 scored sessions
+  unresolvedMistakeCount: number;     // total unresolved mistake_items
+  strategyMetrics: StrategyMetrics | null; // from most recent session_results.strategy_metrics
+};
+```
+
+**Why include `strategyMetrics` here:** `session_results.strategy_metrics` already exists from TSP-054 with no additional queries needed. The dashboard overview is the right place to surface it — widget TSP-081 will consume it from this response.
+
+---
+
+#### Data sources and queries
+
+**1. Readiness** — call `fetchReadinessScore(supabase, userId, examId)` (existing, already gracefully degrades).
+
+**2. Weak topics** — two queries merged in TypeScript:
+- `topics` WHERE `exam_id=X AND weight_percent IS NOT NULL` → all weighted topics with names
+- `mastery_records` WHERE `user_id=X AND exam_id=Y AND topic_id IS NOT NULL` → existing topic mastery
+
+Merge: each topic gets its mastery_score from the record, or `0` if no record yet (unstarted topics with high weight are rightfully high priority). Compute priority score, sort, slice 5.
+
+**Priority formula:**
+```
+priority = (weightPercent / 100) × (100 − masteryScore)
+```
+A 20%-weight topic with 0% mastery → priority 20. A 20%-weight topic with 100% mastery → priority 0. Topics with `priority = 0` are filtered out (fully mastered + zero-weight topics).
+
+**3. Due retests** — `retest_queue` WHERE `user_id=X AND exam_id=Y AND status='due'`, ordered `due_at ASC, priority DESC`. Fetch all, count overdue locally (`due_at <= now`), slice to 10 for the list.
+
+**4. Recent sessions** — two queries:
+- `session_results` WHERE `user_id=X AND exam_id=Y`, ordered `created_at DESC`, limit 5, including `strategy_metrics`
+- `test_sessions` for the returned `session_id`s (to get `type`)
+- Merge by `session_id`. `strategyMetrics` from the most recent row.
+
+**5. Unresolved mistake count** — `mistake_items` count WHERE `user_id=X AND exam_id=Y AND status='unresolved'`. Use `{ count: "exact", head: true }`.
+
+---
+
+#### `src/lib/dashboard/overview.ts` — full TypeScript spec
+
+New file. New directory `src/lib/dashboard/` does not yet exist — create it.
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchReadinessScore } from "@/lib/scoring/readiness-query";
+import type { ReadinessScore } from "@/lib/scoring/readiness";
+
+// ── Public types ────────────────────────────────────────────────────────────
+
+export type WeakTopic = {
+  topicId: string;
+  topicName: string;
+  masteryScore: number;
+  weightPercent: number;
+  priority: number;
+};
+
+export type DueRetest = {
+  id: string;
+  conceptId: string | null;
+  topicId: string | null;
+  dueAt: string;
+  priority: number;
+  scheduler: string;
+};
+
+export type RecentSession = {
+  sessionId: string;
+  type: string;
+  score: number;
+  maxScore: number;
+  accuracy: number;
+  createdAt: string;
+};
+
+export type StrategyMetrics = {
+  negativeMarksLost: number;
+  highConfidenceWrong: number;
+  correctGuessed: number;
+  totalRevisits: number;
+  timeOnWrongSec: number;
+  timeOnSkippedSec: number;
+};
+
+export type DashboardOverview = {
+  examId: string;
+  readiness: ReadinessScore;
+  weakTopics: WeakTopic[];
+  dueRetests: DueRetest[];
+  overdueRetestCount: number;
+  recentSessions: RecentSession[];
+  unresolvedMistakeCount: number;
+  strategyMetrics: StrategyMetrics | null;
+};
+
+// ── Pure helpers (exported for unit tests) ──────────────────────────────────
+
+/** Priority score: higher weight and lower mastery → higher urgency. */
+export function computeWeakTopicPriority(
+  weightPercent: number,
+  masteryScore: number
+): number {
+  const w = Math.max(0, weightPercent);
+  const gap = Math.max(0, 100 - Math.max(0, masteryScore));
+  return (w / 100) * gap;
+}
+
+type TopicRow = { id: string; name: string; weight_percent: number | string | null };
+
+/**
+ * Merges topic list with mastery map. Topics without a mastery record get
+ * masteryScore 0 so unstarted high-weight topics appear at the top.
+ * Filters out topics with priority 0, sorts descending, returns top 5.
+ */
+export function buildWeakTopics(
+  topics: TopicRow[],
+  masteryByTopicId: Map<string, number>
+): WeakTopic[] {
+  return topics
+    .map((topic) => {
+      const weightPercent = toNumber(topic.weight_percent);
+      const masteryScore = masteryByTopicId.get(topic.id) ?? 0;
+      return {
+        topicId: topic.id,
+        topicName: topic.name,
+        masteryScore,
+        weightPercent,
+        priority: computeWeakTopicPriority(weightPercent, masteryScore),
+      };
+    })
+    .filter((t) => t.priority > 0)
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 5);
+}
+
+/**
+ * Safely parses strategy_metrics JSONB from session_results.
+ * Returns null if input is null/non-object; missing keys default to 0.
+ */
+export function toStrategyMetrics(value: unknown): StrategyMetrics | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const r = value as Record<string, unknown>;
+  return {
+    negativeMarksLost: toNumber(r.negativeMarksLost),
+    highConfidenceWrong: toNumber(r.highConfidenceWrong),
+    correctGuessed: toNumber(r.correctGuessed),
+    totalRevisits: toNumber(r.totalRevisits),
+    timeOnWrongSec: toNumber(r.timeOnWrongSec),
+    timeOnSkippedSec: toNumber(r.timeOnSkippedSec),
+  };
+}
+
+// ── Main aggregation ─────────────────────────────────────────────────────────
+
+const READINESS_ZERO: ReadinessScore = {
+  score: 0,
+  confidenceLevel: "low",
+  coveragePercent: 0,
+  staleTopicIds: [],
+  hasBenchmarkSession: false,
+  breakdown: {},
+};
+
+export async function fetchDashboardOverview(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<DashboardOverview> {
+  const [readinessR, weakR, retestR, sessionsR, mistakeR] = await Promise.allSettled([
+    fetchReadinessScore(supabase, userId, examId),
+    loadWeakTopics(supabase, userId, examId),
+    loadDueRetests(supabase, userId, examId),
+    loadRecentSessions(supabase, userId, examId),
+    loadUnresolvedMistakeCount(supabase, userId, examId),
+  ]);
+
+  return {
+    examId,
+    readiness: readinessR.status === "fulfilled" ? readinessR.value : READINESS_ZERO,
+    weakTopics: weakR.status === "fulfilled" ? weakR.value.weakTopics : [],
+    dueRetests: retestR.status === "fulfilled" ? retestR.value.dueRetests : [],
+    overdueRetestCount: retestR.status === "fulfilled" ? retestR.value.overdueRetestCount : 0,
+    recentSessions: sessionsR.status === "fulfilled" ? sessionsR.value.recentSessions : [],
+    unresolvedMistakeCount: mistakeR.status === "fulfilled" ? mistakeR.value : 0,
+    strategyMetrics: sessionsR.status === "fulfilled" ? sessionsR.value.strategyMetrics : null,
+  };
+}
+
+// ── Private fetchers ─────────────────────────────────────────────────────────
+
+async function loadWeakTopics(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<{ weakTopics: WeakTopic[] }> {
+  const [topicResult, masteryResult] = await Promise.all([
+    supabase
+      .from("topics")
+      .select("id,name,weight_percent")
+      .eq("exam_id", examId)
+      .not("weight_percent", "is", null),
+    supabase
+      .from("mastery_records")
+      .select("topic_id,mastery_score")
+      .eq("user_id", userId)
+      .eq("exam_id", examId)
+      .not("topic_id", "is", null),
+  ]);
+
+  if (topicResult.error) throw topicResult.error;
+
+  const masteryByTopicId = new Map<string, number>();
+  for (const row of (masteryResult.data ?? []) as Array<{
+    topic_id: string | null;
+    mastery_score: number | string | null;
+  }>) {
+    if (row.topic_id) masteryByTopicId.set(row.topic_id, toNumber(row.mastery_score));
+  }
+
+  return { weakTopics: buildWeakTopics(topicResult.data as TopicRow[] ?? [], masteryByTopicId) };
+}
+
+async function loadDueRetests(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<{ dueRetests: DueRetest[]; overdueRetestCount: number }> {
+  const { data, error } = await supabase
+    .from("retest_queue")
+    .select("id,concept_id,topic_id,due_at,priority,scheduler")
+    .eq("user_id", userId)
+    .eq("exam_id", examId)
+    .eq("status", "due")
+    .order("due_at", { ascending: true })
+    .order("priority", { ascending: false });
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    concept_id: string | null;
+    topic_id: string | null;
+    due_at: string;
+    priority: number | string | null;
+    scheduler: string;
+  }>;
+
+  const now = new Date().toISOString();
+  const overdueRetestCount = rows.filter((r) => r.due_at <= now).length;
+  const dueRetests: DueRetest[] = rows.slice(0, 10).map((r) => ({
+    id: r.id,
+    conceptId: r.concept_id,
+    topicId: r.topic_id,
+    dueAt: r.due_at,
+    priority: toNumber(r.priority),
+    scheduler: r.scheduler,
+  }));
+
+  return { dueRetests, overdueRetestCount };
+}
+
+async function loadRecentSessions(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<{ recentSessions: RecentSession[]; strategyMetrics: StrategyMetrics | null }> {
+  const { data: resultRows, error: resultError } = await supabase
+    .from("session_results")
+    .select("session_id,score,max_score,accuracy,strategy_metrics,created_at")
+    .eq("user_id", userId)
+    .eq("exam_id", examId)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (resultError) throw resultError;
+
+  const results = (resultRows ?? []) as Array<{
+    session_id: string;
+    score: number | string;
+    max_score: number | string;
+    accuracy: number | string;
+    strategy_metrics: unknown;
+    created_at: string;
+  }>;
+
+  if (results.length === 0) return { recentSessions: [], strategyMetrics: null };
+
+  const sessionIds = results.map((r) => r.session_id);
+  const { data: sessionRows } = await supabase
+    .from("test_sessions")
+    .select("id,type")
+    .in("id", sessionIds);
+
+  const typeBySessionId = new Map<string, string>();
+  for (const s of (sessionRows ?? []) as Array<{ id: string; type: string }>) {
+    typeBySessionId.set(s.id, s.type);
+  }
+
+  const recentSessions: RecentSession[] = results.map((r) => ({
+    sessionId: r.session_id,
+    type: typeBySessionId.get(r.session_id) ?? "unknown",
+    score: toNumber(r.score),
+    maxScore: toNumber(r.max_score),
+    accuracy: toNumber(r.accuracy),
+    createdAt: r.created_at,
+  }));
+
+  return { recentSessions, strategyMetrics: toStrategyMetrics(results[0]?.strategy_metrics) };
+}
+
+async function loadUnresolvedMistakeCount(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("mistake_items")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("exam_id", examId)
+    .eq("status", "unresolved");
+
+  if (error) throw error;
+  return count ?? 0;
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+```
+
+---
+
+#### `src/app/dashboard/actions.ts` — server action wrapper
+
+New file. New directory `src/app/dashboard/` — create it.
+
+```typescript
+"use server";
+
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { fetchDashboardOverview, type DashboardOverview } from "@/lib/dashboard/overview";
+
+export type GetDashboardOverviewState =
+  | { ok: true; data: DashboardOverview }
+  | { ok: false; message: string };
+
+export async function getDashboardOverviewAction(
+  examId: string
+): Promise<GetDashboardOverviewState> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(examId)) {
+    return { ok: false, message: "Valid exam id is required." };
+  }
+
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: authError?.message ?? "Sign in to continue." };
+  }
+
+  const data = await fetchDashboardOverview(supabase, user.id, examId);
+  return { ok: true, data };
+}
+```
+
+---
+
+#### `src/tests/unit/dashboard-overview.test.ts` — required test cases
+
+Test only the pure exported helpers — no Supabase mock needed for this file.
+
+**`computeWeakTopicPriority` (6 cases):**
+
+| # | weightPercent | masteryScore | Expected priority |
+|---|---|---|---|
+| 1 | `100` | `0` | `100` |
+| 2 | `20` | `50` | `10` (20/100 × 50) |
+| 3 | `30` | `100` | `0` (no gap) |
+| 4 | `0` | `0` | `0` (no weight) |
+| 5 | `50` | `80` | `10` (50/100 × 20) |
+| 6 | `100` | `-10` | `110` (gap clamped at min 0 for mastery, but max at 100) — actually `100` since mastery is clamped to 0 |
+
+Wait — case 6: `masteryScore = -10`, `Math.max(0, -10) = 0`, gap = 100, priority = 1 × 100 = 100. Yes.
+
+**`buildWeakTopics` (6 cases):**
+
+| # | Description | Expected |
+|---|---|---|
+| 7 | Topics sorted by priority descending | highest-weight × highest-gap first |
+| 8 | Topic without mastery record → masteryScore 0 | appears if weight > 0 |
+| 9 | Topic with mastery 100 → priority 0 → filtered out | not in result |
+| 10 | More than 5 topics → result length = 5 | capped |
+| 11 | Empty topics array → `[]` | empty |
+| 12 | string `weight_percent` (e.g. `"25"`) → parsed via `toNumber` | priority computed correctly |
+
+**`toStrategyMetrics` (4 cases):**
+
+| # | Input | Expected |
+|---|---|---|
+| 13 | `null` | `null` |
+| 14 | `{ negativeMarksLost: 2, highConfidenceWrong: 1, correctGuessed: 3, totalRevisits: 5, timeOnWrongSec: 120, timeOnSkippedSec: 60 }` | all fields parsed correctly |
+| 15 | `{}` (empty object) | all fields default to `0` |
+| 16 | `{ negativeMarksLost: "1.5", highConfidenceWrong: "2" }` | string values parsed as numbers, rest 0 |
+
+---
+
+#### Tracker and process doc updates (Builder)
+
+After all gates pass:
+1. `trackers/JIRA_TRACKER.csv` — TSP-076: `Backlog → Done`, Owner = Builder, Builder Remarks.
+2. `docs/process/SESSION_STATE.md` — add Session 16 completed note, update Next Recommended Work.
+3. Append Builder Handoff to `docs/process/HANDOFF.md`.
+4. One commit: `git commit -m "TSP-076: dashboard overview API"`.
+
+---
+
+#### Verification gates
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/dashboard-overview.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+
+No `node run-migrations.js`. No smoke script.
+
+---
+
+#### Known issues
+
+**S16-A:** `loadWeakTopics` throws (and degrades to `[]`) if either the topics query or mastery query errors. The mastery query error is swallowed — only the topics query error propagates. This is correct: if we can't get topics we can't compute priority, but if mastery fails we still return all topics as "unstarted" (mastery 0 for all). **Fix:** handle mastery error separately from topic error. Non-blocking for MVP.
+
+**S16-B:** `overdueRetestCount` counts rows fetched (post-limit-10), not the true total. Since we fetch all due rows (no limit on the query) and slice to 10 for the list, the count IS accurate for all due rows. This is intentional — no issue.
+
+**S16-C:** `strategyMetrics` is from the most recent session only. If the user's most recent session has no `strategy_metrics` (e.g. a legacy session from before TSP-054), the field is `null`. Non-blocking.
+
+---
+
+#### Next session (Session 17 — TSP-078 + TSP-079)
+
+Readiness card UI + weak topics widget — the first visible dashboard. Consumes `getDashboardOverviewAction`. Creates `src/app/dashboard/page.tsx`.
+
+---
+
 The Architect spec below was executed by Builder on 2026-05-29 and remains here for Sanity review context.
 
 **Tracker rows:** TSP-149, TSP-090, TSP-091

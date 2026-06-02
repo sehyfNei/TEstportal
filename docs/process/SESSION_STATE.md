@@ -228,7 +228,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 15 Sanity PASS (2026-06-03). TSP-062 Done. M4 learning loop complete: submit → mastery → mistake_items → retest_queue. Both TSP-076 dependencies satisfied (TSP-056 ✅ TSP-062 ✅). Next: Session 16 — TSP-076 dashboard overview API.**
+**Session 15 Sanity PASS (2026-06-03). TSP-062 Done. M4 learning loop complete. Session 16 architect plan written (2026-06-03): TSP-076 dashboard overview API — 5 data sources, Promise.allSettled, pure helpers, server action. Builder: follow Session 16 plan in HANDOFF.md.**
 
 Session 4–6 M1 rows remain in Review pending browser smoke. Session 7–9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, and Session 15 row `TSP-062` are Done.
 
