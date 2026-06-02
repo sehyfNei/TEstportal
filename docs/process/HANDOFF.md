@@ -6112,6 +6112,432 @@ All 16 planned cases present. The `topic()` helper keeps tests concise. Table-dr
 
 ---
 
+### 2026-06-03 - Session 17 Plan (M4 fourth slice) - Architect (Claude Sonnet 4.6)
+
+**Milestone:** M4 Dashboard & Retention  
+**Tickets:** TSP-078 (readiness score card), TSP-079 (weak topics widget)  
+**Dependencies complete:** TSP-076 dashboard overview API ✅
+
+---
+
+#### Overview
+
+Session 17 builds the first user-visible page. The dashboard shell at `src/app/(app)/dashboard/page.tsx` is replaced with a real server-rendered layout. Two components are created: `ReadinessCard` and `WeakTopics`.
+
+**No new migration. No new DB table. No smoke script.** Everything is TypeScript + TSX display components consuming `fetchDashboardOverview`.
+
+**No unit tests.** All logic is display-only. The computation layer (`computeWeakTopicPriority`, `toStrategyMetrics`, etc.) is already covered. New components have no extractable pure helpers.
+
+**Dev server is blocked on this workspace** (OneDrive/node_modules hydration issue, see SESSION_STATE). Verification gates are typecheck + lint + test + build only. Browser rendering cannot be confirmed by the Builder — note this in the handoff.
+
+---
+
+#### File plan
+
+| Action | Path |
+|---|---|
+| Replace | `src/app/(app)/dashboard/page.tsx` |
+| Create | `src/components/dashboard/readiness-card.tsx` |
+| Create | `src/components/dashboard/weak-topics.tsx` |
+
+---
+
+#### Route and data loading notes
+
+The page lives at `src/app/(app)/dashboard/page.tsx`. The `(app)` route group does not add a URL segment — the route is `/dashboard`. The middleware already protects `/dashboard` (see `middleware.ts` line 5).
+
+The Session 16 server action is at `src/app/dashboard/actions.ts`. **Do not call the action from the server component.** Instead import and call `fetchDashboardOverview` from `@/lib/dashboard/overview` directly — server components can import server-only modules without the `"use server"` wrapper overhead. The action wrapper exists for client components.
+
+`searchParams` in Next.js 15 is a `Promise` — always `await` it.
+
+---
+
+#### `src/app/(app)/dashboard/page.tsx` — full spec
+
+```tsx
+import Link from "next/link";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { createClient } from "@/lib/supabase/server";
+import { fetchDashboardOverview } from "@/lib/dashboard/overview";
+import { ReadinessCard } from "@/components/dashboard/readiness-card";
+import { WeakTopics } from "@/components/dashboard/weak-topics";
+
+type Exam = { id: string; name: string; slug: string };
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ exam?: string }>;
+}) {
+  const { exam: examParam } = await searchParams;
+  const data = await loadDashboardData(examParam);
+
+  if (!data.configured) {
+    return (
+      <section className="grid gap-6">
+        <PageHeader title="Dashboard" />
+        <Notice message="Supabase is not configured. Add environment variables to enable the dashboard." />
+      </section>
+    );
+  }
+
+  if (!data.authed) {
+    return (
+      <section className="grid gap-6">
+        <PageHeader title="Dashboard" />
+        <Notice message="Sign in to view your dashboard." />
+      </section>
+    );
+  }
+
+  if (!data.examId || data.exams.length === 0) {
+    return (
+      <section className="grid gap-6">
+        <PageHeader title="Dashboard" />
+        <Notice message="No active exams found. Import an exam manifest from the admin panel to get started." />
+      </section>
+    );
+  }
+
+  const { overview, examId, exams } = data;
+  const currentExam = exams.find((e) => e.id === examId) ?? exams[0];
+
+  return (
+    <section className="grid gap-6">
+      <div>
+        <p className="text-sm font-medium text-primary">Dashboard</p>
+        <h1 className="mt-2 text-3xl font-semibold">{currentExam.name}</h1>
+        {exams.length > 1 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {exams.map((exam) => (
+              <Link
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  exam.id === examId
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:text-foreground"
+                }`}
+                href={`/dashboard?exam=${exam.id}`}
+                key={exam.id}
+              >
+                {exam.name}
+              </Link>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <ReadinessCard readiness={overview.readiness} />
+        <WeakTopics examId={examId} topics={overview.weakTopics} />
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <StatChip
+          label="Due retests"
+          value={overview.overdueRetestCount}
+          href="/tests"
+        />
+        <StatChip
+          label="Unresolved mistakes"
+          value={overview.unresolvedMistakeCount}
+        />
+        <StatChip
+          label="Recent sessions"
+          value={overview.recentSessions.length}
+          href="/tests"
+        />
+      </div>
+    </section>
+  );
+}
+
+// ── Private helpers ──────────────────────────────────────────────────────────
+
+type DashboardData =
+  | { configured: false }
+  | { configured: true; authed: false }
+  | { configured: true; authed: true; examId: null; exams: Exam[] }
+  | {
+      configured: true;
+      authed: true;
+      examId: string;
+      exams: Exam[];
+      overview: Awaited<ReturnType<typeof fetchDashboardOverview>>;
+    };
+
+async function loadDashboardData(examParam: string | undefined): Promise<DashboardData> {
+  if (!hasSupabaseConfig()) return { configured: false };
+
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { configured: true, authed: false };
+
+  const { data: examRows } = await supabase
+    .from("exams")
+    .select("id,name,slug")
+    .eq("is_active", true)
+    .order("name");
+
+  const exams = toExams(examRows);
+  if (exams.length === 0) return { configured: true, authed: true, examId: null, exams };
+
+  const examId = isValidExamId(examParam, exams) ? examParam! : exams[0].id;
+  const overview = await fetchDashboardOverview(supabase, user.id, examId);
+
+  return { configured: true, authed: true, examId, exams, overview };
+}
+
+function isValidExamId(param: string | undefined, exams: Exam[]): boolean {
+  return Boolean(param && exams.some((e) => e.id === param));
+}
+
+function toExams(rows: unknown): Exam[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((r): r is Record<string, unknown> => Boolean(r && typeof r === "object"))
+    .map((r) => ({
+      id: typeof r.id === "string" ? r.id : "",
+      name: typeof r.name === "string" ? r.name : "",
+      slug: typeof r.slug === "string" ? r.slug : "",
+    }))
+    .filter((e) => e.id && e.name);
+}
+
+function PageHeader({ title }: { title: string }) {
+  return (
+    <div>
+      <p className="text-sm font-medium text-primary">Dashboard</p>
+      <h1 className="mt-2 text-3xl font-semibold">{title}</h1>
+    </div>
+  );
+}
+
+function Notice({ message }: { message: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+      {message}
+    </div>
+  );
+}
+
+function StatChip({
+  label,
+  value,
+  href,
+}: {
+  label: string;
+  value: number;
+  href?: string;
+}) {
+  const content = (
+    <>
+      <p className="text-2xl font-semibold">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{label}</p>
+    </>
+  );
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 text-center">
+      {href ? (
+        <Link className="block" href={href}>
+          {content}
+        </Link>
+      ) : (
+        content
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+#### `src/components/dashboard/readiness-card.tsx` — full spec
+
+```tsx
+import type { ReadinessScore } from "@/lib/scoring/readiness";
+
+type Props = {
+  readiness: ReadinessScore;
+};
+
+export function ReadinessCard({ readiness }: Props) {
+  const score = Math.round(readiness.score);
+  const coverage = Math.round(readiness.coveragePercent * 100);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <h2 className="text-lg font-semibold">Readiness score</h2>
+
+      <div className="mt-4 flex items-end gap-4">
+        <p className={`text-5xl font-bold tabular-nums ${scoreColorClass(score)}`}>
+          {score}
+        </p>
+        <p className="mb-1 text-sm text-muted-foreground">/ 100</p>
+        <ConfidenceBadge level={readiness.confidenceLevel} />
+      </div>
+
+      <p className="mt-3 text-sm text-muted-foreground">
+        {coverage}% of topics covered
+      </p>
+
+      {readiness.staleTopicIds.length > 0 ? (
+        <p className="mt-2 text-sm text-amber-600">
+          {readiness.staleTopicIds.length} topic
+          {readiness.staleTopicIds.length === 1 ? "" : "s"} not reviewed recently — score may be conservative
+        </p>
+      ) : null}
+
+      {!readiness.hasBenchmarkSession ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Take a benchmark test to calibrate your score more accurately.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function scoreColorClass(score: number): string {
+  if (score >= 70) return "text-green-600";
+  if (score >= 40) return "text-amber-600";
+  return "text-red-600";
+}
+
+function ConfidenceBadge({ level }: { level: "low" | "medium" | "high" }) {
+  const styles: Record<string, string> = {
+    low: "bg-red-100 text-red-700",
+    medium: "bg-amber-100 text-amber-700",
+    high: "bg-green-100 text-green-700",
+  };
+  return (
+    <span
+      className={`mb-1 rounded-full px-2 py-0.5 text-xs font-medium capitalize ${styles[level]}`}
+    >
+      {level} confidence
+    </span>
+  );
+}
+```
+
+---
+
+#### `src/components/dashboard/weak-topics.tsx` — full spec
+
+```tsx
+import Link from "next/link";
+import type { WeakTopic } from "@/lib/dashboard/overview";
+
+type Props = {
+  topics: WeakTopic[];
+  examId: string;
+};
+
+export function WeakTopics({ topics, examId }: Props) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <h2 className="text-lg font-semibold">Weak topics</h2>
+
+      {topics.length === 0 ? (
+        <p className="mt-4 text-sm leading-6 text-muted-foreground">
+          All weighted topics are on track. Keep practicing!
+        </p>
+      ) : (
+        <ul className="mt-4 grid gap-4">
+          {topics.map((topic) => (
+            <TopicRow examId={examId} key={topic.topicId} topic={topic} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function TopicRow({ topic, examId }: { topic: WeakTopic; examId: string }) {
+  const mastery = Math.round(topic.masteryScore);
+  const masteryBarColor = mastery >= 70 ? "bg-green-500" : mastery >= 40 ? "bg-amber-500" : "bg-red-500";
+
+  return (
+    <li className="grid gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium">{topic.topicName}</p>
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          {topic.weightPercent}% weight
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+          <div
+            className={`h-full rounded-full ${masteryBarColor}`}
+            style={{ width: `${mastery}%` }}
+          />
+        </div>
+        <p className="w-16 shrink-0 text-right text-xs text-muted-foreground">
+          {mastery}% mastered
+        </p>
+      </div>
+
+      {/* S17-A: Practice link goes to /tests for now.
+          Topic-prefilled retest CTA deferred to TSP-063. */}
+      <Link
+        className="w-fit text-xs font-medium text-primary hover:underline"
+        href="/tests"
+      >
+        Practice →
+      </Link>
+    </li>
+  );
+}
+```
+
+**Note on `examId` prop:** `WeakTopics` accepts `examId` for future use by the topic-prefilled CTA (TSP-063). For now it is unused in the rendered output. TypeScript will show an unused variable warning — suppress with a leading underscore rename if lint flags it, or just leave it (the prop is intentionally forward-looking).
+
+---
+
+#### Verification gates
+
+```powershell
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+
+No migration. No smoke script. **No browser verification is possible** on this workspace due to the OneDrive dev-server issue. Builder must note this explicitly in the handoff.
+
+---
+
+#### Tracker and process doc updates (Builder)
+
+1. `trackers/JIRA_TRACKER.csv` — TSP-078: `Backlog → Done`. TSP-079: `Backlog → Done`.
+2. `docs/process/SESSION_STATE.md` — add Session 17 completed, update Next Recommended Work.
+3. Append Builder Handoff to `docs/process/HANDOFF.md`.
+4. Two commits (one per ticket):
+   - `git commit -m "TSP-078: readiness score card"` (ReadinessCard component + page data loading)
+   - `git commit -m "TSP-079: weak topics widget"` (WeakTopics component; or bundle both as one commit if they're implemented together)
+   - Acceptable to bundle as one commit if the page, ReadinessCard, and WeakTopics are all needed simultaneously for the build to pass.
+
+---
+
+#### Known issues
+
+**S17-A (by design):** `WeakTopics` "Practice" links go to `/tests` (no topic context). TSP-063 (concept retest sessions) adds the direct `topicId`-prefilled CTA. The `examId` prop is accepted but unused for now.
+
+**S17-B:** No exam switcher dropdown — only pill links. If the user has many exams, the pill row may overflow. Acceptable for MVP with 1-2 exams.
+
+**S17-C (environment):** Dev server cannot run on this workspace. Browser rendering is unverified. All verification is static analysis only (typecheck + lint + build). Note this in the builder handoff.
+
+---
+
+#### Next session (Session 18)
+
+Two options:
+- **TSP-080** (progress timeline) — chart of readiness + score over time
+- **TSP-081** (strategy metrics widget) — overconfidence, negative marking loss, skip discipline
+
+Or pivot to TSP-063 (concept retest sessions) which adds the "Practice this topic" CTA that Session 17 intentionally left as a plain `/tests` link.
+
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |
