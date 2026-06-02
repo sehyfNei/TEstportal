@@ -239,7 +239,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 18 builder completion (2026-06-03). TSP-081 and TSP-063 Done. Dashboard now surfaces strategy signals and starts due retests. Next recommended builder work: Session 19 - TSP-080 progress timeline, S18-A concept_retest SQL routing, M0 browser smoke, or TSP-057 forgetting-curve decay.**
+**Session 18 Sanity PASS (2026-06-03). TSP-081 + TSP-063 Done. M4 substantially complete: full loop from test → mastery → mistakes → retest queue → dashboard → start retest is live. Next: S18-A fix (concept_retest SQL routing) or TSP-057 forgetting-curve decay.**
 
 Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, and Session 18 row `TSP-081` are Done.
 

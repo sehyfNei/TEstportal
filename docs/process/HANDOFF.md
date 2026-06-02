@@ -7104,6 +7104,50 @@ Next recommended step:
 
 - Session 19 can add `TSP-080` progress timeline, fix S18-A with `concept_retest` SQL routing, run M0 browser smoke if users are available, or implement `TSP-057` forgetting-curve decay.
 
+### 2026-06-03 - Session 18 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Scope:** TSP-081 — `StrategyMetricsCard`, TSP-063 — `startRetestAction` + `DueRetests`.
+
+**Overall: PASS. TSP-081 → Done. TSP-063 → Done.**
+
+---
+
+**S1 — `StrategyMetricsCard` (TSP-081): PASS.**  
+Pure server component, no `"use client"`. Six metric rows, 2-col grid on `sm`. Amber warning applied correctly at `negativeMarksLost > 0` and `highConfidenceWrong > 2`. `MetricRow` receives `warn?: boolean` (optional) so rows without warn default to no colour treatment.
+
+**S2 — `DueRetests` client boundary: PASS.**  
+`"use client"` at file top. Imports `StartRetestState`, `startRetestAction`, and `initialStartRetestState` from the server actions file — correct (server action functions are callable from client components via the `"use server"` directive in the actions file). `useActionState<StartRetestState, FormData>` explicit generic — type-safe.
+
+**S3 — `RetestItem` state management: PASS.**  
+`useEffect` deps are `[router, state.ok, state.sessionId]` — more precise than `[router, state]`, fires only on relevant field changes. Overdue detection uses `dueDate <= new Date()` ISO comparison — correct. Error message renders only when `!state.ok && state.message` — no false display on success.
+
+**S4 — `startRetestAction` ownership and resolution: PASS.**  
+`retestRow` queried with both `.eq("id", ...)` and `.eq("exam_id", ...)` — scoped to the right exam before the ownership check. `row.user_id !== user.id` returns a generic "not found" message — no information leakage. Concept → topic resolution: Builder added explicit `conceptError` early return — bonus over spec.
+
+**S5 — `start_test_session` call: PASS.**  
+`p_template_id: null`, `p_duration_minutes: null` — correct for dynamic sessions. `p_min_quality_tier: "bronze"` is the permissive default. `p_count: 10` is a reasonable retest size.
+
+**S6 — `revalidatePath` placement: PASS.**  
+Called before the success return — ensures the dashboard cache is invalidated so the next page load reflects the new session in recent sessions.
+
+**S7 — Dashboard page wiring: PASS.**  
+`DueRetests` always rendered (with empty state). `StrategyMetricsCard` gated on `!== null` (not `!` or `truthy` check) — correct, since a zero-value metrics object would be truthy but should still render.
+
+---
+
+**Known issues (carry forward):**  
+S18-A, S18-B, S18-C, S18-D — all logged by Builder, all non-blocking for MVP.
+
+---
+
+**M4 is now substantially complete.** Dashboard shows: readiness score, weak topics, due retests with one-click start, strategy signals, and overview stats. The full improvement loop — test → score → mastery → mistake notebook → retest queue → dashboard → start retest — is functional end-to-end in code.
+
+**Session 19 options (priority order):**
+1. **S18-A fix** — add `concept_retest` routing branch in `start_test_session` (one SQL migration, upgrades retest quality before any real users hit it)
+2. **TSP-057** — forgetting-curve nightly decay job (completes M3)
+3. **TSP-080** — progress timeline widget (historical readiness/score chart)
+4. **M0 browser smoke** — if admin + test student users are now available in Supabase, one browser pass closes ~19 Review rows
+
 ---
 
 ## Parked Blockers — Do Not Start
