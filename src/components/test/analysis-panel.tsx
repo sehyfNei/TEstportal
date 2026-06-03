@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { getSessionAnalysisAction } from "@/app/test/actions";
+import { ExplanationRating } from "@/components/test/explanation-rating";
 import {
   isTerminalAnalysisStatus,
   type AnalysisStatus,
@@ -20,10 +21,16 @@ export type QuestionLabel = {
 type AnalysisPanelProps = {
   initialAnalysis: AnalysisView | null;
   questionLabels: Record<string, QuestionLabel>;
+  resultId: string | null;
   sessionId: string;
 };
 
-export function AnalysisPanel({ initialAnalysis, questionLabels, sessionId }: AnalysisPanelProps) {
+export function AnalysisPanel({
+  initialAnalysis,
+  questionLabels,
+  resultId,
+  sessionId
+}: AnalysisPanelProps) {
   const [analysis, setAnalysis] = useState<AnalysisView>(
     initialAnalysis ?? { status: "running", output: null }
   );
@@ -62,7 +69,13 @@ export function AnalysisPanel({ initialAnalysis, questionLabels, sessionId }: An
   }
 
   if (analysis.status === "completed" && analysis.output) {
-    return <AnalysisReport output={analysis.output} questionLabels={questionLabels} />;
+    return (
+      <AnalysisReport
+        output={analysis.output}
+        questionLabels={questionLabels}
+        resultId={resultId}
+      />
+    );
   }
 
   return (
@@ -119,16 +132,21 @@ function statusMessage(status: AnalysisStatus): string {
 
 function AnalysisReport({
   output,
-  questionLabels
+  questionLabels,
+  resultId
 }: {
   output: AnalysisOutput;
   questionLabels: Record<string, QuestionLabel>;
+  resultId: string | null;
 }) {
   return (
     <div className="grid gap-5 rounded-lg border border-border bg-card p-5">
       <div>
         <p className="text-sm font-medium text-primary">AI analysis</p>
         <p className="mt-2 text-sm leading-7">{output.overallSummary}</p>
+        {resultId ? (
+          <ExplanationRating scope="overall" scopeKey="" sessionResultId={resultId} />
+        ) : null}
       </div>
 
       {output.topicSummaries.length ? (
@@ -143,6 +161,13 @@ function AnalysisReport({
                   <span className="font-medium text-foreground">Recommendation: </span>
                   {topic.recommendation}
                 </p>
+                {resultId ? (
+                  <ExplanationRating
+                    scope="topic_summary"
+                    scopeKey={topic.topicName}
+                    sessionResultId={resultId}
+                  />
+                ) : null}
               </div>
             ))}
           </div>
@@ -175,6 +200,13 @@ function AnalysisReport({
                       <span className="font-medium">Trap: </span>
                       {item.trapExplanation}
                     </p>
+                  ) : null}
+                  {resultId ? (
+                    <ExplanationRating
+                      scope="question_analysis"
+                      scopeKey={item.questionId}
+                      sessionResultId={resultId}
+                    />
                   ) : null}
                 </div>
               );

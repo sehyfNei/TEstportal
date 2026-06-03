@@ -87,6 +87,7 @@ export default async function TestSessionPage({
         initialAnalysis={data.analysis}
         initialQuestionStates={data.initialQuestionStates}
         initialResult={data.result}
+        initialResultId={data.resultId}
         initialStatus={data.session.status}
         questions={data.questions}
         serverNow={new Date().toISOString()}
@@ -122,6 +123,7 @@ async function loadTestSessionData(sessionId: string) {
       questions: [],
       initialQuestionStates: {},
       result: null,
+      resultId: null,
       analysis: null
     };
   }
@@ -140,6 +142,7 @@ async function loadTestSessionData(sessionId: string) {
       questions: [],
       initialQuestionStates: {},
       result: null,
+      resultId: null,
       analysis: null
     };
   }
@@ -158,6 +161,7 @@ async function loadTestSessionData(sessionId: string) {
       questions: [],
       initialQuestionStates: {},
       result: null,
+      resultId: null,
       analysis: null
     };
   }
@@ -172,6 +176,7 @@ async function loadTestSessionData(sessionId: string) {
       questions: [],
       initialQuestionStates: {},
       result: null,
+      resultId: null,
       analysis: null
     };
   }
@@ -206,6 +211,7 @@ async function loadTestSessionData(sessionId: string) {
     questions: loadError ? [] : questions,
     initialQuestionStates: loadError ? {} : toInitialQuestionStates(answersResult.data, questions),
     result: loadError ? null : toResultSummary(resultResult.data),
+    resultId: loadError ? null : resultRow?.id ?? null,
     analysis
   };
 }

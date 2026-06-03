@@ -43,6 +43,7 @@ type TestRunnerProps = {
   initialAnalysis?: AnalysisView | null;
   initialQuestionStates: Record<string, QuestionState>;
   initialResult?: TestResultSummary | null;
+  initialResultId?: string | null;
   initialStatus: string;
   questions: TestRunnerQuestion[];
   serverNow: string;
@@ -63,6 +64,7 @@ export function TestRunner({
   initialAnalysis,
   initialQuestionStates,
   initialResult,
+  initialResultId,
   initialStatus,
   questions,
   serverNow,
@@ -72,6 +74,7 @@ export function TestRunner({
     useState<Record<string, QuestionState>>(initialQuestionStates);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [result, setResult] = useState<TestResultSummary | null>(initialResult ?? null);
+  const [resultId, setResultId] = useState<string | null>(initialResultId ?? null);
   const [status, setStatus] = useState(initialStatus);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [message, setMessage] = useState("");
@@ -262,6 +265,7 @@ export function TestRunner({
 
         clearBackup(sessionId);
         setResult(nextState.result ?? null);
+        setResultId(nextState.result?.resultId ?? null);
         setStatus(nextState.result?.status ?? "scored");
         setMessage("Session scored.");
       });
@@ -481,6 +485,7 @@ export function TestRunner({
         <AnalysisPanel
           initialAnalysis={initialAnalysis ?? null}
           questionLabels={questionLabels}
+          resultId={resultId}
           sessionId={sessionId}
         />
       ) : null}

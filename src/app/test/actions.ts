@@ -8,6 +8,14 @@ import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
 import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
+import {
+  isValidRating,
+  isValidReportCategory,
+  isValidScope,
+  type RatingScope,
+  type RatingValue,
+  type ReportCategory
+} from "@/lib/ai/rating-helpers";
 import { createClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 
@@ -431,6 +439,78 @@ export async function getSessionAnalysisAction(
     ok: true,
     analysis: toAnalysisView(analysisLookup.data as AnalysisRow | null)
   };
+}
+
+export type RateExplanationInput = {
+  rating: RatingValue;
+  reportCategory: ReportCategory | null;
+  scope: RatingScope;
+  scopeKey: string;
+  sessionResultId: string;
+};
+
+export type RateExplanationResult = { ok: boolean; message: string };
+
+export async function rateExplanationAction(
+  input: RateExplanationInput
+): Promise<RateExplanationResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured yet." };
+  }
+
+  const auth = await requireAuth();
+  if (!auth.ok) {
+    return { ok: false, message: auth.message };
+  }
+
+  if (!isUuid(input.sessionResultId)) {
+    return { ok: false, message: "Valid result id is required." };
+  }
+
+  if (!isValidScope(input.scope) || !isValidRating(input.rating)) {
+    return { ok: false, message: "Invalid rating payload." };
+  }
+
+  if (input.reportCategory !== null && !isValidReportCategory(input.reportCategory)) {
+    return { ok: false, message: "Invalid report category." };
+  }
+
+  const scopeKey = typeof input.scopeKey === "string" ? input.scopeKey : "";
+
+  const supabase = await createClient();
+  const ownership = await supabase
+    .from("session_results")
+    .select("id")
+    .eq("id", input.sessionResultId)
+    .eq("user_id", auth.userId)
+    .maybeSingle();
+
+  if (ownership.error) {
+    return { ok: false, message: ownership.error.message };
+  }
+
+  if (!ownership.data) {
+    return { ok: false, message: "Result not found." };
+  }
+
+  const { error } = await supabase.from("explanation_ratings").upsert(
+    {
+      session_result_id: input.sessionResultId,
+      user_id: auth.userId,
+      scope: input.scope,
+      scope_key: scopeKey,
+      rating: input.rating,
+      report_category: input.reportCategory ?? null,
+      updated_at: new Date().toISOString()
+    },
+    { onConflict: "session_result_id,scope,scope_key" }
+  );
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  return { ok: true, message: "Rating saved." };
 }
 
 async function requireAuth(): Promise<AuthCheckResult> {

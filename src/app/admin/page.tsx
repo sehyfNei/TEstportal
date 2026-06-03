@@ -40,8 +40,10 @@ const sections: {
   },
   {
     title: "Flagged content queue",
-    description: "Review questions and AI explanations flagged by users, then quarantine or restore them.",
-    status: "phase-1"
+    description: "Review AI explanations users reported as unhelpful, then open the session for context.",
+    href: "/admin/ai-ratings",
+    linkLabel: "Open flagged queue",
+    status: "live"
   },
   {
     title: "Jobs monitor",

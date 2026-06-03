@@ -9167,6 +9167,246 @@ The UI itself is buildable now; gate the production rollout on the above.
 #### Next
 
 Architect Sanity review of TSP-069 once `pnpm test`/`pnpm build` are confirmed green in a hydrated environment. Then TSP-070 (explanation rating/reporting) or TSP-071 (improvement plan).
+
+---
+
+## Session 24 Architect Plan — TSP-070 (Explanation Rating & Reporting)
+
+**Goal:** Let users thumbs-up/down individual AI explanation items and report a category when unhappy. Reported rows surface in a new admin flagged-content queue. Acceptance: "Reported explanations appear in admin review."
+
+### Architecture context (verified this session)
+
+- `AnalysisReport` (inside `analysis-panel.tsx`) renders three rated surfaces: per `questionAnalyses[i]`, per `topicSummaries[i]`, and the `overallSummary`. Rating buttons attach inline to each.
+- The `session_result_id` (primary key of `session_results`) is needed as the FK on the ratings table. It is NOT currently flowing to `AnalysisPanel`.
+  - **Page revisit path**: `tests/[sessionId]/page.tsx` already queries `session_results.id` (added in Session 23). Must pass it down to `TestRunner` → `AnalysisPanel`.
+  - **Fresh-submit path**: `SubmitSessionActionState.result.resultId` exists in the action response. `TestRunner` must capture it in local state after submit.
+- The admin flagged-content queue is linked as "phase-1" (not live) in `src/app/admin/page.tsx`. This session upgrades it to "live".
+
+### Files (10: 5 new, 5 modified)
+
+**1. `supabase/migrations/202606030005_explanation_ratings.sql`** (NEW)
+```sql
+create table if not exists public.explanation_ratings (
+  id uuid primary key default gen_random_uuid(),
+  session_result_id uuid not null references public.session_results(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  scope text not null
+    check (scope in ('question_analysis', 'topic_summary', 'overall')),
+  scope_key text not null default '',
+  -- question_analysis → questionId; topic_summary → topicName; overall → ''
+  rating text not null check (rating in ('up', 'down')),
+  report_category text
+    check (report_category in ('wrong_answer', 'misleading', 'off_topic', 'low_quality')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (session_result_id, scope, scope_key)
+);
+create index if not exists explanation_ratings_result
+  on public.explanation_ratings (session_result_id);
+create index if not exists explanation_ratings_down
+  on public.explanation_ratings (rating, created_at desc)
+  where rating = 'down';
+
+alter table public.explanation_ratings enable row level security;
+
+-- owner reads own ratings; admin reads all
+drop policy if exists explanation_ratings_select on public.explanation_ratings;
+create policy explanation_ratings_select on public.explanation_ratings
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+-- owner inserts only for themselves
+drop policy if exists explanation_ratings_insert on public.explanation_ratings;
+create policy explanation_ratings_insert on public.explanation_ratings
+  for insert to authenticated
+  with check (user_id = auth.uid());
+
+-- owner can update own (covers upsert); admin can update for moderation
+drop policy if exists explanation_ratings_update on public.explanation_ratings;
+create policy explanation_ratings_update on public.explanation_ratings
+  for update to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+grant select, insert, update on public.explanation_ratings to authenticated;
+```
+No DELETE policy — ratings are audit records. Upsert (insert + onConflict update) handles re-rating.
+`scope_key` is `text not null default ''` so the UNIQUE constraint is NULL-safe.
+
+**2. `src/lib/ai/rating-helpers.ts`** (NEW — pure, no server imports, importable anywhere)
+```ts
+export const VALID_SCOPES = ['question_analysis', 'topic_summary', 'overall'] as const;
+export type RatingScope = typeof VALID_SCOPES[number];
+
+export const VALID_RATINGS = ['up', 'down'] as const;
+export type RatingValue = typeof VALID_RATINGS[number];
+
+export const VALID_REPORT_CATEGORIES = ['wrong_answer', 'misleading', 'off_topic', 'low_quality'] as const;
+export type ReportCategory = typeof VALID_REPORT_CATEGORIES[number];
+
+export const REPORT_CATEGORY_LABELS: Record<ReportCategory, string> = {
+  wrong_answer: 'Wrong answer',
+  misleading: 'Misleading',
+  off_topic: 'Off topic',
+  low_quality: 'Low quality'
+};
+
+export function isValidScope(v: unknown): v is RatingScope { ... }
+export function isValidRating(v: unknown): v is RatingValue { ... }
+export function isValidReportCategory(v: unknown): v is ReportCategory { ... }
+```
+
+**3. `src/app/test/actions.ts`** (MODIFY — append action + types)
+```ts
+export type RateExplanationInput = {
+  sessionResultId: string;
+  scope: RatingScope;
+  scopeKey: string;
+  rating: RatingValue;
+  reportCategory: ReportCategory | null;
+};
+export type RateExplanationResult = { ok: boolean; message: string };
+
+export async function rateExplanationAction(
+  input: RateExplanationInput
+): Promise<RateExplanationResult> {
+  // 1. hasSupabaseConfig guard
+  // 2. requireAuth
+  // 3. validate: isValidScope, isValidRating, isValidReportCategory (if provided)
+  // 4. isUuid(sessionResultId)
+  // 5. verify ownership: session_results.select("id").eq("id", resultId).eq("user_id", userId).maybeSingle()
+  //    → null → { ok:false, message:"Result not found." }
+  // 6. supabase.from("explanation_ratings").upsert({
+  //      session_result_id, user_id, scope, scope_key: scopeKey,
+  //      rating, report_category: reportCategory ?? null, updated_at: new Date().toISOString()
+  //    }, { onConflict: "session_result_id,scope,scope_key" })
+  // 7. return { ok: true, message: "Rating saved." } / { ok: false, message: error.message }
+}
+```
+
+**4. `src/components/test/explanation-rating.tsx`** (NEW — client)
+Props: `{ sessionResultId: string; scope: RatingScope; scopeKey: string }`
+State: `rating: RatingValue | null`, `category: ReportCategory | null`, `showCategories: boolean`, `isPending: boolean`
+
+UX flow:
+- Two buttons: 👍 (up) and 👎 (down), inline, small, muted until activated.
+- Click 👍 → immediately optimistic-set rating='up', call `rateExplanationAction`, no dropdown.
+- Click 👎 → set showCategories=true, show 4 category chips below; user clicks one → set rating='down' + category, call action, hide chips.
+- Click the already-active button again → no-op (don't allow de-rating in MVP; keep it simple).
+- `isPending` → buttons disabled + muted opacity during action call.
+- On action error → revert optimistic state, show brief inline error text.
+- No external state — fully self-contained.
+
+**5. `src/components/test/analysis-panel.tsx`** (MODIFY)
+- Add prop `resultId: string | null` to `AnalysisPanel` and forward to `AnalysisReport`.
+- `AnalysisReport` gains prop `resultId: string | null`.
+- Attach `<ExplanationRating>` to each rated surface (only when `resultId !== null`):
+  - After `overallSummary` text: `scope='overall' scopeKey=''`
+  - After each topicSummary card: `scope='topic_summary' scopeKey={topic.topicName}`
+  - After each questionAnalysis card: `scope='question_analysis' scopeKey={item.questionId}`
+
+**6. `src/components/test/test-runner.tsx`** (MODIFY)
+- Add prop `initialResultId?: string | null`.
+- Add state: `const [resultId, setResultId] = useState<string | null>(initialResultId ?? null)`.
+- In submit callback, after `setResult(nextState.result ?? null)`: `setResultId(nextState.result?.resultId ?? null)`.
+- Pass `resultId={resultId}` to `<AnalysisPanel>`.
+
+**7. `src/app/(app)/tests/[sessionId]/page.tsx`** (MODIFY)
+- Pass `initialResultId={resultRow?.id ?? null}` to `<TestRunner>`.
+
+**8. `src/app/admin/ai-ratings/page.tsx`** (NEW — server component)
+Route: `/admin/ai-ratings`
+Query: `explanation_ratings.select("id,scope,scope_key,rating,report_category,created_at,session_result_id,session_results(session_id)").eq("rating","down").order("created_at",{ascending:false}).limit(100)`
+Render: simple table — Scope | Key | Category | Session link | Date. Link is `/tests/[session_id]` (admin can navigate to the session to see full analysis).
+Auth: `is_admin()` check in server component; redirect to `/` if not admin.
+
+**9. `src/app/admin/page.tsx`** (MODIFY)
+Change "Flagged content queue" entry from `status:"phase-1"` (no link) to `status:"live"` with `href:"/admin/ai-ratings"`, `linkLabel:"Open flagged queue"`.
+
+**10. `src/tests/unit/explanation-rating.test.ts`** (NEW — ≥8 pure tests)
+All tests on `rating-helpers.ts` — no mocks, no Supabase:
+- `isValidScope`: true for all 3 scopes, false for 'summary', false for null/undefined
+- `isValidRating`: true for 'up'/'down', false for 'yes'/'thumbs_up'
+- `isValidReportCategory`: true for all 4 categories, false for 'bad'/'incorrect', false for null (null is valid as "no category" — tested separately)
+- Edge: empty string → false for all
+- `REPORT_CATEGORY_LABELS`: all 4 keys present, all values non-empty strings
+
+### Verification gates
+```powershell
+corepack pnpm exec vitest run src/tests/unit/explanation-rating.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node run-migrations.js
+# SELECT to_regclass('public.explanation_ratings')
+```
+`test` and `build` remain blocked by OneDrive. `typecheck` + `lint` are authoritative gates here.
+
+### Design decisions
+
+- **Upsert not toggle-delete**: Ratings are audit records. Re-rating overwrites via `onConflict` update. No DELETE policy.
+- **`scope_key` default ''**: Makes the UNIQUE constraint NULL-safe for the 'overall' scope without a partial index.
+- **`resultId` prop not polled**: Avoid adding `resultId` to `getSessionAnalysisAction` response — it arrives from the page (revisit) or from `nextState.result.resultId` (fresh submit). `AnalysisPanel` receives it as a prop, not via polling.
+- **Optimistic UI**: Rating button updates instantly; reverts on error. No re-fetch needed — each button is self-contained.
+- **Admin page shows 'down' only**: 'up' ratings are stored for future analytics but not surfaced yet; actionable signal is complaints.
+- **No pre-loaded ratings on revisit**: Blank on reload for MVP. Admin still sees all stored ratings. A future session can pre-fetch existing ratings via a new `getExplanationRatingsAction`.
+
+### Builder checklist
+1. `202606030005_explanation_ratings.sql` — table + UNIQUE + 2 indexes + RLS (select/insert/update) + grant
+2. `src/lib/ai/rating-helpers.ts` — pure validators + REPORT_CATEGORY_LABELS
+3. `src/app/test/actions.ts` — `RateExplanationInput`, `RateExplanationResult`, `rateExplanationAction`
+4. `src/components/test/explanation-rating.tsx` — self-contained rating widget
+5. `src/components/test/analysis-panel.tsx` — add `resultId` prop, wire `<ExplanationRating>` per surface
+6. `src/components/test/test-runner.tsx` — `initialResultId` prop + `resultId` state + pass to panel
+7. `src/app/(app)/tests/[sessionId]/page.tsx` — pass `initialResultId`
+8. `src/app/admin/ai-ratings/page.tsx` — server component, admin guard, ratings table
+9. `src/app/admin/page.tsx` — upgrade flagged queue to "live" with link
+10. `src/tests/unit/explanation-rating.test.ts` — ≥8 tests on pure helpers
+11. `node run-migrations.js` → verify `to_regclass('public.explanation_ratings')` non-null
+12. Tracker: TSP-070 → Done; append builder handoff + SESSION_STATE update
+
+---
+
+### 2026-06-03 — Session 24 Builder Handoff (Claude)
+
+**Ticket:** TSP-070
+**Commit target:** `TSP-070: explanation rating and reporting`
+
+#### What landed
+
+- `supabase/migrations/202606030005_explanation_ratings.sql` (NEW) — ratings table, `unique (session_result_id, scope, scope_key)` with `scope_key` NOT NULL default '' (NULL-safe), owner/admin select, owner-only insert, owner/admin update, **no delete** (audit), 2 indexes (result FK + partial `rating='down'`).
+- `src/lib/ai/rating-helpers.ts` (NEW) — pure scope/rating/category constants, `isValid*` type guards, `REPORT_CATEGORY_LABELS`. No server imports.
+- `src/app/test/actions.ts` (MOD) — `rateExplanationAction(input)`: auth + payload validation + UUID guard + `session_results` ownership check, then upsert on the unique key (re-rating overwrites).
+- `src/components/test/explanation-rating.tsx` (NEW) — self-contained widget. Helpful → optimistic up + action; Report a problem → reveals 4 category chips → pick one → down + category. Reverts optimistic state on error.
+- `src/components/test/analysis-panel.tsx` (MOD) — `resultId` prop; `<ExplanationRating>` attached to overall summary, each topic summary, each question analysis (rendered only when `resultId !== null`).
+- `src/components/test/test-runner.tsx` (MOD) — `initialResultId` prop + `resultId` state; captures `nextState.result.resultId` after submit; passes to panel.
+- `src/app/(app)/tests/[sessionId]/page.tsx` (MOD) — loader returns `resultId` from the result row (revisit path); passed as `initialResultId`.
+- `src/app/admin/ai-ratings/page.tsx` (NEW) — server component, lists `rating='down'` rows (latest 100) with scope/item/category/date and a link to the session. Admin-guarded by the existing layout `requireAdmin()`; RLS double-guards via `is_admin()`.
+- `src/app/admin/page.tsx` (MOD) — "Flagged content queue" card upgraded phase-1 → live with link.
+- `src/components/admin/admin-nav.tsx` (MOD) — added "AI ratings" nav link.
+- `src/tests/unit/explanation-rating.test.ts` (NEW) — 4 describe blocks / pure validator + label coverage.
+
+#### Verification
+
+| Gate | Result |
+|---|---|
+| `corepack pnpm typecheck` | **Passed** (exit 0, clean) |
+| `corepack pnpm lint` | **Passed** (exit 0, clean) |
+| `node run-migrations.js` | **Passed** — `202606030005` applied live |
+| DB verify | `to_regclass('public.explanation_ratings')` = `explanation_ratings`; policies = insert/select/update (no delete) |
+| `corepack pnpm test` | **BLOCKED** — OneDrive `node_modules` hydration (`errno -4094`) |
+| `corepack pnpm build` | **BLOCKED** — same |
+
+#### Notes For Reviewer
+
+- DB gate is green this session (unlike S23): migration applied and table + 3 policies verified live. Only the JS runtimes (vitest/next build) remain OneDrive-blocked. **User action: run `corepack pnpm test` + `corepack pnpm build` in a hydrated/elevated shell to close the Sanity gate.**
+- Re-rating is an upsert on `(session_result_id, scope, scope_key)` — one row per surface per result. No de-rating in the MVP UI (clicking the active button is a no-op).
+- Ratings are NOT pre-loaded on revisit — the widget starts blank on reload. Admin still sees every stored row. A future session can add `getExplanationRatingsAction` to hydrate prior choices.
+- `'up'` ratings are stored but not surfaced in admin yet — actionable signal is the `'down'` complaints.
+
+#### Next
+
+Architect Sanity review of TSP-070 once `pnpm test`/`build` confirmed green. Then TSP-071 (improvement plan generation) or the move-off-OneDrive + browser-smoke session.
 ---
 
 ## Parked Blockers — Do Not Start
