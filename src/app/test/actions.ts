@@ -335,14 +335,23 @@ export async function submitSessionAction(
   }
 
   const supabase = await createClient();
-  const statusResult = await supabase.from("test_sessions").select("status").eq("id", sessionId).maybeSingle();
+  const statusResult = await supabase
+    .from("test_sessions")
+    .select("status,type,exam_id")
+    .eq("id", sessionId)
+    .maybeSingle();
 
   if (statusResult.error) {
     return { ok: false, message: statusResult.error.message };
   }
 
-  const wasAlreadyScored =
-    (statusResult.data as { status?: string } | null | undefined)?.status === "scored";
+  const sessionRow = statusResult.data as
+    | { status?: string; type?: string; exam_id?: string }
+    | null
+    | undefined;
+  const wasAlreadyScored = sessionRow?.status === "scored";
+  const sessionType = sessionRow?.type ?? "";
+  const sessionExamId = sessionRow?.exam_id ?? "";
   const { data, error } = await supabase.rpc("submit_test_session", {
     p_session_id: sessionId
   });
@@ -376,6 +385,15 @@ export async function submitSessionAction(
       await generateAnalysisJob(result.resultId, auth.userId, supabase);
     } catch (analysisError) {
       console.error("[analysis] failed for result", result.resultId, analysisError);
+    }
+
+    if (sessionType === "diagnostic" && isUuid(sessionExamId)) {
+      try {
+        const { generatePlanJob } = await import("@/lib/ai/jobs/generate-plan");
+        await generatePlanJob(result.resultId, auth.userId, sessionExamId, supabase);
+      } catch (planError) {
+        console.error("[plan] failed for result", result.resultId, planError);
+      }
     }
   }
 

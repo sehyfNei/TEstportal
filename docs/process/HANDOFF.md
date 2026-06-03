@@ -9407,6 +9407,172 @@ node run-migrations.js
 #### Next
 
 Architect Sanity review of TSP-070 once `pnpm test`/`build` confirmed green. Then TSP-071 (improvement plan generation) or the move-off-OneDrive + browser-smoke session.
+
+---
+
+## Session 25 Architect Plan — TSP-071 (Improvement Plan Generation)
+
+**Goal:** When a **diagnostic** session is scored, generate an AI improvement plan grounded in the deterministic weakness map (TSP-056) + readiness, persisted to `improvement_plans`. Acceptance: "Diagnostic completion creates prioritized plan and next actions."
+
+**Scope = generation job only** (mirrors TSP-068 = job, TSP-069 = UI). Plan-result UI is a follow-up, NOT this ticket.
+
+### Architecture context (verified this session)
+
+- Deterministic weakness map already exists and is reusable:
+  - `buildWeakTopics(topics, masteryByTopicId)` → `WeakTopic[]` (topicId, topicName, masteryScore, weightPercent, priority), sorted desc, top 5. Exported from `@/lib/dashboard/overview`.
+  - `fetchReadinessScore(supabase, userId, examId)` → `ReadinessScore` (score, confidenceLevel, coveragePercent, hasBenchmarkSession). Exported from `@/lib/scoring/readiness-query`.
+- `submitSessionAction` runs non-fatal post-submit jobs inside `result.resultId && !wasAlreadyScored`. `updateMasteryJob` runs FIRST, so mastery is fresh before the plan reads it. The plan block is appended LAST (5th) and gated on session type.
+- Session `type` and `exam_id` are NOT currently selected in submit — the status query must be widened to `select("status,type,exam_id")`.
+- This is the **same AI infra as TSP-068**: `callAi` gateway, kill-switch, ledger, idempotency-by-`23505`, injectable store. No new guardrails beyond the standing M5 decision.
+- `AiFeature` already includes `"improvement_plan"`. No type change needed.
+
+### Files (6: 4 new, 2 new tests, 1 modified — wait: 5 new + 1 modified)
+
+**1. `src/lib/ai/schemas/plan.ts`** (NEW — mirror `schemas/analysis.ts`)
+```ts
+export const PLAN_SCHEMA_VERSION = "1.0.0";
+export const PLAN_PROMPT_VERSION = "improvement_plan@1.0.0";
+
+// planInputSchema: examName, readinessScore, confidenceLevel, coveragePercent,
+//   score, maxScore, accuracy, weakTopics: array(min 1) of
+//   { topicName, masteryScore, weightPercent, priority }
+// planOutputSchema:
+//   overallStrategy: string min 1
+//   prioritizedTopics: array(min 1) of { topicName, rationale (min 1), focusActions: string[] }
+//   nextActions: array(min 1) of string
+export function validatePlanOutput(raw): {ok:true,data:PlanOutput} | {ok:false,errors:string[]}
+export function buildPlanMessages(input): AiMessage[]
+//   system prompt (grounded): scores/mastery/weights are already computed; do NOT recompute;
+//   base topics ONLY on the supplied weakTopics; concrete study-focused language; JSON only.
+export type PlanInput; export type PlanOutput;
+```
+
+**2. `supabase/migrations/202606040001_improvement_plans.sql`** (NEW — mirror `ai_analyses`)
+```sql
+create table if not exists public.improvement_plans (
+  id uuid primary key default gen_random_uuid(),
+  session_result_id uuid not null unique references public.session_results(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  exam_id uuid references public.exams(id) on delete set null,
+  status text not null default 'pending'
+    check (status in ('pending','running','completed','failed','disabled')),
+  output jsonb,
+  error_message text,
+  schema_version text,
+  prompt_version text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+-- index (user_id, exam_id, created_at desc) for "latest plan per exam"; index (status)
+-- RLS: owner+admin select; owner-only insert (with check user_id = auth.uid());
+--      owner+admin update; NO delete. grant select, insert, update to authenticated.
+```
+
+**3. `src/lib/ai/jobs/generate-plan.ts`** (NEW — mirror `generate-analysis.ts`)
+```ts
+export type PlanWeakTopicSource = { topicName: string; masteryScore: number; weightPercent: number; priority: number };
+export type PlanSource = {
+  resultId: string; userId: string; examId: string; examName: string;
+  score: number; maxScore: number; accuracy: number;
+  readinessScore: number; confidenceLevel: string; coveragePercent: number;
+  weakTopics: PlanWeakTopicSource[];
+};
+export type PlanJobStore = {
+  insertRunningRow(resultId, userId, examId): Promise<InsertRunningResult>; // {conflict,error}
+  finalizeRow(resultId, status, output, errorMessage): Promise<void>;
+  loadSource(resultId): Promise<PlanSource | null>;
+};
+export type GeneratePlanDeps = { callAiFn?: typeof callAi; store?: PlanJobStore };
+
+export async function generatePlanJob(resultId, userId, examId, supabase, deps?): Promise<void>
+export function buildPlanInput(source: PlanSource): PlanInput | null  // null if weakTopics empty
+export function createSupabasePlanStore(supabase): PlanJobStore
+```
+Job flow (identical contract to `generateAnalysisJob`):
+1. `insertRunningRow` → conflict(23505) → return; other error → log+return
+2. `loadSource` throws → finalizeRow("failed","load_failed:...")
+3. null source → finalizeRow("failed","result_not_found")
+4. `source.userId !== userId` → finalizeRow("failed","user_mismatch")
+5. `buildPlanInput` null (no weak topics) → finalizeRow("failed","no_weak_topics")
+6. `callAiSafely({feature:"improvement_plan", messages:buildPlanMessages(input), promptVersion:PLAN_PROMPT_VERSION, outputSchemaVersion:PLAN_SCHEMA_VERSION, userId, jsonMode:true, relatedEntityType:"session_result", relatedEntityId:resultId})`
+7. !ok → finalizeRow(disabled?"disabled":"failed", "ai_error:...")
+8. JSON.parse fail → "json_parse_error"; validate fail → "validation_failed:..."
+9. finalizeRow("completed", data, null)
+
+`loadSource` (Supabase store):
+- `session_results.select("user_id,exam_id,score,max_score,accuracy").eq("id",resultId).maybeSingle()` → null → return null
+- `exams.select("name").eq("id",exam_id).maybeSingle()` → examName
+- **Reuse** `fetchReadinessScore(supabase, userId, examId)` for readiness
+- Build weak topics: query `topics(id,name,weight_percent)` + `mastery_records(topic_id,mastery_score)` (same as `loadWeakTopics`), then `buildWeakTopics(...)`. Map to `PlanWeakTopicSource`.
+- `truncateError` at 1000 chars; `errorText` helper — copy from generate-analysis.
+
+**4. `src/app/test/actions.ts`** (MODIFY)
+- Widen status query: `.select("status,type,exam_id")`; read `sessionType`, `sessionExamId`.
+- Append 5th non-fatal block, gated on diagnostic:
+```ts
+if (sessionType === "diagnostic" && isUuid(sessionExamId)) {
+  try {
+    const { generatePlanJob } = await import("@/lib/ai/jobs/generate-plan");
+    await generatePlanJob(result.resultId, auth.userId, sessionExamId, supabase);
+  } catch (planError) {
+    console.error("[plan] failed for result", result.resultId, planError);
+  }
+}
+```
+Dynamic import keeps it off the hot path.
+
+**5. `src/tests/unit/plan-schema.test.ts`** (NEW — mirror `analysis-schema.test.ts`, ~6 tests)
+- accepts valid output; rejects missing overallStrategy; rejects empty prioritizedTopics; rejects empty nextActions; rejects empty rationale; `buildPlanMessages` system prompt contains grounding ("do not recompute" / "supplied").
+
+**6. `src/tests/unit/generate-plan.test.ts`** (NEW — mirror `generate-analysis.test.ts`, ≥7 tests)
+- pure `buildPlanInput`: maps source→input; returns null on empty weakTopics
+- job tests with `mockStore()` + `callAiFn`: completed, failed(ai error), disabled, validation-fail, idempotent(conflict → no loadSource/callAi), loadSource-throws → failed, no_weak_topics → failed
+
+### Verification gates
+```powershell
+corepack pnpm exec vitest run src/tests/unit/plan-schema.test.ts src/tests/unit/generate-plan.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node run-migrations.js
+# verify to_regclass('public.improvement_plans') + 3 policies
+```
+`test`/`build` OneDrive-blocked; `typecheck` + `lint` + live migration are the authoritative gates (DB gate worked in S24).
+
+### Design decisions
+- **Diagnostic-only trigger**: acceptance is explicit ("diagnostic completion"). Mock/benchmark do not trigger plans in MVP. Gate on `session_type === "diagnostic"`.
+- **Reuse the deterministic map, don't reinvent**: `buildWeakTopics` + `fetchReadinessScore` are the single source of truth for weakness — the job imports them, guaranteeing the plan and the dashboard agree.
+- **AI writes reasoning only**: grounded prompt forbids recomputing scores or inventing topics — same safety posture as TSP-068.
+- **Per-`session_result_id` UNIQUE + idempotent**: re-submit of an already-scored diagnostic does not regenerate (guarded by `!wasAlreadyScored` AND 23505). `exam_id` column enables "latest plan for this exam" queries by the future UI.
+- **Mastery freshness**: plan block runs after `updateMasteryJob` in the same submit, so weak topics reflect this diagnostic.
+- **Scope discipline**: no plan UI this session — keeps it a clean ~6-file job ticket mirroring TSP-068. Flag a follow-up ticket for a dashboard plan card.
+
+### Builder checklist
+1. `schemas/plan.ts` — versions, input/output zod, `validatePlanOutput`, `buildPlanMessages`
+2. `202606040001_improvement_plans.sql` — table + UNIQUE + 2 indexes + RLS (select/insert/update) + grant
+3. `jobs/generate-plan.ts` — `PlanJobStore`, Supabase store (reuse `fetchReadinessScore` + `buildWeakTopics`), `generatePlanJob`, `buildPlanInput`
+4. `actions.ts` — widen status select to `status,type,exam_id`; diagnostic-gated 5th non-fatal block, dynamic import
+5. `plan-schema.test.ts` — ~6 tests
+6. `generate-plan.test.ts` — ≥7 tests (pure + mocked job)
+7. `node run-migrations.js` → verify `to_regclass('public.improvement_plans')` + policies
+8. Tracker: TSP-071 → Done; append builder handoff
+9. Note follow-up: improvement-plan result UI (new ticket, dashboard card)
+---
+
+## Session 25 Builder Complete — TSP-071 (Improvement Plan Generation)
+
+**Status: Done.** 6 files (5 new, 1 modified), exactly per plan:
+
+- `src/lib/ai/schemas/plan.ts` (NEW) — `PLAN_SCHEMA_VERSION=1.0.0`, `PLAN_PROMPT_VERSION=improvement_plan@1.0.0`, `planInputSchema`/`planOutputSchema` (overallStrategy string min 1, prioritizedTopics min 1 of {topicName, rationale min 1, focusActions[]}, nextActions min 1), `validatePlanOutput`, grounded `buildPlanMessages`.
+- `supabase/migrations/202606040001_improvement_plans.sql` (NEW) — mirrors ai_analyses; UNIQUE `session_result_id`, `user_id`/`exam_id` ON DELETE SET NULL, status machine, owner-only insert, owner/admin select+update, **NO delete**; indexes `(user_id,exam_id,created_at desc)` + `(status)`. **Applied + verified live** (table, 3 policies, 4 indexes).
+- `src/lib/ai/jobs/generate-plan.ts` (NEW) — `PlanJobStore`, `generatePlanJob(resultId,userId,examId,supabase,deps?)`, `buildPlanInput`→null on no weak topics, `createSupabasePlanStore` REUSES `fetchReadinessScore` + `buildWeakTopics`. Same idempotency/status/error-truncation contract as `generateAnalysisJob`; feature `improvement_plan`, relatedEntityType `session_result`.
+- `src/app/test/actions.ts` (MODIFIED) — status select widened to `status,type,exam_id`; 5th non-fatal block gated `sessionType==="diagnostic" && isUuid(sessionExamId)`, dynamic import, runs after analysis (so mastery is fresh).
+- `src/tests/unit/plan-schema.test.ts` (NEW, 7 tests) + `src/tests/unit/generate-plan.test.ts` (NEW, 10 tests).
+
+**Gates:** typecheck ✅ + lint ✅ clean; migration applied + verified ✅. `vitest` + `build` BLOCKED by OneDrive `errno -4094` (env, not code) — same as S22–24; need hydrated/off-OneDrive shell to close.
+
+**Follow-up (new ticket):** improvement-plan result UI — no plan UI built this session (job+persistence only, mirrors TSP-068/069 split).
 ---
 
 ## Parked Blockers — Do Not Start
