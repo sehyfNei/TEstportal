@@ -360,6 +360,13 @@ export async function submitSessionAction(
     } catch (retestError) {
       console.error("[retest] update failed for result", result.resultId, retestError);
     }
+
+    try {
+      const { generateAnalysisJob } = await import("@/lib/ai/jobs/generate-analysis");
+      await generateAnalysisJob(result.resultId, auth.userId, supabase);
+    } catch (analysisError) {
+      console.error("[analysis] failed for result", result.resultId, analysisError);
+    }
   }
 
   revalidatePath("/dashboard");

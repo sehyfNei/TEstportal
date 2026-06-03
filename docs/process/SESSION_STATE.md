@@ -239,12 +239,13 @@ Notes:
 - 2026-06-03 Session 19 verification passed: `corepack pnpm exec vitest run src/tests/unit/mastery-decay.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. `node run-migrations.js` applied migrations through `202606030002_mastery_decay.sql`; `SELECT * FROM cron.job WHERE jobname = 'decay-mastery-nightly'` returned one active job; `SELECT public.apply_mastery_decay()` completed; live `start_test_session` source contains `concept_retest_balanced`.
 - 2026-06-03 Session 20 verification passed: `corepack pnpm exec vitest run src/tests/unit/next-action.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. No migration or smoke script applied.
 - 2026-06-03 Session 21 verification passed: `corepack pnpm exec vitest run src/tests/unit/ai-cost.test.ts src/tests/unit/ai-gateway.test.ts src/tests/unit/analysis-schema.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. `node run-migrations.js` applied `202606030003_llm_cost_ledger.sql`; `to_regclass('public.llm_cost_ledger')` returned `llm_cost_ledger`; live Groq smoke passed on `llama-3.3-70b-versatile` with 72 input tokens, 8 output tokens, 2686 ms latency, and estimated cost `$0.000049`.
+- 2026-06-03 Session 22 verification passed: `corepack pnpm exec vitest run src/tests/unit/generate-analysis.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint` after elevated rerun, `corepack pnpm test`, and `corepack pnpm build` all exited 0. `node run-migrations.js` applied `202606030004_ai_analyses.sql`; `to_regclass('public.ai_analyses')` returned `ai_analyses`; the scored-session `question_versions` read policy exists. Live `question_versions` content-shape probe found zero rows, so extraction remains defensive.
 
 ---
 
 ## Next Recommended Work
 
-**Session 21 complete (2026-06-03). TSP-066 + TSP-067 Done and M5 AI is open. The Groq gateway, append-only cost ledger, pricing/hash helpers, live AI smoke, and versioned post-test analysis schemas are complete. Next: TSP-068 analysis job, with founder guardrails/cost-cap decisions required before user-facing release.**
+**Session 22 complete (2026-06-03). TSP-068 Done. Post-test analysis generation now persists to `ai_analyses`, runs non-fatally after submit, validates AI output against the Session 21 schema, and remains idempotent on duplicate submit. Next: TSP-069 analysis result UI, with founder guardrails/cost-cap decisions required before user-facing release.**
 
 Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, Session 18 row `TSP-081`, Session 19 row `TSP-057`, Session 20 rows `TSP-077`/`TSP-080`, and Session 21 rows `TSP-066`/`TSP-067` are Done.
 
@@ -285,11 +286,12 @@ Status outcome:
 - **TSP-065** - In Progress as the M5 AI parent epic.
 - **TSP-066** - Done; native-fetch Groq gateway, append-only `llm_cost_ledger`, cost/hash helpers, kill switch, tests, migration, and live smoke are complete.
 - **TSP-067** - Done; versioned post-test analysis input/output schemas, validator, grounded prompt builder, and tests are complete.
+- **TSP-068** - Done; `ai_analyses` persistence, store-injected analysis job, defensive question context extraction, non-fatal submit hook, tests, and live migration verification are complete.
 - **TSP-128** - Done; scoring unit tests are implemented and sanity-passed.
 
 Next immediate steps:
 
-1. **Session 22 - TSP-068** - generate post-test analysis job using `callAi`, `buildAnalysisMessages`, `validateAnalysisOutput`, and a new `ai_analyses` persistence table.
+1. **Session 23 - TSP-069** - build the analysis result UI against persisted `ai_analyses` rows.
 2. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
 3. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
 

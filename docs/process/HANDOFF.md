@@ -8253,6 +8253,702 @@ Live Groq smoke result: `model=llama-3.3-70b-versatile`, `latencyMs=2686`, `toke
 
 TSP-068 can now build the actual post-test analysis job on top of the gateway and schemas. Before user-facing release, resolve the founder decision on per-user/day cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
 
+### 2026-06-03 - Session 21 Sanity Review (Architect)
+
+**Verdict: PASS**
+
+**Scope verified:** TSP-066 (AI gateway) + TSP-067 (analysis schemas). 9 files created/modified.
+
+#### Gate checks
+
+| Check | Result |
+|---|---|
+| Migration shape | ✅ `llm_cost_ledger` append-only by RLS (no UPDATE/DELETE policies), `user_id` ON DELETE SET NULL, all 3 columns with CHECK constraints, 3 indexes, authenticated grants |
+| RLS correctness | ✅ `is_admin()` reads `app_metadata` only — auth rule holds |
+| No new npm dependency | ✅ Confirmed. `node:crypto` (built-in), `zod` (pre-existing). Native fetch throughout |
+| Disabled guard | ✅ Returns `{ok:false,error:"ai_disabled"}` without touching network when `AI_DISABLED=true` or `GROQ_API_KEY` missing |
+| Non-fatal ledger | ✅ `safeWriteLedger` catches all throws; call result propagates regardless |
+| DI for testability | ✅ `callAi(input, {fetchFn, writeLedger})` — all 7 gateway tests run offline |
+| Token ceiling | ✅ `resolveMaxTokens` clamps to `MAX_OUTPUT_TOKENS_CEILING`; confirmed by test |
+| Error truncation | ✅ `truncateError` caps error_message at 1000 chars |
+| Grounding | ✅ System prompt forbids recomputation, correctness changes, and invention outside supplied data |
+| Schema versions | ✅ `ANALYSIS_SCHEMA_VERSION = "1.0.0"`, `ANALYSIS_PROMPT_VERSION = "post_test_analysis@1.0.0"` |
+| `validateAnalysisOutput` | ✅ Returns `{ok:true,data}` or `{ok:false,errors:[]}` with path-qualified error strings |
+| Unit test count | ✅ 8 (cost) + 7 (gateway) + 6 (schema) = 21 total ≥ planned 21 |
+| Live Groq smoke | ✅ `llama-3.3-70b-versatile`, 72 in / 8 out tokens, no model swap needed |
+| `.env.example` | ✅ `AI_DISABLED=` present with explanatory comment |
+| Tracker | ✅ TSP-066 Done, TSP-067 Done, TSP-065 In Progress with builder remarks |
+
+#### One latent flag (non-blocking)
+
+The `llm_cost_ledger_insert` policy is `user_id = auth.uid() OR is_admin()`. When `user_id` is NULL, the check evaluates to NULL (falsy), so an unauthenticated or userId-less insert fails silently. The non-fatal wrapping means the call still returns — cost row is lost. TSP-068 always passes the user's ID so this never fires in normal use, but it is worth knowing if a server-side admin job ever calls the gateway without a userId.
+
+#### Next for Builder (Session 22 — TSP-068)
+
+1. Add `ai_analyses` table migration (session_id FK, status enum, output jsonb, version columns, RLS).
+2. Build `generateAnalysisJob(sessionId, userId, supabase)` — loads result rows, constructs `AnalysisInput`, calls `callAi`, calls `validateAnalysisOutput`, persists with status `completed`/`partial`/`failed`.
+3. Wire non-fatally inside `submitSessionAction` after the mastery job.
+4. Unit tests for job input construction and status transitions.
+5. Founder guardrails decision required before this becomes user-visible.
+
+---
+
+### 2026-06-03 - Session 22 Architect Plan
+
+**Milestone:** M5 AI & Workers
+**Tickets:** TSP-068 — Implement generate analysis job
+**Commit target:** `TSP-068: post-test analysis job`
+
+#### What gets built
+
+The gateway (TSP-066) and schemas (TSP-067) are live. TSP-068 is the bridge: it loads scored session data, feeds it to the gateway, validates the output, and persists it. Users won't see the output yet — that's TSP-069. This session is purely the generation + storage layer.
+
+**5 files: 3 new, 1 new test file, 1 modified.**
+
+---
+
+#### File 1 — `supabase/migrations/202606030004_ai_analyses.sql` (NEW)
+
+```sql
+create table if not exists public.ai_analyses (
+  id uuid primary key default gen_random_uuid(),
+  session_result_id uuid not null unique references public.session_results(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  status text not null default 'pending'
+    check (status in ('pending', 'running', 'completed', 'failed', 'disabled')),
+  output jsonb,
+  error_message text,
+  schema_version text,
+  prompt_version text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists ai_analyses_user_created
+  on public.ai_analyses (user_id, created_at desc);
+
+create index if not exists ai_analyses_status
+  on public.ai_analyses (status);
+
+alter table public.ai_analyses enable row level security;
+
+drop policy if exists ai_analyses_select on public.ai_analyses;
+create policy ai_analyses_select on public.ai_analyses
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists ai_analyses_insert on public.ai_analyses;
+create policy ai_analyses_insert on public.ai_analyses
+  for insert to authenticated
+  with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists ai_analyses_update on public.ai_analyses;
+create policy ai_analyses_update on public.ai_analyses
+  for update to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+grant select, insert, update on public.ai_analyses to authenticated;
+```
+
+**No DELETE policy** — analyses are retained for quality review and future model comparisons.
+
+**`error_message` is truncated to 1000 chars** in the job (same as ledger).
+
+**Status machine:** `running` → `completed` / `failed` / `disabled`. The `pending` value is reserved for the future TSP-116 async job runner; the synchronous path goes straight to `running`.
+
+---
+
+#### File 2 — `src/lib/ai/jobs/question-context.ts` (NEW)
+
+Pure functions, no network, no DB. Easy to test offline.
+
+```typescript
+export type QuestionContext = {
+  stem: string;
+  selectedLabel: string | null;
+  correctLabel: string | null;
+};
+
+export function extractQuestionContext(
+  type: string,
+  content: unknown,
+  selectedAnswer: unknown
+): QuestionContext {
+  return {
+    stem: extractStem(content),
+    selectedLabel: extractSelectedLabel(type, content, selectedAnswer),
+    correctLabel: extractCorrectLabel(type, content)
+  };
+}
+
+function extractStem(content: unknown): string {
+  const record = toRecord(content);
+  if (!record) return "(question)";
+  return stringOf(record.stem) ?? stringOf(record.body) ?? stringOf(record.text) ?? "(question)";
+}
+
+function extractCorrectLabel(type: string, content: unknown): string | null {
+  const record = toRecord(content);
+  if (!record) return null;
+  if (type === "integer") return record.correct_integer != null ? String(record.correct_integer) : null;
+  if (type === "match") {
+    return Array.isArray(record.pairs) ? JSON.stringify(record.pairs) : null;
+  }
+  // MCQ / MSQ / statement / assertion
+  const opts = toArray(record.options);
+  const correctIdxs = toIntArray(record.correct_options);
+  if (!correctIdxs?.length) return null;
+  if (opts) {
+    const labels = correctIdxs.map(i => labelFromOption(opts[i])).filter(Boolean) as string[];
+    if (labels.length) return labels.join(", ");
+  }
+  return correctIdxs.map(i => `Option ${i + 1}`).join(", ");
+}
+
+function extractSelectedLabel(type: string, content: unknown, selectedAnswer: unknown): string | null {
+  const record = toRecord(selectedAnswer);
+  if (!record) return null; // skipped / null answer
+  if (type === "integer") {
+    const val = record.integer ?? record.value;
+    return val != null ? String(val) : null;
+  }
+  if (type === "match") {
+    return Array.isArray(record.pairs) ? JSON.stringify(record.pairs) : null;
+  }
+  // MCQ / MSQ / statement / assertion — selected.options or selected.selected_options holds index array
+  const opts = toArray(toRecord(content)?.options);
+  const selectedIdxs = toIntArray(record.options ?? record.selected_options);
+  if (!selectedIdxs?.length) return null;
+  if (opts) {
+    const labels = selectedIdxs.map(i => labelFromOption(opts[i])).filter(Boolean) as string[];
+    if (labels.length) return labels.join(", ");
+  }
+  return selectedIdxs.map(i => `Option ${i + 1}`).join(", ");
+}
+
+function labelFromOption(option: unknown): string | null {
+  if (typeof option === "string") return option;
+  const record = toRecord(option);
+  if (!record) return null;
+  return stringOf(record.text) ?? stringOf(record.label) ?? null;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>) : null;
+}
+
+function toArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? value : null;
+}
+
+function toIntArray(value: unknown): number[] | null {
+  const arr = toArray(value);
+  if (!arr) return null;
+  const ints = arr.map(v => typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
+  return ints.every((n): n is number => n !== null) ? ints : null;
+}
+
+function stringOf(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+```
+
+**Builder note on content shape:** Before finalising, run a `SELECT content FROM question_versions LIMIT 1` on the live DB to confirm the `stem` field name and `options` array structure. If the field name differs (e.g. `body`, `question`), update the fallback chain in `extractStem`. The rest of the logic is content-shape–agnostic.
+
+---
+
+#### File 3 — `src/lib/ai/jobs/generate-analysis.ts` (NEW)
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { callAi } from "@/lib/ai/gateway";
+import {
+  ANALYSIS_PROMPT_VERSION,
+  ANALYSIS_SCHEMA_VERSION,
+  buildAnalysisMessages,
+  validateAnalysisOutput,
+  type AnalysisInput
+} from "@/lib/ai/schemas/analysis";
+import { extractQuestionContext } from "@/lib/ai/jobs/question-context";
+
+// ---- Types ----
+
+type AnalysisQuestionSource = {
+  questionId: string;
+  type: string;
+  content: unknown;
+  isCorrect: boolean | null;
+  selectedAnswer: unknown;
+  topicName: string | null;
+  conceptName: string | null;
+};
+
+type AnalysisSource = {
+  resultId: string;
+  userId: string;
+  examName: string;
+  score: number;
+  maxScore: number;
+  accuracy: number;
+  questions: AnalysisQuestionSource[];
+};
+
+// Injectable store — lets unit tests avoid mocking the full Supabase client.
+// Follows the MasteryUpdateRepository pattern.
+export type AnalysisJobStore = {
+  insertRunningRow(resultId: string, userId: string): Promise<{ conflict: boolean; error: string | null }>;
+  finalizeRow(resultId: string, status: string, output: unknown, errorMessage: string | null): Promise<void>;
+  loadSource(resultId: string): Promise<AnalysisSource | null>;
+};
+
+export type GenerateAnalysisDeps = {
+  callAiFn?: typeof callAi;
+  store?: AnalysisJobStore;
+};
+
+// ---- Main entry point ----
+
+export async function generateAnalysisJob(
+  resultId: string,
+  userId: string,
+  supabase: SupabaseClient,
+  deps: GenerateAnalysisDeps = {}
+): Promise<void> {
+  const callAiFn = deps.callAiFn ?? callAi;
+  const store = deps.store ?? createSupabaseAnalysisStore(supabase);
+
+  const insertResult = await store.insertRunningRow(resultId, userId);
+  if (insertResult.conflict) return; // already analyzed — idempotent skip
+  if (insertResult.error) {
+    console.error("[analysis] insert failed for result", resultId, insertResult.error);
+    return;
+  }
+
+  let source: AnalysisSource | null;
+  try {
+    source = await store.loadSource(resultId);
+  } catch (e) {
+    await store.finalizeRow(resultId, "failed", null, `load_failed:${errorText(e)}`);
+    return;
+  }
+
+  if (!source) {
+    await store.finalizeRow(resultId, "failed", null, "result_not_found");
+    return;
+  }
+
+  const input = buildAnalysisInput(source);
+  if (!input) {
+    await store.finalizeRow(resultId, "failed", null, "no_questions");
+    return;
+  }
+
+  const aiResult = await callAiFn({
+    feature: "post_test_analysis",
+    messages: buildAnalysisMessages(input),
+    promptVersion: ANALYSIS_PROMPT_VERSION,
+    outputSchemaVersion: ANALYSIS_SCHEMA_VERSION,
+    userId,
+    jsonMode: true,
+    relatedEntityType: "session_result",
+    relatedEntityId: resultId
+  });
+
+  if (!aiResult.ok) {
+    const status = aiResult.status === "disabled" ? "disabled" : "failed";
+    await store.finalizeRow(resultId, status, null, `ai_error:${aiResult.error}`);
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(aiResult.content);
+  } catch {
+    await store.finalizeRow(resultId, "failed", null, "json_parse_error");
+    return;
+  }
+
+  const validation = validateAnalysisOutput(parsed);
+  if (!validation.ok) {
+    await store.finalizeRow(
+      resultId, "failed", null,
+      `validation_failed:${validation.errors.slice(0, 3).join("; ")}`
+    );
+    return;
+  }
+
+  await store.finalizeRow(resultId, "completed", validation.data, null);
+}
+
+// ---- Pure helpers ----
+
+export function buildAnalysisInput(source: AnalysisSource): AnalysisInput | null {
+  if (!source.questions.length) return null;
+  return {
+    examName: source.examName,
+    score: source.score,
+    maxScore: source.maxScore,
+    accuracy: source.accuracy,
+    questions: source.questions.map(q => {
+      const ctx = extractQuestionContext(q.type, q.content, q.selectedAnswer);
+      return {
+        questionId: q.questionId,
+        type: q.type,
+        stem: ctx.stem,
+        isCorrect: q.isCorrect,
+        selectedLabel: ctx.selectedLabel,
+        correctLabel: ctx.correctLabel,
+        topicName: q.topicName,
+        conceptName: q.conceptName
+      };
+    })
+  };
+}
+
+// ---- Supabase-backed store ----
+
+function createSupabaseAnalysisStore(supabase: SupabaseClient): AnalysisJobStore {
+  return { insertRunningRow, finalizeRow, loadSource };
+
+  async function insertRunningRow(resultId: string, userId: string) {
+    const { error } = await supabase.from("ai_analyses").insert({
+      session_result_id: resultId,
+      user_id: userId,
+      status: "running",
+      schema_version: ANALYSIS_SCHEMA_VERSION,
+      prompt_version: ANALYSIS_PROMPT_VERSION
+    });
+    if (error?.code === "23505") return { conflict: true, error: null };
+    if (error) return { conflict: false, error: error.message };
+    return { conflict: false, error: null };
+  }
+
+  async function finalizeRow(
+    resultId: string,
+    status: string,
+    output: unknown,
+    errorMessage: string | null
+  ) {
+    await supabase.from("ai_analyses").update({
+      status,
+      output: output ?? null,
+      error_message: errorMessage ? errorMessage.slice(0, 1000) : null,
+      updated_at: new Date().toISOString()
+    }).eq("session_result_id", resultId);
+  }
+
+  async function loadSource(resultId: string): Promise<AnalysisSource | null> {
+    // Step 1: result + exam name
+    const { data: result, error: resultErr } = await supabase
+      .from("session_results")
+      .select("id,session_id,user_id,exam_id,score,max_score,accuracy")
+      .eq("id", resultId)
+      .maybeSingle();
+    if (resultErr) throw new Error(resultErr.message);
+    if (!result) return null;
+
+    const { data: exam } = await supabase
+      .from("exams").select("name")
+      .eq("id", (result as Record<string,unknown>).exam_id).maybeSingle();
+
+    // Step 2: session questions with content, type, and topic name
+    const sessionId = (result as Record<string,unknown>).session_id as string;
+    const { data: sqRows, error: sqErr } = await supabase
+      .from("session_questions")
+      .select("question_id,sequence,questions(type,topic_id,topics(name)),question_versions(content)")
+      .eq("session_id", sessionId)
+      .order("sequence");
+    if (sqErr) throw new Error(sqErr.message);
+
+    // Step 3: answers
+    const { data: answerRows, error: ansErr } = await supabase
+      .from("session_answers")
+      .select("question_id,is_correct,selected_answer")
+      .eq("session_id", sessionId);
+    if (ansErr) throw new Error(ansErr.message);
+
+    // Step 4: concept names (first concept per question)
+    const questionIds = ((sqRows ?? []) as Record<string,unknown>[]).map(r => r.question_id as string);
+    const { data: conceptRows } = questionIds.length
+      ? await supabase.from("question_concepts")
+          .select("question_id,concepts(name)")
+          .in("question_id", questionIds)
+      : { data: [] };
+
+    // Build lookup maps
+    const answerMap = new Map(
+      ((answerRows ?? []) as Record<string,unknown>[]).map(a => [a.question_id as string, a])
+    );
+    const conceptMap = new Map<string, string>();
+    for (const qc of ((conceptRows ?? []) as Record<string,unknown>[])) {
+      const qid = qc.question_id as string;
+      if (!conceptMap.has(qid)) {
+        const conceptName = firstJoined(qc.concepts);
+        const name = (conceptName as Record<string,unknown>)?.name;
+        if (typeof name === "string") conceptMap.set(qid, name);
+      }
+    }
+
+    // Assemble questions
+    const questions: AnalysisQuestionSource[] = ((sqRows ?? []) as Record<string,unknown>[]).map(sq => {
+      const qData = firstJoined(sq.questions) as Record<string,unknown> | null;
+      const vData = firstJoined(sq.question_versions) as Record<string,unknown> | null;
+      const topicData = qData ? firstJoined(qData.topics) as Record<string,unknown> | null : null;
+      const answer = answerMap.get(sq.question_id as string);
+      return {
+        questionId: sq.question_id as string,
+        type: typeof qData?.type === "string" ? qData.type : "mcq",
+        content: vData?.content ?? null,
+        isCorrect: answer ? (answer.is_correct as boolean | null) : null,
+        selectedAnswer: answer ? (answer.selected_answer ?? null) : null,
+        topicName: typeof topicData?.name === "string" ? topicData.name : null,
+        conceptName: conceptMap.get(sq.question_id as string) ?? null
+      };
+    });
+
+    const resultRow = result as Record<string,unknown>;
+    return {
+      resultId,
+      userId: resultRow.user_id as string,
+      examName: (exam as Record<string,unknown> | null)?.name as string ?? "Exam",
+      score: toNumber(resultRow.score),
+      maxScore: toNumber(resultRow.max_score),
+      accuracy: toNumber(resultRow.accuracy),
+      questions
+    };
+  }
+}
+
+// ---- Small utilities ----
+
+function firstJoined(value: unknown): unknown {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+```
+
+---
+
+#### File 4 — `src/tests/unit/generate-analysis.test.ts` (NEW)
+
+≥12 tests. Import `extractQuestionContext`, `buildAnalysisInput` from their modules; import `generateAnalysisJob` with injected `store` + `callAiFn` — no network, no DB.
+
+**Pure function tests (6):**
+1. `extractQuestionContext` MCQ: stem extracted, correct option label, selected option label
+2. `extractQuestionContext` MCQ with wrong answer selected
+3. `extractQuestionContext` integer type, correct and selected values
+4. `extractQuestionContext` null selectedAnswer → `selectedLabel` is null (skipped question)
+5. `extractQuestionContext` malformed content (null, missing fields) → graceful fallback, no throw
+6. `buildAnalysisInput` maps all source fields to `AnalysisInput` shape correctly
+
+**Job tests (6) — mock `store` + `callAiFn`:**
+
+```typescript
+// Helper
+function mockStore(overrides: Partial<AnalysisJobStore> = {}): AnalysisJobStore {
+  return {
+    insertRunningRow: vi.fn().mockResolvedValue({ conflict: false, error: null }),
+    finalizeRow: vi.fn().mockResolvedValue(undefined),
+    loadSource: vi.fn().mockResolvedValue(minimalSource()),
+    ...overrides
+  };
+}
+```
+
+7. `completed` — AI returns valid JSON matching schema → `finalizeRow` called with `"completed"` and `output`
+8. `failed` — AI call returns `{ok:false, error:"http_error", status:"failed"}` → `finalizeRow("failed", null, ...)`
+9. `disabled` — AI returns `{ok:false, status:"disabled"}` → `finalizeRow("disabled", null, ...)`
+10. `failed` — AI returns valid JSON but fails `validateAnalysisOutput` → `finalizeRow("failed", null, "validation_failed:...")`
+11. Idempotency — `insertRunningRow` returns `{conflict:true}` → `finalizeRow` never called
+12. Load error — `loadSource` throws → `finalizeRow("failed", null, "load_failed:...")`
+
+`minimalSource()` factory:
+```typescript
+function minimalSource(): AnalysisSource {
+  return {
+    resultId: "result-uuid",
+    userId: "user-uuid",
+    examName: "UPSC Prelims",
+    score: 4,
+    maxScore: 8,
+    accuracy: 0.5,
+    questions: [{
+      questionId: "q-1",
+      type: "mcq",
+      content: { stem: "Which article?", options: ["Art 14", "Art 19"], correct_options: [0] },
+      isCorrect: true,
+      selectedAnswer: { options: [0] },
+      topicName: "Polity",
+      conceptName: "Fundamental Rights"
+    }]
+  };
+}
+```
+
+The valid AI response to return from the mock `callAiFn`:
+```typescript
+const validAiContent = JSON.stringify({
+  questionAnalyses: [{ questionId: "q-1", whyCorrect: "Art 14 is the equality article.", whySelectedWrong: null, trapExplanation: null }],
+  topicSummaries: [{ topicName: "Polity", summary: "Good.", recommendation: "Review more." }],
+  overallSummary: "Solid fundamentals.",
+  strategyInsights: [],
+  nextActions: []
+});
+```
+
+---
+
+#### File 5 — `src/app/test/actions.ts` (MODIFY)
+
+In `submitSessionAction`, add the 4th non-fatal block after the existing `updateRetestQueueJob` block:
+
+```typescript
+// existing:
+    try {
+      await updateRetestQueueJob(result.resultId, supabase);
+    } catch (retestError) {
+      console.error("[retest] update failed for result", result.resultId, retestError);
+    }
+
+// add:
+    try {
+      const { generateAnalysisJob } = await import("@/lib/ai/jobs/generate-analysis");
+      await generateAnalysisJob(result.resultId, auth.userId, supabase);
+    } catch (analysisError) {
+      console.error("[analysis] failed for result", result.resultId, analysisError);
+    }
+```
+
+**Why dynamic import:** The AI module brings in `zod` schemas and other AI imports. Dynamic import keeps the initial server action bundle lean and avoids any startup cost when AI is disabled.
+
+**UX note on latency:** This adds a Groq API call (~2-5s) to the submit action path. This is acceptable for MVP (users see their score after the RPC returns; the action response carries the redirect). TSP-116/117 async job runner will move this off the hot path later.
+
+---
+
+#### Verification gates
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/generate-analysis.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node run-migrations.js
+```
+
+DB verification:
+```sql
+SELECT to_regclass('public.ai_analyses');  -- expect ai_analyses
+SELECT status FROM ai_analyses LIMIT 1;    -- after a real submit, should show completed/disabled
+```
+
+No dedicated smoke script. The gateway smoke (Session 21) already covers live Groq. The job can be tested by submitting a real test session once the dev server is running.
+
+---
+
+#### Tracker
+
+- `TSP-065` (epic) — remains In Progress
+- `TSP-068` — In Progress → Done
+- `TSP-069` — still Backlog (next)
+
+---
+
+#### Founder guardrails decision (bring this before TSP-069)
+
+TSP-069 is the results UI — the first session where users actually see AI output. Before that ships, three decisions are needed:
+
+**Decision 1: Model choice for post-test analysis**
+
+| Option | Cost / analysis (20 Q) | Quality |
+|---|---|---|
+| `llama-3.3-70b-versatile` (current default) | ~$0.003 | Strong explanation depth |
+| `llama-3.1-8b-instant` | ~$0.0003 | Lighter but less nuanced |
+
+**Recommendation:** Start with 70b. At ₹ equivalent, 1000 analyses/month ≈ $3. Switch to 8b only if monthly AI cost becomes visible.
+
+**Decision 2: Per-user cost cap behaviour**
+
+| Option | What happens when user hits cap |
+|---|---|
+| A — skip silently | `status='disabled'`, user sees "analysis unavailable" |
+| B — degrade to 8b | Run analysis on cheaper model, mark model in `ai_analyses` |
+| C — no cap yet | Ship without cap, add TSP-142 caps at M6 |
+
+**Recommendation:** Option C for MVP. At current usage projections (tens of users), uncapped 70b is negligible cost. Add TSP-142 in M6.
+
+**Decision 3: Grounding strictness**
+
+The current system prompt forbids recomputation and invention. It does not prevent the model from explaining a concept beyond the supplied data (e.g. "Article 14 guarantees equality before law, which means..."). This is the right behaviour for an exam prep platform.
+
+No decision needed here — the current grounding is correct.
+
+**Bring your answers to these before Session 23 (TSP-069).**
+
+---
+
+#### Session 22 Builder checklist
+
+1. `202606030004_ai_analyses.sql` — table + UNIQUE + 2 indexes + RLS (select/insert/update) + grant
+2. `src/lib/ai/jobs/question-context.ts` — `extractQuestionContext` + helpers; confirm `stem` field name against live DB content before finalising
+3. `src/lib/ai/jobs/generate-analysis.ts` — `AnalysisJobStore` interface, Supabase adapter, `generateAnalysisJob`, `buildAnalysisInput`
+4. `src/tests/unit/generate-analysis.test.ts` — ≥12 tests (6 pure + 6 job with mocked store + callAiFn)
+5. `src/app/test/actions.ts` — 4th non-fatal block with dynamic import of `generateAnalysisJob`
+6. `node run-migrations.js` → verify `to_regclass('public.ai_analyses')` non-null
+7. Tracker: TSP-068 → Done, TSP-065 remains In Progress
+8. Append builder handoff + SESSION_STATE update
+
+---
+
+### 2026-06-03 - Session 22 Builder Handoff (Codex)
+
+**Ticket:** TSP-068
+**Commit target:** `TSP-068: post-test analysis job`
+
+#### What landed
+
+- `supabase/migrations/202606030004_ai_analyses.sql` - `ai_analyses` persistence table with unique `session_result_id`, owner/admin RLS, indexes, authenticated grants, and a narrow `question_versions_read_scored_session` policy so the user-scoped submit action can read full question content only after that user's session has a scored result.
+- `src/lib/ai/jobs/question-context.ts` - pure defensive context extraction for stems, selected labels, and correct labels across MCQ/MSQ-style, integer, and match questions.
+- `src/lib/ai/jobs/generate-analysis.ts` - store-injected `generateAnalysisJob`, Supabase store adapter, idempotent insert conflict handling, `running -> completed/failed/disabled` status transitions, AI gateway call, schema validation, and output persistence.
+- `src/tests/unit/generate-analysis.test.ts` - 12 deterministic tests covering pure extraction/input mapping plus completed, failed, disabled, validation failure, idempotent conflict, and load failure job paths.
+- `src/app/test/actions.ts` - fourth non-fatal submit hook using dynamic import, inside the existing `!wasAlreadyScored` guard.
+
+#### Verification
+
+| Gate | Result |
+|---|---|
+| `corepack pnpm exec vitest run src/tests/unit/generate-analysis.test.ts` | Passed |
+| `corepack pnpm typecheck` | Passed |
+| `corepack pnpm lint` | Passed after elevated rerun |
+| `corepack pnpm test` | Passed |
+| `corepack pnpm build` | Passed |
+| `node run-migrations.js` | Passed through `202606030004_ai_analyses.sql` |
+| DB verify | `to_regclass('public.ai_analyses') = ai_analyses`; `question_versions_read_scored_session = true` |
+
+#### Notes For Reviewer
+
+- Duplicate submit does not rerun analysis because the submit action guard still checks `!wasAlreadyScored`, and the analysis job also exits on `23505` insert conflict.
+- Analysis failure is non-fatal to submit through its own try/catch block.
+- The live `question_versions` content-shape check returned zero rows (`count = 0`), so no real `content` sample exists yet. The extractor keeps `stem`, `body`, `text`, `question`, and `prompt` fallbacks.
+- This adds synchronous Groq latency to submit until TSP-116/TSP-117 move analysis into the async runner.
+
+#### Next
+
+TSP-069 can build the result UI against `ai_analyses`. Founder guardrails/cost-cap decisions remain required before making AI output user-visible.
+
 ---
 
 ## Parked Blockers — Do Not Start
