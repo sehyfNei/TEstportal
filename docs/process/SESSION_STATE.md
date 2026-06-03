@@ -238,14 +238,15 @@ Notes:
 - 2026-06-03 Session 18 verification passed for both commits: `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. No migration or smoke script applied. Browser verification was not possible because the dev server remains blocked in this OneDrive workspace.
 - 2026-06-03 Session 19 verification passed: `corepack pnpm exec vitest run src/tests/unit/mastery-decay.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. `node run-migrations.js` applied migrations through `202606030002_mastery_decay.sql`; `SELECT * FROM cron.job WHERE jobname = 'decay-mastery-nightly'` returned one active job; `SELECT public.apply_mastery_decay()` completed; live `start_test_session` source contains `concept_retest_balanced`.
 - 2026-06-03 Session 20 verification passed: `corepack pnpm exec vitest run src/tests/unit/next-action.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. No migration or smoke script applied.
+- 2026-06-03 Session 21 verification passed: `corepack pnpm exec vitest run src/tests/unit/ai-cost.test.ts src/tests/unit/ai-gateway.test.ts src/tests/unit/analysis-schema.test.ts`, `corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` all exited 0. `node run-migrations.js` applied `202606030003_llm_cost_ledger.sql`; `to_regclass('public.llm_cost_ledger')` returned `llm_cost_ledger`; live Groq smoke passed on `llama-3.3-70b-versatile` with 72 input tokens, 8 output tokens, 2686 ms latency, and estimated cost `$0.000049`.
 
 ---
 
 ## Next Recommended Work
 
-**Session 20 complete (2026-06-03). TSP-077 + TSP-080 Done. M4 Dashboard & Retention dashboard widgets are now built: next-best-action, readiness, weak topics, due retests, strategy metrics, stat chips, and progress timeline. Next: browser smoke when users are available, or start M5 AI gateway work when `GROQ_API_KEY` is available.**
+**Session 21 complete (2026-06-03). TSP-066 + TSP-067 Done and M5 AI is open. The Groq gateway, append-only cost ledger, pricing/hash helpers, live AI smoke, and versioned post-test analysis schemas are complete. Next: TSP-068 analysis job, with founder guardrails/cost-cap decisions required before user-facing release.**
 
-Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, Session 18 row `TSP-081`, Session 19 row `TSP-057`, and Session 20 rows `TSP-077`/`TSP-080` are Done.
+Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, Session 18 row `TSP-081`, Session 19 row `TSP-057`, Session 20 rows `TSP-077`/`TSP-080`, and Session 21 rows `TSP-066`/`TSP-067` are Done.
 
 Status outcome:
 
@@ -281,20 +282,23 @@ Status outcome:
 - **TSP-079** - Done; weak topics widget and dashboard overview stat chips are complete.
 - **TSP-080** - Done; progress timeline query and server-rendered inline SVG timeline are complete.
 - **TSP-081** - Done; strategy metrics widget is complete.
+- **TSP-065** - In Progress as the M5 AI parent epic.
+- **TSP-066** - Done; native-fetch Groq gateway, append-only `llm_cost_ledger`, cost/hash helpers, kill switch, tests, migration, and live smoke are complete.
+- **TSP-067** - Done; versioned post-test analysis input/output schemas, validator, grounded prompt builder, and tests are complete.
 - **TSP-128** - Done; scoring unit tests are implemented and sanity-passed.
 
 Next immediate steps:
 
-1. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
-2. **M5 start** - AI gateway and prompt schema work can start when `GROQ_API_KEY` is available.
-3. **TSP-160/S12-A** - add named unique constraints to `mastery_records` as hardening if M5 remains blocked.
+1. **Session 22 - TSP-068** - generate post-test analysis job using `callAi`, `buildAnalysisMessages`, `validateAnalysisOutput`, and a new `ai_analyses` persistence table.
+2. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
+3. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
 
 Still parked (need external inputs):
 
 - **Repair pnpm install** â€” main verification commands pass after elevated reruns, but `corepack pnpm install` still fails and should be repaired before later dependency work.
 - **TSP-019, TSP-024, TSP-025, TSP-026, TSP-090 -> Done** â€” blocked on admin user creation (`app_metadata.user_role = "admin"`) for browser smoke.
 - **TSP-040, TSP-043, TSP-044, TSP-045, TSP-046, TSP-047, TSP-048, TSP-049, TSP-029, TSP-030, TSP-031, TSP-036, TSP-037, TSP-038 -> Done** â€” blocked on browser smoke with the admin/plain test users.
-- **TSP-068 AI analysis** â€” blocked on `GROQ_API_KEY`.
+- **TSP-068 AI analysis user-facing release** - needs founder guardrails and per-user cost-cap decision.
 - **TSP-085 reminders** â€” blocked on `RESEND_API_KEY`.
 
 ---
@@ -308,7 +312,7 @@ Still parked (need external inputs):
 - Needed now: admin user with `app_metadata.user_role = "admin"` or equivalent `user_role` claim, plus a plain test student for `/tests` smoke.
 - 2026-05-18 migration update: pooler URI/password works, migrations applied, direct RPC smoke passed.
 - 2026-05-18 review: grant bug in `202605170001` found and fixed; DB re-migration completed and grants verified.
-- Needed later: `SUPABASE_SERVICE_ROLE_KEY` for server-side admin jobs and `GROQ_API_KEY` for AI gateway work.
+- Needed later: `SUPABASE_SERVICE_ROLE_KEY` for server-side admin jobs. `GROQ_API_KEY` is now live and Session 21 smoke passed.
 - `trackers/JIRA_TRACKER.csv` is the task source of truth.
 - Add `Built By` and `Builder Remarks` for every completed builder row.
 - Do not mark a row `Done` if the real backend step is not implemented.

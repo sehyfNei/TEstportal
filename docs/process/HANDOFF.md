@@ -7753,6 +7753,506 @@ M4 dashboard implementation is now complete. Next practical options:
 2. **M5 start** - AI gateway/prompt schema work once `GROQ_API_KEY` is available.
 3. **TSP-160/S12-A** - named unique constraints on `mastery_records` if M5 is still blocked.
 
+### 2026-06-03 - Session 20 Sanity Review - Architect (Claude Sonnet 4.6)
+
+**Result: PASS (8/8 checks)**
+
+#### TSP-077 — `next-action.ts` + `next-action-card.tsx`
+
+**Check 1 — Priority ladder complete and correct.** ✅ Five branches in the right order: `overdueRetestCount > 0` → `start_overdue_retest` → `dueRetests.length > 0` → `start_due_retest` → `weakTopics.length > 0` → `practice_weak_topic` → `!hasBenchmarkSession` → `take_diagnostic` → else `keep_practicing`. All `href` values correct (`"#due-retests"` for the two retest types, `"/tests"` for the rest).
+
+**Check 2 — `pluralizeRetest` covers singular and plural.** ✅ Returns `"retest"` for count=1, `"retests"` for any other value. Tests at line 99–106 verify both cases against the title string.
+
+**Check 3 — Card is server component; CTA text correct.** ✅ No `"use client"`. `isUrgent` drives red/primary-tint border. `isRetest` drives `"View queue →"` vs `"Start →"`. HTML entity `&rarr;` in React fragment — consistent with `due-retests.tsx` existing pattern.
+
+#### TSP-080 — `timeline.ts` + `progress-timeline.tsx`
+
+**Check 4 — Query order and clamping.** ✅ `ascending: true` → oldest first → left-to-right time flow in chart. `clampPercent` applied to both `scorePercent` and `accuracy × 100`. `resultError` returns `[]` immediately (non-fatal). `sessionError` on type lookup is also non-fatal — falls back to `"unknown"` type gracefully.
+
+**Check 5 — SVG math correct for all edge cases.** ✅
+- First point: `x = (0 × 500)/(n-1) = 0` → left edge ✅
+- Last point: `x = ((n-1) × 500)/(n-1) = 500` → right edge ✅
+- `y = CHART_HEIGHT(100) - scorePercent` → score 100% → y=0 (top), score 0% → y=100 (bottom) ✅
+- Guard `count <= 1 ? CHART_WIDTH/2 : ...` prevents division by zero for single-point case (though `TimelineChart` is only called for `points.length >= 2`) ✅
+
+**Check 6 — Three rendering states handled.** ✅ Empty → text notice. Single point → `SinglePoint` component with dot + "Need more sessions" message. Two or more → `TimelineChart` with polyline + dots + gridline + legend. Builder bonus: 50% dashed horizontal gridline at `y=50` as a visual reference — not in spec but correct and useful.
+
+**Check 7 — `<title>` tooltip on `<circle>`, accessibility attrs on `<svg>`.** ✅ `<title>` is the correct SVG tooltip pattern (works natively in browsers without JS). `role="img"` + `aria-label="Progress timeline chart"` on the SVG root. `formatDate` guards `NaN` dates with fallback `"unknown date"`.
+
+#### Dashboard integration
+
+**Check 8 — Parallel fetch, non-fatal timeline, `id` anchor.** ✅
+- `Promise.all([fetchDashboardOverview(...), fetchProgressTimeline(...).catch(() => [])])` — timeline failure never breaks the page ✅
+- `DashboardData` success variant now carries `timeline: TimelinePoint[]` ✅
+- `NextActionCard` rendered above the readiness/weak-topic grid ✅
+- `ProgressTimeline` rendered at bottom ✅
+- `id="due-retests"` confirmed on line 19 of `due-retests.tsx` ✅
+
+#### Minor observation (non-blocking)
+
+`toNumber` is defined locally in both `timeline.ts` and `overview.ts`. Minor duplication — acceptable for private module utilities. Not worth refactoring until there's a shared `src/lib/utils` module with other similar helpers.
+
+#### M4 Dashboard milestone status
+
+All planned M4 Dashboard rows are Done: TSP-076, 077, 078, 079, 080, 081. The remaining M4 work (TSP-082 scheduling/reminders, TSP-083–088) is blocked on `RESEND_API_KEY` and M5 job infrastructure. **M4 Dashboard is complete.**
+
+**Session 21 options (priority order):**
+1. **M0 browser smoke** — create admin + plain student in Supabase Auth; one browser pass closes ~19 Review rows
+2. **M5 start** — TSP-066 AI gateway + TSP-067 prompt schemas (needs `GROQ_API_KEY`)
+3. **TSP-160** — named UNIQUE constraints on `mastery_records` (hardening, no blockers)
+
+Committed as `833174b TSP-077 TSP-080: dashboard next action and timeline`.
+
+---
+
+### 2026-06-03 - Session 21 Plan (M5 first slice) - Architect (Claude Opus 4.8)
+
+**Milestone:** M5 AI & Workers — the differentiator. This is the first AI work.
+**Tickets:** TSP-066 (AI gateway abstraction) + TSP-067 (analysis prompt schemas)
+**TRD refs:** §14.1 (AI Gateway), §14.2 (Post-Test Analysis Pipeline), §6.6 (`llm_cost_ledger`)
+**One migration** (`llm_cost_ledger`). One real-API smoke script (`GROQ_API_KEY` is now in `.env`).
+
+#### Why these two together
+
+TSP-066 is the primitive every later AI row stacks on: a single choke point through which all model calls pass, so cost, tokens, latency, prompt version, and errors are recorded in one place. TSP-067 defines the typed input/output contract for the first consumer (post-test analysis), so that when TSP-068 builds the actual analysis job next session, the schema and validation already exist and are unit-tested. Building the gateway without a schema to validate against leaves it untestable against a real shape; building schemas without a gateway leaves them unused. Together they form one coherent, fully-testable slice with **zero user-facing surface** — which means no browser smoke is needed and the OneDrive dev-server blocker does not apply.
+
+#### Hard constraint: no new npm dependency
+
+`pnpm install` is broken in this OneDrive workspace. **The Builder must NOT add `groq-sdk` or any package.** Groq exposes an OpenAI-compatible REST endpoint — call it with the native `fetch` already available in Node 18+/Next 15. `zod@^3.24.3` is already a dependency and is used for the schemas. `node:crypto` (built-in) is used for the input hash. No `package.json` change.
+
+#### Scope boundaries (do NOT build these in Session 21)
+
+- **`ai_analyses` table + the analysis job** → TSP-068, Session 22. Session 21 stops at the gateway primitive + validated schemas.
+- **`jobs` queue table / worker runner** → TSP-116 (M5 worker layer). The gateway is a plain async function this session; whether analysis runs sync or queued is TSP-068's decision.
+- **Result UI** → TSP-069.
+- **Founder guardrails decision** (grounding/safety + per-user cost caps) is required before *generation goes live* (TSP-068+), NOT for this primitive. Flagged below as a standing decision; it does not block Session 21.
+
+#### Architecture
+
+##### Migration — `supabase/migrations/202606030003_llm_cost_ledger.sql` (TSP-066)
+
+Implements the §6.6 `llm_cost_ledger` table, extended with the §14.1 per-call audit fields (latency, prompt version, input hash, output schema version, status, error) so a single ledger row is the complete audit trail for every gateway call.
+
+```sql
+create table if not exists public.llm_cost_ledger (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete set null,
+  feature text not null,
+  provider text not null,
+  model_name text not null,
+  prompt_version text,
+  input_hash text,
+  output_schema_version text,
+  input_tokens int not null default 0 check (input_tokens >= 0),
+  output_tokens int not null default 0 check (output_tokens >= 0),
+  cost_usd numeric not null default 0 check (cost_usd >= 0),
+  latency_ms int check (latency_ms is null or latency_ms >= 0),
+  status text not null default 'completed' check (status in ('completed','failed','disabled')),
+  error_message text,
+  related_entity_type text,
+  related_entity_id uuid,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists llm_cost_ledger_user_created
+  on public.llm_cost_ledger (user_id, created_at desc);
+create index if not exists llm_cost_ledger_feature_created
+  on public.llm_cost_ledger (feature, created_at desc);
+create index if not exists llm_cost_ledger_daily_cost
+  on public.llm_cost_ledger (created_at);
+
+alter table public.llm_cost_ledger enable row level security;
+
+-- Owner can read their own AI spend; admin reads all. (Feeds TSP-114 cost monitoring.)
+drop policy if exists llm_cost_ledger_select on public.llm_cost_ledger;
+create policy llm_cost_ledger_select
+  on public.llm_cost_ledger
+  for select
+  to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+-- Authenticated callers insert their own rows (gateway runs as the signed-in user).
+drop policy if exists llm_cost_ledger_insert on public.llm_cost_ledger;
+create policy llm_cost_ledger_insert
+  on public.llm_cost_ledger
+  for insert
+  to authenticated
+  with check (user_id = auth.uid() or public.is_admin());
+
+grant select, insert on public.llm_cost_ledger to authenticated;
+```
+
+Design notes:
+- `on delete set null` for `user_id`: keep cost history for accounting even if a user is deleted.
+- No update/delete policy — the ledger is append-only.
+- The `llm_cost_ledger_daily_cost` index on `created_at` is for the TSP-114/142 daily cost aggregation query later.
+
+##### `src/lib/ai/config.ts` (TSP-066)
+
+Mirrors the `src/lib/supabase/env.ts` pattern.
+
+```typescript
+export function hasGroqConfig(): boolean {
+  return Boolean(process.env.GROQ_API_KEY);
+}
+
+/** Hard kill-switch primitive (full per-provider switch is TSP-142). */
+export function isAiEnabled(): boolean {
+  return hasGroqConfig() && process.env.AI_DISABLED !== "true";
+}
+
+export const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+/** Per-call output ceiling — a minimal cost rail even before TSP-142 caps land. */
+export const MAX_OUTPUT_TOKENS_CEILING = 4096;
+```
+
+Add `AI_DISABLED=` (commented, optional) to `.env.example` under the AI providers block.
+
+##### `src/lib/ai/types.ts` (TSP-066)
+
+```typescript
+export type AiProvider = "groq";
+export type AiFeature = "post_test_analysis" | "improvement_plan" | "question_generation";
+
+export type AiMessage = { role: "system" | "user" | "assistant"; content: string };
+
+export type AiCallInput = {
+  feature: AiFeature;
+  model?: string;                 // defaults to DEFAULT_GROQ_MODEL
+  messages: AiMessage[];
+  promptVersion: string;
+  outputSchemaVersion: string;
+  temperature?: number;           // default 0.2 (deterministic-leaning)
+  maxTokens?: number;             // clamped to MAX_OUTPUT_TOKENS_CEILING
+  jsonMode?: boolean;             // sets response_format: { type: "json_object" }
+  userId?: string | null;
+  relatedEntityType?: string | null;
+  relatedEntityId?: string | null;
+};
+
+export type AiCallSuccess = {
+  ok: true;
+  content: string;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  latencyMs: number;
+};
+export type AiCallFailure = {
+  ok: false;
+  error: string;                  // machine code: "ai_disabled" | "http_error" | "network_error" | "empty_response"
+  status: "failed" | "disabled";
+  latencyMs: number;
+};
+export type AiCallResult = AiCallSuccess | AiCallFailure;
+
+/** Injected for testability (no network / no DB in unit tests). */
+export type LedgerWriter = (row: LedgerRow) => Promise<void>;
+export type LedgerRow = {
+  userId: string | null;
+  feature: string;
+  provider: AiProvider;
+  modelName: string;
+  promptVersion: string | null;
+  inputHash: string | null;
+  outputSchemaVersion: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  latencyMs: number | null;
+  status: "completed" | "failed" | "disabled";
+  errorMessage: string | null;
+  relatedEntityType: string | null;
+  relatedEntityId: string | null;
+};
+```
+
+##### `src/lib/ai/cost.ts` (TSP-066)
+
+```typescript
+import { createHash } from "node:crypto";
+import type { AiMessage } from "./types";
+
+/** Per-million-token USD pricing. Founder-tunable; verify against console.groq.com/pricing. */
+export const GROQ_PRICING: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
+  "llama-3.3-70b-versatile": { inputPerMillion: 0.59, outputPerMillion: 0.79 },
+  "llama-3.1-8b-instant":    { inputPerMillion: 0.05, outputPerMillion: 0.08 },
+};
+const FALLBACK_PRICING = { inputPerMillion: 0.59, outputPerMillion: 0.79 };
+
+export function computeCostUsd(model: string, tokensIn: number, tokensOut: number): number {
+  const price = GROQ_PRICING[model] ?? FALLBACK_PRICING;
+  const cost =
+    (Math.max(0, tokensIn) / 1_000_000) * price.inputPerMillion +
+    (Math.max(0, tokensOut) / 1_000_000) * price.outputPerMillion;
+  return Number.isFinite(cost) ? Number(cost.toFixed(6)) : 0;
+}
+
+/** Stable sha256 over the messages so identical inputs are detectable/idempotent. */
+export function hashInput(messages: AiMessage[]): string {
+  const canonical = JSON.stringify(messages.map((m) => ({ role: m.role, content: m.content })));
+  return createHash("sha256").update(canonical).digest("hex");
+}
+```
+
+##### `src/lib/ai/gateway.ts` (TSP-066)
+
+The single choke point. Signature takes injectable `fetchFn` + `writeLedger` so unit tests run offline.
+
+```typescript
+export async function callAi(
+  input: AiCallInput,
+  deps?: { fetchFn?: typeof fetch; writeLedger?: LedgerWriter }
+): Promise<AiCallResult>
+```
+
+Behaviour:
+1. **Disabled guard:** if `!isAiEnabled()` → write a ledger row with `status: "disabled"`, zero tokens/cost, then return `{ ok: false, error: "ai_disabled", status: "disabled", latencyMs: 0 }`. **No network call.**
+2. Resolve `model = input.model ?? DEFAULT_GROQ_MODEL`; clamp `maxTokens` to `MAX_OUTPUT_TOKENS_CEILING`; default `temperature = 0.2`.
+3. `const startedAt = Date.now()`. POST `${GROQ_BASE_URL}/chat/completions` with `Authorization: Bearer ${process.env.GROQ_API_KEY}`, body `{ model, messages, temperature, max_tokens, ...(jsonMode && { response_format: { type: "json_object" } }) }`.
+4. `latencyMs = Date.now() - startedAt`.
+5. **Non-2xx:** read status + body text → write ledger `status: "failed"`, `error_message` truncated → return `{ ok: false, error: "http_error", status: "failed", latencyMs }`.
+6. **Network throw:** catch → ledger `status: "failed"`, `error: "network_error"` → return failure.
+7. Parse JSON. Extract `content = data.choices?.[0]?.message?.content`, `tokensIn = data.usage?.prompt_tokens ?? 0`, `tokensOut = data.usage?.completion_tokens ?? 0`. If no content → ledger failed `empty_response` → failure.
+8. `costUsd = computeCostUsd(model, tokensIn, tokensOut)`.
+9. Write ledger `status: "completed"` with full audit fields (`inputHash = hashInput(messages)`, `promptVersion`, `outputSchemaVersion`, tokens, cost, latency).
+10. Return `{ ok: true, content, model, tokensIn, tokensOut, costUsd, latencyMs }`.
+
+**Ledger write is non-fatal:** wrap `writeLedger` in try/catch; a ledger failure logs `console.error` but never changes the call's return value (mirrors the non-fatal post-processing rule from mastery/mistake jobs). The default `writeLedger` (when `deps.writeLedger` is omitted) is a Supabase insert via `createClient()` from `@/lib/supabase/server` into `llm_cost_ledger`.
+
+##### `src/lib/ai/schemas/analysis.ts` (TSP-067)
+
+Versioned constants + zod input/output contracts + validator + prompt builder.
+
+```typescript
+import { z } from "zod";
+
+export const ANALYSIS_SCHEMA_VERSION = "1.0.0";
+export const ANALYSIS_PROMPT_VERSION = "post_test_analysis@1.0.0";
+
+// --- Input: deterministic features handed to the model (NOT model-authored) ---
+export const analysisQuestionInputSchema = z.object({
+  questionId: z.string(),
+  type: z.string(),
+  stem: z.string(),
+  isCorrect: z.boolean().nullable(),     // null = skipped
+  selectedLabel: z.string().nullable(),
+  correctLabel: z.string().nullable(),
+  topicName: z.string().nullable(),
+  conceptName: z.string().nullable(),
+});
+export const analysisInputSchema = z.object({
+  examName: z.string(),
+  score: z.number(),
+  maxScore: z.number(),
+  accuracy: z.number(),
+  questions: z.array(analysisQuestionInputSchema).min(1),
+});
+export type AnalysisInput = z.infer<typeof analysisInputSchema>;
+
+// --- Output: exactly what the LLM must return (validated before any save) ---
+export const questionAnalysisSchema = z.object({
+  questionId: z.string(),
+  whyCorrect: z.string().min(1),
+  whySelectedWrong: z.string().nullable(),
+  trapExplanation: z.string().nullable(),
+});
+export const topicSummarySchema = z.object({
+  topicName: z.string(),
+  summary: z.string().min(1),
+  recommendation: z.string().min(1),
+});
+export const analysisOutputSchema = z.object({
+  questionAnalyses: z.array(questionAnalysisSchema),
+  topicSummaries: z.array(topicSummarySchema),
+  overallSummary: z.string().min(1),
+  strategyInsights: z.array(z.string()),
+  nextActions: z.array(z.string()),
+});
+export type AnalysisOutput = z.infer<typeof analysisOutputSchema>;
+
+export function validateAnalysisOutput(
+  raw: unknown
+): { ok: true; data: AnalysisOutput } | { ok: false; errors: string[] } {
+  const parsed = analysisOutputSchema.safeParse(raw);
+  if (parsed.success) return { ok: true, data: parsed.data };
+  return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) };
+}
+
+/** Build the grounded prompt. System message forbids scoring/invention; LLM only explains. */
+export function buildAnalysisMessages(input: AnalysisInput): AiMessage[]
+```
+
+`buildAnalysisMessages` design:
+- **System message** establishes grounding guardrails (forward-looking toward the founder decision): the model explains the already-computed deterministic result; it must NOT recompute scores, must NOT invent facts not in the provided question data, must return ONLY JSON matching the schema, and must base each `whyCorrect`/`whySelectedWrong` strictly on the supplied stem and labels.
+- **User message** is the JSON-serialized `AnalysisInput`.
+- Used with `jsonMode: true` so Groq returns a JSON object.
+
+##### Smoke script — `scripts/smoke-ai-gateway.js` (TSP-066)
+
+Node script following the existing `scripts/smoke-*.js` convention. Loads `.env`, asserts `GROQ_API_KEY` present, then makes **one real Groq call** through a JS port of the gateway path (or imports the built module) with a trivial prompt (e.g. system "Reply with JSON {\"ok\":true}", jsonMode). Asserts: `ok: true`, `tokensIn > 0`, `tokensOut > 0`, `costUsd >= 0`, prints model + latency. Uses an injected no-op ledger writer so the smoke does not require the migration to be applied first (DB-independent). This proves the live integration works now that the key is available.
+
+#### Unit tests
+
+**`src/tests/unit/ai-cost.test.ts`** (≥8 cases):
+- Known model pricing math (70b: 1M in + 1M out → 0.59 + 0.79 = 1.38)
+- Unknown model → fallback pricing
+- Zero tokens → 0 cost
+- Negative tokens guarded → 0 contribution
+- Cost rounded to 6 dp
+- `hashInput` deterministic for identical messages
+- `hashInput` differs when content differs
+- `hashInput` differs when role differs
+
+**`src/tests/unit/ai-gateway.test.ts`** (≥7 cases, all with mocked `fetchFn` + capturing `writeLedger`):
+- Disabled (`AI_DISABLED=true` or no key) → `ok:false error:"ai_disabled"`, **`fetchFn` never called**, ledger row `status:"disabled"`
+- Success path → parses content/usage, computes cost, returns `ok:true`, ledger `status:"completed"` with correct `inputHash`/`promptVersion`/`outputSchemaVersion`
+- Non-2xx → `ok:false error:"http_error"`, ledger `status:"failed"`
+- `fetchFn` throws → `ok:false error:"network_error"`, ledger failed
+- Missing `choices[0].message.content` → `ok:false error:"empty_response"`
+- `maxTokens` above ceiling is clamped in the request body
+- Ledger writer throwing does NOT change the returned result (non-fatal)
+
+**`src/tests/unit/analysis-schema.test.ts`** (≥6 cases):
+- Valid output object → `ok:true`
+- Missing `overallSummary` → `ok:false` with path in errors
+- `whySelectedWrong: null` accepted (skipped question)
+- Empty `whyCorrect` string rejected (min 1)
+- `validateAnalysisOutput` on non-object (string/number/null) → `ok:false`
+- `buildAnalysisMessages` returns a system + user message and embeds the exam name + question count
+
+> Note: gateway/config tests must control `process.env.GROQ_API_KEY` and `AI_DISABLED`. Use `vi.stubEnv(...)` (or save/restore in `beforeEach`/`afterEach`) so the suite is hermetic regardless of the real `.env`.
+
+#### Design decisions
+
+- **Native `fetch`, no SDK.** OneDrive `pnpm install` is broken; Groq is OpenAI-compatible. Zero new dependencies.
+- **Dependency injection (`fetchFn`, `writeLedger`).** Same testability pattern as `MasteryUpdateRepository`. Unit tests never touch network or DB; the live path is covered by the smoke script.
+- **Ledger is the single audit trail.** Every call — success, failure, or disabled — writes exactly one row. Satisfies TSP-066 acceptance ("all AI calls write cost ledger") and pre-wires TSP-114/142 cost monitoring.
+- **Non-fatal ledger writes.** Cost logging must never break a user-facing flow, consistent with the established post-processing rule.
+- **Schemas validated before save (TSP-067 acceptance).** `validateAnalysisOutput` is the gate; TSP-068 will refuse to persist anything that fails it and mark the analysis `failed`/`partial`.
+- **Grounding baked into the system prompt now.** Even though the formal guardrails decision is the founder's (below), the prompt already constrains the model to explanation-only, no recomputation, no invention — so TSP-068 inherits safe defaults.
+- **`temperature` default 0.2.** Explanations should be stable and faithful, not creative.
+
+#### Risk notes
+
+- **Groq model name drift.** `llama-3.3-70b-versatile` is current as of the knowledge cutoff but Groq deprecates models periodically. If the smoke returns a 404/400 "model_decommissioned", the Builder should pick the current closest model from console.groq.com/docs/models and update `DEFAULT_GROQ_MODEL` + the `GROQ_PRICING` key. Record the substitution in the builder handoff.
+- **Pricing accuracy.** The `GROQ_PRICING` numbers are estimates. They affect only the ledger's `cost_usd` figure, not correctness. Founder should confirm against live pricing before TSP-114 budgeting depends on it. Flagged, non-blocking.
+- **`response_format: json_object`.** Supported on Groq's OpenAI-compatible endpoint, but the model can still occasionally emit malformed JSON. That is precisely why `validateAnalysisOutput` exists and why TSP-068 will treat validation failure as a retryable/partial outcome — not this session's concern, but the schema gate is the mitigation.
+- **Env hygiene in tests.** Forgetting to stub `GROQ_API_KEY`/`AI_DISABLED` would make gateway tests depend on the developer's real `.env`. The tests must stub env explicitly.
+
+#### Expected files
+
+| File | Action |
+|---|---|
+| `supabase/migrations/202606030003_llm_cost_ledger.sql` | Create — TSP-066 ledger table + RLS + grants |
+| `src/lib/ai/config.ts` | Create — `hasGroqConfig`, `isAiEnabled`, constants |
+| `src/lib/ai/types.ts` | Create — gateway types |
+| `src/lib/ai/cost.ts` | Create — pricing model + `hashInput` |
+| `src/lib/ai/gateway.ts` | Create — `callAi` choke point |
+| `src/lib/ai/schemas/analysis.ts` | Create — TSP-067 zod schemas + validator + prompt builder |
+| `scripts/smoke-ai-gateway.js` | Create — one real Groq call |
+| `src/tests/unit/ai-cost.test.ts` | Create — ≥8 tests |
+| `src/tests/unit/ai-gateway.test.ts` | Create — ≥7 tests |
+| `src/tests/unit/analysis-schema.test.ts` | Create — ≥6 tests |
+| `.env.example` | Modify — add commented `AI_DISABLED=` |
+| `trackers/JIRA_TRACKER.csv` | TSP-066 + TSP-067 → Done; note TSP-065 epic stays In Progress |
+| `docs/process/SESSION_STATE.md` | Append Session 21 completion |
+| `docs/process/HANDOFF.md` | Append builder handoff |
+
+#### Tracker updates
+
+- **TSP-065** (epic) — Backlog → In Progress (M5 AI epic opened).
+- **TSP-066** — Backlog → Done.
+- **TSP-067** — Backlog → Done.
+
+#### Verification gates
+
+```powershell
+# TypeScript
+corepack pnpm exec vitest run src/tests/unit/ai-cost.test.ts src/tests/unit/ai-gateway.test.ts src/tests/unit/analysis-schema.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+
+# Database
+node run-migrations.js
+#   verify: SELECT to_regclass('public.llm_cost_ledger');  -- non-null
+
+# Live AI integration (GROQ_API_KEY now present)
+node scripts/smoke-ai-gateway.js
+#   expect ok:true, tokensIn>0, tokensOut>0, prints model + latency + cost
+```
+
+#### Session 21 handoff checklist (Builder)
+
+1. `202606030003_llm_cost_ledger.sql` — table + RLS (owner/admin select, owner/admin insert, append-only) + 3 indexes + grants.
+2. `src/lib/ai/config.ts`, `types.ts`, `cost.ts`, `gateway.ts` — native-fetch gateway, no new dependency.
+3. `src/lib/ai/schemas/analysis.ts` — versioned zod schemas + `validateAnalysisOutput` + `buildAnalysisMessages` with grounding system prompt.
+4. Three unit test files (≥21 cases total), env stubbed.
+5. `scripts/smoke-ai-gateway.js` — one real Groq call, no DB dependency (injected no-op ledger).
+6. `node run-migrations.js` applies the ledger migration; confirm `to_regclass` non-null.
+7. `node scripts/smoke-ai-gateway.js` returns `ok:true` with non-zero tokens; record the model actually used (in case of model substitution).
+8. `.env.example` gains commented `AI_DISABLED=`.
+9. Tracker: TSP-065 → In Progress, TSP-066 + TSP-067 → Done, with builder remarks + rollback notes.
+10. Append Session 21 builder handoff + SESSION_STATE completion note.
+
+#### Next session (Session 22)
+
+**TSP-068 — generate analysis job.** Wire the gateway + schema into a real job: on submit (after deterministic result), build `AnalysisInput` from `session_results` + `session_questions`, call `callAi` with `buildAnalysisMessages`, `validateAnalysisOutput`, persist to a new `ai_analyses` table (migration), with `status` transitions (`pending`→`generating`→`completed`/`partial`/`failed`) and the documented timeout fallback. **Before TSP-068 ships, the founder guardrails decision below should be resolved.**
+
+#### Standing founder decision (M5 — surfaces now, required before TSP-068 ships)
+
+The roadmap flags this for M5: **AI grounding/safety guardrails + per-user cost caps.** Session 21 ships safe defaults (explanation-only grounded prompt, `MAX_OUTPUT_TOKENS_CEILING`, `AI_DISABLED` kill-switch primitive), but before generation reaches users the founder should decide:
+1. **Per-user / per-day cost cap** (USD) and what happens at the cap (block vs. degrade to deterministic-only).
+2. **Grounding strictness** — explanation-only is assumed; confirm the model may never assert facts outside the supplied question content.
+3. **Model choice + budget** — confirm `llama-3.3-70b-versatile` (quality) vs `llama-3.1-8b-instant` (10× cheaper) for analysis, and the monthly ceiling that TSP-114/142 will alert on.
+
+I will bring a focused options doc when Session 22/TSP-068 is planned. None of this blocks Session 21.
+
+---
+
+### 2026-06-03 - Session 21 Builder Handoff (Codex)
+
+**Tickets:** TSP-066 + TSP-067
+**Commit target:** `TSP-066 TSP-067: AI gateway and analysis schemas`
+
+#### What landed
+
+- `supabase/migrations/202606030003_llm_cost_ledger.sql` - append-only cost/audit table with owner/admin select and insert RLS, three indexes, and authenticated grants.
+- `.env.example` - added optional `AI_DISABLED=` hard kill switch.
+- `src/lib/ai/config.ts` - Groq config helpers and gateway constants.
+- `src/lib/ai/types.ts` - gateway input/result, message, provider, and injectable ledger writer types.
+- `src/lib/ai/cost.ts` - Groq pricing table, fallback pricing, six-decimal cost calculation, and stable sha256 input hashing.
+- `src/lib/ai/gateway.ts` - native-fetch Groq gateway with injected fetch/ledger dependencies, disabled/http/network/empty-response handling, JSON mode, max-token ceiling, cost calculation, and non-fatal ledger writes.
+- `src/lib/ai/schemas/analysis.ts` - versioned post-test analysis input/output zod schemas, `validateAnalysisOutput`, and grounded prompt builder that forbids score recomputation and invention.
+- `src/tests/unit/ai-cost.test.ts`, `src/tests/unit/ai-gateway.test.ts`, `src/tests/unit/analysis-schema.test.ts` - 23 deterministic offline tests with env stubbing and mocked fetch/ledger.
+- `scripts/smoke-ai-gateway.js` - one real Groq call, DB-independent, no SDK dependency.
+
+#### Verification
+
+All Session 21 gates passed:
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/ai-cost.test.ts src/tests/unit/ai-gateway.test.ts src/tests/unit/analysis-schema.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node run-migrations.js
+node scripts/smoke-ai-gateway.js
+```
+
+DB verification: `to_regclass('public.llm_cost_ledger')` returned `llm_cost_ledger`.
+
+Live Groq smoke result: `model=llama-3.3-70b-versatile`, `latencyMs=2686`, `tokensIn=72`, `tokensOut=8`, `costUsd=0.000049`. No model substitution was needed.
+
+#### Next session
+
+TSP-068 can now build the actual post-test analysis job on top of the gateway and schemas. Before user-facing release, resolve the founder decision on per-user/day cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
+
 ---
 
 ## Parked Blockers — Do Not Start
@@ -7763,7 +8263,7 @@ M4 dashboard implementation is now complete. Next practical options:
 | TSP-025 → Done | Same + pnpm repair |
 | TSP-035, TSP-027, TSP-026, TSP-159 → Done | Correct Supabase transaction pooler `DATABASE_URL`, migration application, grant verification, and browser/admin smoke |
 | TSP-039, TSP-040, TSP-041 → Done | Same `DATABASE_URL` fix, Session 3 migration application, grant verification, and start/save/submit smoke with a plain test user |
-| TSP-068 AI analysis job | `GROQ_API_KEY` |
+| TSP-068 user-facing release | Founder guardrails and per-user cost caps |
 | TSP-085 reminder job | `RESEND_API_KEY` |
 | TSP-102 staging env | Vercel + Supabase project setup |
 
