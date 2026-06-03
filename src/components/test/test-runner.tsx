@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { logTabSwitchAction, saveAnswerAction, submitSessionAction } from "@/app/test/actions";
+import { AnalysisPanel, type QuestionLabel } from "@/components/test/analysis-panel";
 import { ConfidenceControl } from "@/components/test/confidence-control";
 import { QuestionNavigator } from "@/components/test/question-navigator";
 import { QuestionRenderer } from "@/components/test/question-renderer";
@@ -15,6 +16,8 @@ import {
   type SelectedAnswer
 } from "@/lib/test-session/answer-shape";
 import { mergeWithBackup, useSessionBackupStore } from "@/lib/test-session/session-backup-store";
+import { extractStem } from "@/lib/ai/jobs/question-context";
+import type { AnalysisView } from "@/lib/ai/analysis-view";
 import { cn } from "@/lib/utils";
 
 export type TestRunnerQuestion = {
@@ -37,6 +40,7 @@ export type TestResultSummary = {
 
 type TestRunnerProps = {
   expiresAt: string | null;
+  initialAnalysis?: AnalysisView | null;
   initialQuestionStates: Record<string, QuestionState>;
   initialResult?: TestResultSummary | null;
   initialStatus: string;
@@ -56,6 +60,7 @@ const INTEGER_SAVE_DEBOUNCE_MS = 800;
 
 export function TestRunner({
   expiresAt,
+  initialAnalysis,
   initialQuestionStates,
   initialResult,
   initialStatus,
@@ -114,6 +119,17 @@ export function TestRunner({
   const reviewCount = useMemo(
     () => Object.values(navigatorStates).filter((state) => state.markedReview).length,
     [navigatorStates]
+  );
+  const questionLabels = useMemo(
+    () =>
+      questions.reduce<Record<string, QuestionLabel>>((accumulator, question) => {
+        accumulator[question.questionId] = {
+          sequence: question.sequence,
+          stem: extractStem(question.promptSnapshot)
+        };
+        return accumulator;
+      }, {}),
+    [questions]
   );
 
   useEffect(() => {
@@ -460,6 +476,14 @@ export function TestRunner({
       />
 
       {result ? <ResultPanel result={result} /> : null}
+
+      {result ? (
+        <AnalysisPanel
+          initialAnalysis={initialAnalysis ?? null}
+          questionLabels={questionLabels}
+          sessionId={sessionId}
+        />
+      ) : null}
 
       <div className="grid gap-5 rounded-lg border border-border bg-card p-5">
         <QuestionRenderer

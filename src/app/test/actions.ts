@@ -6,6 +6,8 @@ import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
 import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
+import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
+import type { AnalysisView } from "@/lib/ai/analysis-view";
 import { createClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 
@@ -375,6 +377,59 @@ export async function submitSessionAction(
     ok: true,
     message: "Session scored.",
     result
+  };
+}
+
+export type AnalysisActionResult =
+  | { ok: true; analysis: AnalysisView }
+  | { ok: false; message: string };
+
+export async function getSessionAnalysisAction(
+  sessionId: string
+): Promise<AnalysisActionResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured yet." };
+  }
+
+  const auth = await requireAuth();
+  if (!auth.ok) {
+    return { ok: false, message: auth.message };
+  }
+
+  if (!isUuid(sessionId)) {
+    return { ok: false, message: "Valid session id is required." };
+  }
+
+  const supabase = await createClient();
+  const resultLookup = await supabase
+    .from("session_results")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("user_id", auth.userId)
+    .maybeSingle();
+
+  if (resultLookup.error) {
+    return { ok: false, message: resultLookup.error.message };
+  }
+
+  const resultId = (resultLookup.data as { id: string } | null)?.id;
+  if (!resultId) {
+    return { ok: true, analysis: { status: "absent", output: null } };
+  }
+
+  const analysisLookup = await supabase
+    .from("ai_analyses")
+    .select("status,output")
+    .eq("session_result_id", resultId)
+    .maybeSingle();
+
+  if (analysisLookup.error) {
+    return { ok: false, message: analysisLookup.error.message };
+  }
+
+  return {
+    ok: true,
+    analysis: toAnalysisView(analysisLookup.data as AnalysisRow | null)
   };
 }
 

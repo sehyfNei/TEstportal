@@ -9,6 +9,8 @@ import {
   type Confidence,
   type QuestionState
 } from "@/lib/test-session/answer-shape";
+import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
+import type { AnalysisView } from "@/lib/ai/analysis-view";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -40,6 +42,7 @@ type SessionResultRow = {
   accuracy: number | string;
   attempted: number;
   correct: number;
+  id: string;
   incorrect: number;
   max_score: number | string;
   score: number | string;
@@ -81,6 +84,7 @@ export default async function TestSessionPage({
       <Header />
       <TestRunner
         expiresAt={data.session.expires_at}
+        initialAnalysis={data.analysis}
         initialQuestionStates={data.initialQuestionStates}
         initialResult={data.result}
         initialStatus={data.session.status}
@@ -117,7 +121,8 @@ async function loadTestSessionData(sessionId: string) {
       session: null,
       questions: [],
       initialQuestionStates: {},
-      result: null
+      result: null,
+      analysis: null
     };
   }
 
@@ -134,7 +139,8 @@ async function loadTestSessionData(sessionId: string) {
       session: null,
       questions: [],
       initialQuestionStates: {},
-      result: null
+      result: null,
+      analysis: null
     };
   }
 
@@ -151,7 +157,8 @@ async function loadTestSessionData(sessionId: string) {
       session: null,
       questions: [],
       initialQuestionStates: {},
-      result: null
+      result: null,
+      analysis: null
     };
   }
 
@@ -164,7 +171,8 @@ async function loadTestSessionData(sessionId: string) {
       session: null,
       questions: [],
       initialQuestionStates: {},
-      result: null
+      result: null,
+      analysis: null
     };
   }
 
@@ -180,7 +188,7 @@ async function loadTestSessionData(sessionId: string) {
       .eq("session_id", session.id),
     supabase
       .from("session_results")
-      .select("score,max_score,accuracy,attempted,correct,incorrect,skipped")
+      .select("id,score,max_score,accuracy,attempted,correct,incorrect,skipped")
       .eq("session_id", session.id)
       .maybeSingle()
   ]);
@@ -188,6 +196,8 @@ async function loadTestSessionData(sessionId: string) {
   const loadError =
     questionsResult.error?.message ?? answersResult.error?.message ?? resultResult.error?.message ?? null;
   const questions = toRunnerQuestions(questionsResult.data);
+  const resultRow = (resultResult.data as SessionResultRow | null) ?? null;
+  const analysis = loadError ? null : await loadInitialAnalysis(supabase, resultRow?.id);
 
   return {
     configured: true,
@@ -195,8 +205,30 @@ async function loadTestSessionData(sessionId: string) {
     session,
     questions: loadError ? [] : questions,
     initialQuestionStates: loadError ? {} : toInitialQuestionStates(answersResult.data, questions),
-    result: loadError ? null : toResultSummary(resultResult.data)
+    result: loadError ? null : toResultSummary(resultResult.data),
+    analysis
   };
+}
+
+async function loadInitialAnalysis(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  resultId: string | undefined
+): Promise<AnalysisView | null> {
+  if (!resultId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("ai_analyses")
+    .select("status,output")
+    .eq("session_result_id", resultId)
+    .maybeSingle();
+
+  if (error) {
+    return null;
+  }
+
+  return toAnalysisView(data as AnalysisRow | null);
 }
 
 function toRunnerQuestions(rows: unknown): TestRunnerQuestion[] {

@@ -1,4 +1,4 @@
-# Session State
+﻿# Session State
 
 **Last updated:** 2026-06-03
 **Updated by:** Codex - Session 19 builder completion
@@ -318,3 +318,13 @@ Still parked (need external inputs):
 - `trackers/JIRA_TRACKER.csv` is the task source of truth.
 - Add `Built By` and `Builder Remarks` for every completed builder row.
 - Do not mark a row `Done` if the real backend step is not implemented.
+
+---
+
+## 2026-06-03 — Session 22 Sanity Review (TSP-068)
+
+**Architect Sanity: PASS**
+
+All 15 gates green. 12 tests (5 extractQuestionContext + 1 buildAnalysisInput + 6 job paths) all offline and deterministic. Migration correct: UNIQUE on `session_result_id`, RLS select/insert/update (no delete), `question_versions_read_scored_session` bonus policy for server-action content reads. `generateAnalysisJob` idempotent via 23505 code, user-mismatch guard, non-fatal `callAiSafely` wrapper, status machine correct, `truncateError` at 1000 chars. Dynamic import wired in `submitSessionAction` inside `!wasAlreadyScored`. Two latent flags, both non-blocking: stuck `running` rows if `finalizeRow` throws (outer try/catch still catches); zero question_versions rows (defensive fallbacks correct, self-resolves on seeding).
+
+**State after Session 22:** TSP-068 Done. M5 continues — TSP-069 (analysis result UI) is next. Founder guardrails decision required before AI output is user-visible.

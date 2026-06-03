@@ -8949,6 +8949,224 @@ No decision needed here — the current grounding is correct.
 
 TSP-069 can build the result UI against `ai_analyses`. Founder guardrails/cost-cap decisions remain required before making AI output user-visible.
 
+
+---
+
+### 2026-06-03 — Session 22 Sanity Review (Architect)
+
+**Ticket:** TSP-068
+**Verdict:** PASS
+
+#### Gates
+
+| # | Gate | Result |
+|---|---|---|
+| 1 | Migration columns, UNIQUE, cascade, set null | ✅ |
+| 2 | 2 indexes: `(user_id, created_at desc)` + `(status)` | ✅ |
+| 3 | RLS select/insert/update — no delete | ✅ |
+| 4 | `is_admin()` reads `app_metadata` (not client-writable metadata) | ✅ |
+| 5 | `question_versions_read_scored_session` policy — user reads own scored-session content only | ✅ |
+| 6 | `extractQuestionContext` — pure, no throws, `stem→body→text→question→prompt→"(question)"` fallback | ✅ |
+| 7 | MCQ/MSQ alias coverage: `correct_options`, `correctOptions`, `correct_option`, `correctOption` | ✅ |
+| 8 | `labelFromOption` handles string + `{text,label,body,value}` + `"Option N"` fallback | ✅ |
+| 9 | Idempotency: `23505` on insert → `{conflict:true}` → early return, no AI call | ✅ |
+| 10 | User mismatch guard (`source.userId !== userId`) — extra security beyond spec | ✅ |
+| 11 | `callAiSafely` wraps in try/catch, returns failure result on exception | ✅ |
+| 12 | Status machine: `disabled→"disabled"`, all other failures→`"failed"` | ✅ |
+| 13 | `truncateError` at 1000 chars; `schema_version`+`prompt_version` on insert | ✅ |
+| 14 | 12 tests — 5 extractQuestionContext + 1 buildAnalysisInput + 6 job paths, all offline | ✅ |
+| 15 | Dynamic import in `submitSessionAction`, inside `!wasAlreadyScored` guard | ✅ |
+
+#### Latent flags (non-blocking)
+
+- **Stuck `running` rows**: If `finalizeRow` throws on Supabase update, the `ai_analyses` row stays in `running` state. Non-fatal to submit (outer try/catch catches it). TSP-116/117 async runner should add a cleanup query for rows stuck in `running` beyond a timeout.
+- **Zero question_versions rows**: No live content to verify `stem` field name. Defensive fallbacks are correct. Self-resolves when exam content is seeded.
+
+#### Next
+
+TSP-069 (analysis result UI) is ready to architect. Founder guardrails decision required before TSP-068 output is user-visible.
+
+---
+
+## Session 23 Architect Plan — TSP-069 (Analysis Result UI)
+
+**Goal:** Surface the persisted `ai_analyses` output on the test result view. Deterministic score (`ResultPanel`) stays instant and unchanged; the AI analysis renders below it when ready, with graceful states for running / failed / disabled / absent.
+
+**Acceptance (tracker):** "User can view deterministic result immediately and AI analysis when ready."
+
+### Architecture context (verified this session)
+
+- `submitSessionAction` writes the analysis row synchronously inside the `!wasAlreadyScored` block (TSP-068). By the time the client receives `nextState.ok` and re-renders, the `ai_analyses` row is already terminal (`completed`/`failed`/`disabled`). Output is **persisted but never returned to the client**.
+- `TestRunner` (client) renders `ResultPanel` from `nextState.result`. It has the question list (`questions[]` with `questionId`, `sequence`, `promptSnapshot`).
+- `tests/[sessionId]/page.tsx` (server) already loads `session_results` on revisit and passes `initialResult`.
+- `ai_analyses.output` is the validated `AnalysisOutput` (overallSummary, topicSummaries[], questionAnalyses[], strategyInsights[], nextActions[]). `questionAnalyses[].questionId` === `session_questions.question_id` === `TestRunner questions[].questionId` — they pair directly.
+- `prompt_snapshot` carries `stem`/`text` (per `QuestionRenderer`'s `PromptSnapshot`). `extractStem` in `question-context.ts` already covers `stem→body→text→question→prompt`.
+
+### Files (8: 4 new, 1 new test, 3 modified)
+
+**1. `src/lib/ai/analysis-view.ts`** (NEW — pure, client-safe, NO zod value import)
+```ts
+import type { AnalysisOutput } from "@/lib/ai/schemas/analysis"; // type-only → erased from client bundle
+
+export type AnalysisStatus =
+  | "pending" | "running" | "completed" | "failed" | "disabled" | "absent";
+
+export type AnalysisView = { status: AnalysisStatus; output: AnalysisOutput | null };
+
+export const TERMINAL_ANALYSIS_STATUSES: ReadonlySet<AnalysisStatus> =
+  new Set(["completed", "failed", "disabled", "absent"]);
+
+export function isTerminalAnalysisStatus(status: AnalysisStatus): boolean {
+  return TERMINAL_ANALYSIS_STATUSES.has(status);
+}
+```
+No zod usage → safe to import (types + helper) from the client panel.
+
+**2. `src/lib/ai/analysis-read.ts`** (NEW — server mapper, pure, testable)
+```ts
+import { validateAnalysisOutput } from "@/lib/ai/schemas/analysis";
+import type { AnalysisStatus, AnalysisView } from "@/lib/ai/analysis-view";
+
+export function toAnalysisView(row: { status: string; output: unknown } | null): AnalysisView {
+  if (!row) return { status: "absent", output: null };
+  if (row.status === "completed") {
+    const v = validateAnalysisOutput(row.output);
+    return v.ok ? { status: "completed", output: v.data } : { status: "failed", output: null };
+  }
+  if (row.status === "running" || row.status === "pending" ||
+      row.status === "failed" || row.status === "disabled") {
+    return { status: row.status as AnalysisStatus, output: null };
+  }
+  return { status: "failed", output: null }; // unknown status guard
+}
+```
+Re-validating a `completed` row on read is defense-in-depth: a malformed persisted row degrades to `failed`, never crashes the panel.
+
+**3. `src/lib/ai/jobs/question-context.ts`** (MODIFY — one-line export)
+- Change `function extractStem` → `export function extractStem`. Reused by `TestRunner` to label question-wise analyses. No logic change.
+
+**4. `src/app/test/actions.ts`** (MODIFY — add read action)
+```ts
+export type AnalysisActionResult =
+  | { ok: true; analysis: AnalysisView }
+  | { ok: false; message: string };
+
+export async function getSessionAnalysisAction(sessionId: string): Promise<AnalysisActionResult> {
+  // 1. hasSupabaseConfig guard → { ok:false, message } if not configured
+  // 2. createClient + auth.getUser → { ok:false } if unauthenticated
+  // 3. session_results: select id where session_id = sessionId AND user_id = user.id, maybeSingle
+  //    → no row → { ok:true, analysis: { status:"absent", output:null } }
+  // 4. ai_analyses: select status,output where session_result_id = result.id, maybeSingle (RLS double-guards owner)
+  // 5. return { ok:true, analysis: toAnalysisView(row) }
+}
+```
+Plain-arg server action (not a form action), called directly from the client for polling. Mirrors existing auth/guard pattern in this file.
+
+**5. `src/components/test/analysis-panel.tsx`** (NEW — client)
+- Props: `{ sessionId: string; initialAnalysis: AnalysisView | null; questionLabels: Record<string, { sequence: number; stem: string }> }`
+- State seeded from `initialAnalysis ?? { status: "running", output: null }` (fresh submit has no initial → starts polling).
+- Polling: `useEffect` + `useTransition`; while `!isTerminalAnalysisStatus(status)` and attempts < `MAX_POLLS` (10), call `getSessionAnalysisAction(sessionId)` every `POLL_INTERVAL_MS` (2000). Stop on terminal or cap. Manual **"Refresh analysis"** button as fallback (resets attempt budget).
+- Render by status:
+  - `completed` → `AnalysisReport`:
+    - `overallSummary` → headline card
+    - `topicSummaries[]` → list of {topicName, summary, recommendation}
+    - `questionAnalyses[]` → per item: heading `Q{questionLabels[id].sequence} — {stem}` (fallback `Question` when stem is `(question)`), then `whyCorrect`, and `whySelectedWrong` / `trapExplanation` only when non-null
+    - `strategyInsights[]` → bulleted (skip section if empty)
+    - `nextActions[]` → checklist/bulleted (skip if empty)
+  - `pending`/`running` → "Generating your analysis…" + spinner + Refresh
+  - `failed` → muted "We couldn't generate AI analysis for this attempt."
+  - `disabled` → muted "AI analysis is currently turned off."
+  - `absent` → `return null` (older/un-analyzed sessions render nothing)
+- Tailwind only; match `ResultPanel` card idiom (`rounded-lg border bg-card p-5`).
+
+**6. `src/components/test/test-runner.tsx`** (MODIFY)
+- Add prop `initialAnalysis?: AnalysisView | null`.
+- `questionLabels = useMemo(...)` mapping each `questions[].questionId` → `{ sequence, stem: extractStem(promptSnapshot) }`.
+- Render `<AnalysisPanel sessionId={sessionId} initialAnalysis={initialAnalysis ?? null} questionLabels={questionLabels} />` immediately AFTER `{result ? <ResultPanel/> : null}`, inside the same `result`-gated region so it only appears once scored (covers both fresh-submit and revisit).
+
+**7. `src/app/(app)/tests/[sessionId]/page.tsx`** (MODIFY)
+- When `resultResult.data` exists (scored), load the analysis row: map `session_results.id` (already in scope via the result query — add `id` to its select) → query `ai_analyses(status,output)` by `session_result_id` → `toAnalysisView(row)`; else `initialAnalysis = null`.
+- Pass `initialAnalysis` to `<TestRunner>`. Revisit renders analysis instantly with no poll; fresh submit (page mounted pre-score) passes null and the panel polls.
+
+**8. `src/tests/unit/analysis-read.test.ts`** (NEW — ≥6 hermetic tests)
+- `toAnalysisView(null)` → `absent`
+- completed + valid output → `completed` with parsed data
+- completed + malformed output → `failed`, output null
+- `running` → `running`; `disabled` → `disabled`; `failed` → `failed`
+- unknown status string → `failed`
+- `isTerminalAnalysisStatus`: true for completed/failed/disabled/absent, false for pending/running
+
+### Verification gates
+```powershell
+corepack pnpm exec vitest run src/tests/unit/analysis-read.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+Browser smoke remains blocked (OneDrive dev server). Build + typecheck + the pure mapper test cover the logic; visual smoke deferred to the same browser pass that unblocks the M0/M1 Review rows.
+
+### Design decisions / rationale
+- **Poll instead of returning analysis from submit:** keeps the deterministic score instant and decoupled from AI latency; same code path serves fresh-submit (poll) and revisit (server initial). Future-proofs for TSP-116/117 async runner (analysis may not be terminal at submit time then) with zero rework.
+- **Re-validate on read:** persisted rows are trusted but cheaply re-checked; malformed → `failed`, never a client crash.
+- **Pair analyses to questions client-side** via shared `extractStem` — no extra persistence, no schema change.
+- **`absent` renders nothing** — older sessions and the non-fatal "analysis threw before insert" path degrade silently.
+
+### Founder guardrails — now user-facing
+TSP-069 makes AI output visible to real users. Before this ships to production traffic, the founder decision is required:
+1. **Model** — 70b vs 8b for analysis (recommendation: 70b; ~$0.003/analysis).
+2. **Per-user/day cap** — recommendation: no cap for MVP; add a counter in M6.
+3. **Grounding strictness** — no change; current prompt constraints are correct.
+The UI itself is buildable now; gate the production rollout on the above.
+
+### Builder checklist
+1. `analysis-view.ts` — types + `isTerminalAnalysisStatus` (no zod value)
+2. `analysis-read.ts` — `toAnalysisView`
+3. `question-context.ts` — export `extractStem`
+4. `actions.ts` — `getSessionAnalysisAction` + `AnalysisActionResult`
+5. `analysis-panel.tsx` — panel + bounded polling + manual refresh
+6. `test-runner.tsx` — prop + `questionLabels` + render panel after `ResultPanel`
+7. `tests/[sessionId]/page.tsx` — load initial analysis, add `id` to result select, pass prop
+8. `analysis-read.test.ts` — ≥6 tests
+9. Tracker: TSP-069 → Done; append builder handoff + SESSION_STATE update
+
+---
+
+### 2026-06-03 — Session 23 Builder Handoff (Claude)
+
+**Ticket:** TSP-069
+**Commit target:** `TSP-069: analysis result UI`
+
+#### What landed
+
+- `src/lib/ai/analysis-view.ts` (NEW) — client-safe `AnalysisStatus`/`AnalysisView` types, `TERMINAL_ANALYSIS_STATUSES`, `isTerminalAnalysisStatus`. Type-only `AnalysisOutput` import keeps zod out of the client bundle.
+- `src/lib/ai/analysis-read.ts` (NEW) — pure `toAnalysisView(row)` server mapper; re-validates `completed` rows with `validateAnalysisOutput` (malformed → `failed`); unknown status → `failed`; null row → `absent`.
+- `src/lib/ai/jobs/question-context.ts` (MOD) — exported `extractStem` for reuse by the runner (no logic change).
+- `src/app/test/actions.ts` (MOD) — `getSessionAnalysisAction(sessionId)` + `AnalysisActionResult`. Auth + UUID guard, maps `session_results.id` → `ai_analyses(status,output)` → `toAnalysisView`. Returns `absent` when no result/row.
+- `src/components/test/analysis-panel.tsx` (NEW) — client `AnalysisPanel`: renders completed report (overallSummary, topicSummaries, question-wise explanations paired by `questionId`, strategyInsights, nextActions; empty arrays skipped), running/pending notice with bounded polling (`MAX_POLLS=10`, 2s) + manual Refresh, failed/disabled muted notices, `absent` → null.
+- `src/components/test/test-runner.tsx` (MOD) — `initialAnalysis` prop, `questionLabels` memo via `extractStem(promptSnapshot)`, renders `<AnalysisPanel>` after `<ResultPanel>` inside the `result`-gated region (covers fresh-submit poll + revisit instant).
+- `src/app/(app)/tests/[sessionId]/page.tsx` (MOD) — added `id` to the result select, `loadInitialAnalysis` loads the `ai_analyses` row on revisit, passes `initialAnalysis` to `TestRunner`; `analysis: null` on all early-return branches.
+- `src/tests/unit/analysis-read.test.ts` (NEW) — 8 hermetic tests: `toAnalysisView` (absent / completed-valid / completed-malformed→failed / running / pending+failed+disabled passthrough / unknown→failed) + `isTerminalAnalysisStatus`.
+
+#### Verification
+
+| Gate | Result |
+|---|---|
+| `corepack pnpm typecheck` | **Passed** (exit 0, clean — compiles all 8 files incl. test) |
+| `corepack pnpm lint` | **Passed** (exit 0, clean) |
+| `corepack pnpm test` | **BLOCKED** — OneDrive `node_modules` hydration failure (`UNKNOWN: errno -4094, read`); vitest runtime cannot load cold dependency files |
+| `corepack pnpm build` | **BLOCKED** — same OneDrive read failure |
+
+#### Notes For Reviewer
+
+- **Verification gap is environmental, not code.** `tsc` and `eslint` read the local source tree and pass clean; `vitest` and `next build` need cold `node_modules` runtime files that OneDrive fails to hydrate (reproducible `errno -4094`). This is the same root cause as the parked dev-server blocker. The new test file is simple/pure and should pass once run in a hydrated/elevated shell or off OneDrive. **User action: run `corepack pnpm test` and `corepack pnpm build` in a hydrated environment to close the Sanity gate.**
+- No DB migration in this session — read-only against `ai_analyses` (TSP-068) + `session_results`.
+- Polling is bounded and future-proofs TSP-116/117 async runner; with today's synchronous job the row is already terminal on first poll.
+- AI output is now user-visible — founder guardrails decision (model / per-user cap / grounding) gates production rollout, not the build.
+
+#### Next
+
+Architect Sanity review of TSP-069 once `pnpm test`/`pnpm build` are confirmed green in a hydrated environment. Then TSP-070 (explanation rating/reporting) or TSP-071 (improvement plan).
 ---
 
 ## Parked Blockers — Do Not Start

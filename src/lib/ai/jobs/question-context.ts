@@ -16,7 +16,7 @@ export function extractQuestionContext(
   };
 }
 
-function extractStem(content: unknown): string {
+export function extractStem(content: unknown): string {
   const record = toRecord(content);
   if (!record) {
     return "(question)";
