@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { logTabSwitchAction, saveAnswerAction, submitSessionAction } from "@/app/test/actions";
 import { AnalysisPanel, type QuestionLabel } from "@/components/test/analysis-panel";
+import { PlanPanel } from "@/components/test/plan-panel";
 import { ConfidenceControl } from "@/components/test/confidence-control";
 import { QuestionNavigator } from "@/components/test/question-navigator";
 import { QuestionRenderer } from "@/components/test/question-renderer";
@@ -18,6 +19,7 @@ import {
 import { mergeWithBackup, useSessionBackupStore } from "@/lib/test-session/session-backup-store";
 import { extractStem } from "@/lib/ai/jobs/question-context";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
+import type { PlanView } from "@/lib/ai/plan-view";
 import { cn } from "@/lib/utils";
 
 export type TestRunnerQuestion = {
@@ -41,10 +43,12 @@ export type TestResultSummary = {
 type TestRunnerProps = {
   expiresAt: string | null;
   initialAnalysis?: AnalysisView | null;
+  initialPlan?: PlanView | null;
   initialQuestionStates: Record<string, QuestionState>;
   initialResult?: TestResultSummary | null;
   initialResultId?: string | null;
   initialStatus: string;
+  isDiagnostic?: boolean;
   questions: TestRunnerQuestion[];
   serverNow: string;
   sessionId: string;
@@ -62,10 +66,12 @@ const INTEGER_SAVE_DEBOUNCE_MS = 800;
 export function TestRunner({
   expiresAt,
   initialAnalysis,
+  initialPlan,
   initialQuestionStates,
   initialResult,
   initialResultId,
   initialStatus,
+  isDiagnostic,
   questions,
   serverNow,
   sessionId
@@ -488,6 +494,10 @@ export function TestRunner({
           resultId={resultId}
           sessionId={sessionId}
         />
+      ) : null}
+
+      {result && isDiagnostic ? (
+        <PlanPanel initialPlan={initialPlan ?? null} sessionId={sessionId} />
       ) : null}
 
       <div className="grid gap-5 rounded-lg border border-border bg-card p-5">

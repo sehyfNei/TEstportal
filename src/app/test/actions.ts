@@ -8,6 +8,8 @@ import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
 import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
+import { toPlanView, type PlanRow } from "@/lib/ai/plan-read";
+import type { PlanView } from "@/lib/ai/plan-view";
 import {
   isValidRating,
   isValidReportCategory,
@@ -456,6 +458,57 @@ export async function getSessionAnalysisAction(
   return {
     ok: true,
     analysis: toAnalysisView(analysisLookup.data as AnalysisRow | null)
+  };
+}
+
+export type PlanActionResult =
+  | { ok: true; plan: PlanView }
+  | { ok: false; message: string };
+
+export async function getSessionPlanAction(sessionId: string): Promise<PlanActionResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured yet." };
+  }
+
+  const auth = await requireAuth();
+  if (!auth.ok) {
+    return { ok: false, message: auth.message };
+  }
+
+  if (!isUuid(sessionId)) {
+    return { ok: false, message: "Valid session id is required." };
+  }
+
+  const supabase = await createClient();
+  const resultLookup = await supabase
+    .from("session_results")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("user_id", auth.userId)
+    .maybeSingle();
+
+  if (resultLookup.error) {
+    return { ok: false, message: resultLookup.error.message };
+  }
+
+  const resultId = (resultLookup.data as { id: string } | null)?.id;
+  if (!resultId) {
+    return { ok: true, plan: { status: "absent", output: null } };
+  }
+
+  const planLookup = await supabase
+    .from("improvement_plans")
+    .select("status,output")
+    .eq("session_result_id", resultId)
+    .maybeSingle();
+
+  if (planLookup.error) {
+    return { ok: false, message: planLookup.error.message };
+  }
+
+  return {
+    ok: true,
+    plan: toPlanView(planLookup.data as PlanRow | null)
   };
 }
 

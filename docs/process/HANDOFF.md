@@ -9575,6 +9575,73 @@ node run-migrations.js
 **Follow-up (new ticket):** improvement-plan result UI — no plan UI built this session (job+persistence only, mirrors TSP-068/069 split).
 ---
 
+## Session 26 Architect Plan — TSP-XXX (Improvement Plan Result UI)
+
+**Goal:** Surface the `improvement_plans` output (built in TSP-071) to the learner on the diagnostic result page, mirroring the proven TSP-069 analysis-panel pattern (poll-on-fresh-submit + server-load-on-revisit, bounded polling, terminal-status stop). New ticket — call it the plan-result UI follow-up flagged at the end of TSP-071.
+
+**Acceptance:** After a diagnostic is submitted (or on revisit of a scored diagnostic), the user sees their prioritized study plan: overall strategy, prioritized topics with rationale + focus actions, and next actions. Pending/failed/disabled states render a calm status panel with a manual refresh. Non-diagnostic sessions show nothing and trigger no polling.
+
+### Design decisions
+- **Surface on the test-session result page** (`tests/[sessionId]`), right after `<AnalysisPanel>` — reuses the existing `resultId` threading and matches where analysis already lives. (A dashboard "latest plan" card is a deliberate *future* extension, not this ticket — it needs a "most-recent diagnostic plan" query and raises which-plan questions.)
+- **Diagnostic-gated render.** Plans only exist for diagnostics (per TSP-071). Pass `isDiagnostic` to `TestRunner`; render `<PlanPanel>` only when `result && isDiagnostic`. This avoids a wasted poll on every non-diagnostic submit/revisit — without it, a null initial plan would default to `running` and poll once before settling on `absent`.
+- **No rating widgets on the plan.** `explanation_ratings.scope` CHECK only allows `question_analysis|topic_summary|overall` — there is no plan scope. Adding plan ratings would need a migration; out of scope here. Flag as future.
+- **Read-time revalidation.** `toPlanView` re-runs `validatePlanOutput` on `completed` rows (a row could predate a schema change); invalid → `failed`. Mirrors `toAnalysisView`.
+- **No new DB, no new migration** — reads the `improvement_plans` table from TSP-071. RLS already restricts to owner/admin; the action double-checks ownership via the `session_results` lookup (same as `getSessionAnalysisAction`).
+
+### Files — 7 total (4 new, 3 modified)
+
+1. `src/lib/ai/plan-view.ts` (NEW) — client-safe types, no zod value import. Mirror `analysis-view.ts`:
+   - `PlanStatus = "pending"|"running"|"completed"|"failed"|"disabled"|"absent"`
+   - `PlanView = { status: PlanStatus; output: PlanOutput | null }` (import type only from `schemas/plan`)
+   - `TERMINAL_PLAN_STATUSES` set + `isTerminalPlanStatus(status)`
+
+2. `src/lib/ai/plan-read.ts` (NEW) — pure server mapper. Mirror `analysis-read.ts`:
+   - `PlanRow = { status: string; output: unknown }`
+   - `toPlanView(row: PlanRow | null): PlanView` — null→absent; completed→`validatePlanOutput` (ok→completed, else failed); pending/running/failed/disabled passthrough; default failed.
+
+3. `src/app/test/actions.ts` (MODIFIED) — add `getSessionPlanAction(sessionId): Promise<PlanActionResult>` directly after `getSessionAnalysisAction`. Same guards (config, `requireAuth`, `isUuid`), look up `session_results.id` by `session_id`+`user_id` (absent if none), then `improvement_plans(status,output)` by `session_result_id` → `toPlanView`. `PlanActionResult = {ok:true;plan:PlanView}|{ok:false;message:string}`.
+
+4. `src/components/test/plan-panel.tsx` (NEW) — `"use client"`. Mirror `analysis-panel.tsx` minus rating widgets:
+   - `PlanPanelProps = { initialPlan: PlanView | null; sessionId: string }`
+   - Bounded polling (`MAX_POLLS=10`, `POLL_INTERVAL_MS=2000`), `useTransition`, `attemptsRef`, calls `getSessionPlanAction`; stops on `isTerminalPlanStatus`. Default `initialPlan ?? { status: "running", output: null }`.
+   - `absent` → render null. `completed && output` → `<PlanReport>`. else → `<PendingPanel>` (label "AI study plan", refresh button on pending/running).
+   - `PlanReport(output)`: header "Your study plan" + `overallStrategy` paragraph; "Prioritized topics" section → for each `prioritizedTopics`: `topicName` (heading), `rationale` paragraph, and `focusActions` as a bulleted list (gated on length); "Next actions" → bulleted `nextActions`. Use the same card/`text-muted-foreground`/`list-disc` styling as `AnalysisReport`.
+
+5. `src/components/test/test-runner.tsx` (MODIFIED) — add `initialPlan?: PlanView | null` and `isDiagnostic?: boolean` props; import `PlanPanel`. After the existing `result ? <AnalysisPanel/> : null` block, add `result && isDiagnostic ? <PlanPanel initialPlan={initialPlan ?? null} sessionId={sessionId}/> : null`. No new state needed (plan keys off sessionId, not resultId).
+
+6. `src/app/(app)/tests/[sessionId]/page.tsx` (MODIFIED) — add `loadInitialPlan(supabase, resultId)` (mirror `loadInitialAnalysis`, reads `improvement_plans(status,output)` → `toPlanView`); call it only when `session.type === "diagnostic"` (else `plan: null`). Thread `plan` + `isDiagnostic: session.type === "diagnostic"` through the success return and add `plan: null` (+ `isDiagnostic: false`) to every early-return branch. Pass `initialPlan={data.plan}` and `isDiagnostic={data.isDiagnostic}` to `<TestRunner>`.
+
+7. `src/tests/unit/plan-read.test.ts` (NEW) — hermetic tests for `toPlanView` (null→absent, valid completed→completed, malformed completed→failed, each passthrough status) + `isTerminalPlanStatus`. ~8 tests, mirror `analysis-read.test.ts`.
+
+### Builder steps
+1. Create files 1, 2, 4, 7; modify 3, 5, 6.
+2. `corepack pnpm typecheck` + `corepack pnpm lint` (authoritative gates).
+3. `vitest`/`build` will hit the OneDrive `errno -4094` blocker — note, don't chase.
+4. No migration this session.
+5. Tracker: new row → Done; append builder handoff. Update `project_state` memory.
+
+### Out of scope / future
+- Dashboard "latest diagnostic plan" card.
+- Plan rating/feedback (needs `explanation_ratings.scope` CHECK widened via migration).
+---
+
+## Session 26 Builder Complete — TSP-160 (Improvement Plan Result UI)
+
+**Status: Done.** 7 files (4 new, 3 modified), exactly per plan. New tracker row **TSP-160** (next free after TSP-159).
+
+- `src/lib/ai/plan-view.ts` (NEW) — client-safe `PlanView`/`PlanStatus`, `TERMINAL_PLAN_STATUSES`, `isTerminalPlanStatus`.
+- `src/lib/ai/plan-read.ts` (NEW) — `toPlanView` with read-time `validatePlanOutput` revalidation of completed rows.
+- `src/app/test/actions.ts` (MODIFIED) — `getSessionPlanAction` after `getSessionAnalysisAction`; ownership lookup → `improvement_plans(status,output)` → `toPlanView`; absent when no result/row.
+- `src/components/test/plan-panel.tsx` (NEW) — bounded polling (10×2000ms) + manual refresh; `PlanReport` = overallStrategy + prioritizedTopics (topicName/rationale/focusActions) + nextActions; no rating widgets.
+- `src/components/test/test-runner.tsx` (MODIFIED) — `initialPlan` + `isDiagnostic` props; `<PlanPanel>` rendered only when `result && isDiagnostic`.
+- `src/app/(app)/tests/[sessionId]/page.tsx` (MODIFIED) — `loadInitialPlan` (diagnostic-only); threads `plan` + `isDiagnostic`; all early returns get `plan: null` + `isDiagnostic: false`.
+- `src/tests/unit/plan-read.test.ts` (NEW, 8 tests).
+
+**Gates:** typecheck ✅ + lint ✅ clean; no migration (reuses TSP-071 `improvement_plans`). `vitest` + `build` BLOCKED by OneDrive `errno -4094` (env, not code).
+
+**M5 AI pipeline UI complete:** analysis (TSP-069) + ratings (TSP-070) + plan (TSP-160) all surfaced.
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |

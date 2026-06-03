@@ -11,6 +11,8 @@ import {
 } from "@/lib/test-session/answer-shape";
 import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
+import { toPlanView, type PlanRow } from "@/lib/ai/plan-read";
+import type { PlanView } from "@/lib/ai/plan-view";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -85,10 +87,12 @@ export default async function TestSessionPage({
       <TestRunner
         expiresAt={data.session.expires_at}
         initialAnalysis={data.analysis}
+        initialPlan={data.plan}
         initialQuestionStates={data.initialQuestionStates}
         initialResult={data.result}
         initialResultId={data.resultId}
         initialStatus={data.session.status}
+        isDiagnostic={data.isDiagnostic}
         questions={data.questions}
         serverNow={new Date().toISOString()}
         sessionId={data.session.id}
@@ -124,7 +128,9 @@ async function loadTestSessionData(sessionId: string) {
       initialQuestionStates: {},
       result: null,
       resultId: null,
-      analysis: null
+      analysis: null,
+      plan: null,
+      isDiagnostic: false
     };
   }
 
@@ -143,7 +149,9 @@ async function loadTestSessionData(sessionId: string) {
       initialQuestionStates: {},
       result: null,
       resultId: null,
-      analysis: null
+      analysis: null,
+      plan: null,
+      isDiagnostic: false
     };
   }
 
@@ -162,7 +170,9 @@ async function loadTestSessionData(sessionId: string) {
       initialQuestionStates: {},
       result: null,
       resultId: null,
-      analysis: null
+      analysis: null,
+      plan: null,
+      isDiagnostic: false
     };
   }
 
@@ -177,7 +187,9 @@ async function loadTestSessionData(sessionId: string) {
       initialQuestionStates: {},
       result: null,
       resultId: null,
-      analysis: null
+      analysis: null,
+      plan: null,
+      isDiagnostic: false
     };
   }
 
@@ -202,7 +214,10 @@ async function loadTestSessionData(sessionId: string) {
     questionsResult.error?.message ?? answersResult.error?.message ?? resultResult.error?.message ?? null;
   const questions = toRunnerQuestions(questionsResult.data);
   const resultRow = (resultResult.data as SessionResultRow | null) ?? null;
+  const isDiagnostic = session.type === "diagnostic";
   const analysis = loadError ? null : await loadInitialAnalysis(supabase, resultRow?.id);
+  const plan =
+    loadError || !isDiagnostic ? null : await loadInitialPlan(supabase, resultRow?.id);
 
   return {
     configured: true,
@@ -212,7 +227,9 @@ async function loadTestSessionData(sessionId: string) {
     initialQuestionStates: loadError ? {} : toInitialQuestionStates(answersResult.data, questions),
     result: loadError ? null : toResultSummary(resultResult.data),
     resultId: loadError ? null : resultRow?.id ?? null,
-    analysis
+    analysis,
+    plan,
+    isDiagnostic
   };
 }
 
@@ -235,6 +252,27 @@ async function loadInitialAnalysis(
   }
 
   return toAnalysisView(data as AnalysisRow | null);
+}
+
+async function loadInitialPlan(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  resultId: string | undefined
+): Promise<PlanView | null> {
+  if (!resultId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("improvement_plans")
+    .select("status,output")
+    .eq("session_result_id", resultId)
+    .maybeSingle();
+
+  if (error) {
+    return null;
+  }
+
+  return toPlanView(data as PlanRow | null);
 }
 
 function toRunnerQuestions(rows: unknown): TestRunnerQuestion[] {
