@@ -48,7 +48,9 @@ const sections: {
   {
     title: "Jobs monitor",
     description: "Inspect failed, pending, and dead background jobs. Retry important jobs from this view.",
-    status: "phase-1"
+    href: "/admin/jobs",
+    linkLabel: "Open jobs monitor",
+    status: "live"
   },
   {
     title: "Audit log",
