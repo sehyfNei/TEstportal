@@ -53,6 +53,13 @@ const sections: {
     status: "live"
   },
   {
+    title: "Question flag queue",
+    description: "Review user-reported question flags. Auto-quarantine triggers at 3 distinct open flags per question.",
+    href: "/admin/questions/flags",
+    linkLabel: "Open flag queue",
+    status: "live"
+  },
+  {
     title: "Audit log",
     description: "View admin actions, role changes, question approvals, and manifest imports with filters.",
     status: "phase-1"
