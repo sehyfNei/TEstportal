@@ -6,6 +6,7 @@ import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
 import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
+import { isValidFlagReason, type FlagReason } from "@/lib/question-bank/flag-reasons";
 import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
 import { toPlanView, type PlanRow } from "@/lib/ai/plan-read";
@@ -60,21 +61,6 @@ export type SubmitSessionActionState = {
     skipped?: number;
     status?: string;
   };
-};
-
-export const initialStartSessionActionState: StartSessionActionState = {
-  ok: false,
-  message: ""
-};
-
-export const initialSaveAnswerActionState: SaveAnswerActionState = {
-  ok: false,
-  message: ""
-};
-
-export const initialSubmitSessionActionState: SubmitSessionActionState = {
-  ok: false,
-  message: ""
 };
 
 export async function startSessionAction(
@@ -832,4 +818,58 @@ function readRetestQueueId(metadata: unknown): string | null {
     return typeof record.retestQueueId === "string" ? record.retestQueueId : null;
   }
   return null;
+}
+
+// ── TSP-028: Question Flagging ───────────────────────────────────────────────
+
+type FlagQuestionInput = {
+  questionId: string;
+  reason: FlagReason;
+  details?: string | null;
+};
+
+type FlagQuestionResult = { ok: boolean; message: string };
+
+export async function flagQuestionAction(
+  input: FlagQuestionInput
+): Promise<FlagQuestionResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured yet." };
+  }
+
+  const auth = await requireAuth();
+  if (!auth.ok) {
+    return { ok: false, message: auth.message };
+  }
+
+  if (!isUuid(input.questionId)) {
+    return { ok: false, message: "Valid question id is required." };
+  }
+
+  if (!isValidFlagReason(input.reason)) {
+    return { ok: false, message: "Invalid flag reason." };
+  }
+
+  // Trim details to 500 chars (nullable)
+  const details =
+    typeof input.details === "string" ? input.details.trim().slice(0, 500) || null : null;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("submit_question_flag", {
+    p_question_id: input.questionId,
+    p_reason: input.reason,
+    p_details: details
+  });
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const result = data as { quarantined?: boolean; duplicate?: boolean } | null;
+  const quarantined = result?.quarantined === true;
+
+  return {
+    ok: true,
+    message: quarantined ? "Thanks — flagged for review." : "Thanks — reported."
+  };
 }

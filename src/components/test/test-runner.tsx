@@ -21,6 +21,7 @@ import { extractStem } from "@/lib/ai/jobs/question-context";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
 import type { PlanView } from "@/lib/ai/plan-view";
 import { cn } from "@/lib/utils";
+import { ReportQuestion } from "@/components/test/report-question";
 
 export type TestRunnerQuestion = {
   promptSnapshot: unknown;
@@ -513,6 +514,8 @@ export function TestRunner({
           value={currentQuestionState.confidence}
         />
       </div>
+
+      <ReportQuestion questionId={currentQuestion.questionId} />
 
       {message ? (
         <div className="rounded-md border border-border bg-muted p-3 text-sm leading-6 text-muted-foreground">
