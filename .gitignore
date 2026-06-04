@@ -32,3 +32,7 @@ test-results/
 .DS_Store
 Thumbs.db
 _tmp_*
+
+# agent tooling working dirs
+.antigravitycli/
+.codex-dev/
