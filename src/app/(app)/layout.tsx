@@ -15,6 +15,7 @@ export default function AppLayout({
           <nav className="flex items-center gap-4 text-sm text-muted-foreground">
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/tests">Tests</Link>
+            <Link href="/mistakes">Mistakes</Link>
             <Link href="/profile">Profile</Link>
           </nav>
         </div>
