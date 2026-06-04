@@ -326,10 +326,15 @@ Status outcome:
 
 Next immediate steps:
 
-1. **Session 33 - TSP-098** - compute question stats nightly.
-2. **Founder config & wiring** - configure `SUPABASE_SERVICE_ROLE_KEY` in `.env` and wire cron trigger to `GET /api/jobs/run`.
-3. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
-4. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
+1. **Session 33 - TSP-028 (DONE, 2026-06-05)** - question flags & quarantine (M2 critical-path). Two commits landed:
+   - Commit 1 (schema + mechanism): `202606050001_question_flags_quarantine.sql` (partial unique index, `submit_question_flag` plpgsql security-definer RPC with auto-quarantine at 3 distinct open flags and inline `live->flagged` audit, `resolve_question_flag` admin-only RPC, grants); `flag-reasons.ts` allowlist; `flagQuestionAction` in `actions.ts`; `ReportQuestion` client widget; TestRunner wiring; `flag-reasons.test.ts` (6 unit cases, offline-verifiable); `smoke-question-flags.js` (4 assertions, gated on M0); `check-rpc-grants.js` updated 12→14 RPCs.
+   - Commit 2 (admin surface): `flags/page.tsx`, `flag-actions.ts`, `resolve-flag-form.tsx` (useActionState), admin-nav Flagged link, admin overview card.
+   - typecheck + lint + build pass. TSP-028 → Review pending M0 live-DB/browser smoke. Unblocks TSP-092.
+2. **Session 34+ candidate - TSP-092** - rich triage queue (bulk actions, filters, per-reason analytics) — unblocked by TSP-028.
+3. **Session 34+ candidate - TSP-098** - compute question stats nightly (deferred until live attempts accumulate post-M0).
+4. **Founder config & wiring** - configure `SUPABASE_SERVICE_ROLE_KEY` in `.env` and wire cron trigger to `GET /api/jobs/run`.
+5. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
+6. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
 
 Still parked (need external inputs):
 
