@@ -127,6 +127,34 @@ export async function startRetestAction(
     return { ok: false, message: "Failed to start retest session." };
   }
 
+  // Update test_session metadata with retestQueueId non-fatally
+  try {
+    const { data: sessionData, error: sessionFetchError } = await supabase
+      .from("test_sessions")
+      .select("metadata")
+      .eq("id", sessionId)
+      .maybeSingle();
+
+    if (!sessionFetchError && sessionData) {
+      const existingMetadata = (sessionData.metadata && typeof sessionData.metadata === "object")
+        ? (sessionData.metadata as Record<string, unknown>)
+        : {};
+
+      await supabase
+        .from("test_sessions")
+        .update({
+          metadata: {
+            ...existingMetadata,
+            retestQueueId
+          }
+        })
+        .eq("id", sessionId)
+        .eq("user_id", user.id);
+    }
+  } catch (metadataError) {
+    console.error("[retest] failed to write metadata.retestQueueId", metadataError);
+  }
+
   revalidatePath("/dashboard");
   return { ok: true, message: "Retest started.", sessionId };
 }

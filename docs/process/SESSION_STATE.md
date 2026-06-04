@@ -1,7 +1,7 @@
 # Session State
 
 **Last updated:** 2026-06-05
-**Updated by:** Gemini (Builder) - Session 31 complete
+**Updated by:** Gemini (Builder) - Session 32 complete
 **Project:** Modular AI-Powered Test Series And Self-Study Portal
 
 ---
@@ -64,6 +64,7 @@ Completed foundations:
 - Session 29 completed for M5 job monitor (TSP-093): `retry_job` RPC security-definer function, server action `retryJobAction` with UUID guard, `/admin/jobs` overview page with filter tabs and retry forms, admin console cards and navigation links updated, and live migrations successfully applied.
 - Session 30 completed for M5 async AI job wiring + status notification (TSP-118): Wired `submitSessionAction` to enqueue `generate_analysis` and `generate_improvement_plan` jobs asynchronously; added `get_my_job_status` security-definer RPC function; updated `getSessionAnalysisAction` and `getSessionPlanAction` to fallback to checking job status via RPC if output row is absent, defaulting to `running` or returning `failed`; optimized `<AnalysisPanel>` and `<PlanPanel>` polling to 20 attempts of 3s intervals (60s total auto-polling window), rendering Refresh button and actionable message on fail.
 - Session 31 completed for M4 event capture foundation (TSP-096 + TSP-097): Deployed `user_events` table migration with indices, owner-insert / owner-admin-select RLS, and authenticated select/insert grants; added Drizzle schema mapping `analytics.ts` and registered it in `index.ts`; defined type-safe `EVENT_TYPES` allowlist and payloads; implemented non-fatal `logEvent` logger with 5 unit tests; wired `test_start` to `startSessionAction`, `test_submit` to `submitSessionAction`, `answer_save` to `saveAnswerAction`, and `analysis_view` to `AnalysisPanel` using a ref-guarded `logAnalysisViewAction` server action.
+- Session 32 completed for the mistake notebook and retest gap closure (TSP-061 + TSP-063): Implemented fetchMistakeItems query helper (owner/exam scoped, topic/concept names batched, best-effort stem from prompt_snapshot via extractStem), resolveMistakeAction server action (direct owner .update() via owner-update RLS policy), /mistakes server page with exam/status/type filters grouped by topic, MistakeItemRow Client Component, Layout nav link, startRetestAction writing retestQueueId to metadata, and submitSessionAction updating retest_queue completed status.
 
 ---
 
@@ -272,7 +273,7 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 31 Architect Plan written (2026-06-05). TSP-096 + TSP-097 (event capture): append-only user_events table + non-fatal logEvent utility + EVENT_TYPES allowlist + unit tests (Commit 1), then wire test_start / test_submit / answer_save / analysis_view into existing actions + AnalysisPanel (Commit 2). Fully headless-verifiable (migration + tests + live table check) → both rows reach Done. M5 complete; this returns to M4 analytics flywheel foundation. Builder: read HANDOFF.md Session 31 plan.**
+**Session 32 completed (2026-06-05) for the mistake notebook and retest gap closure (TSP-061 + TSP-063): Implemented fetchMistakeItems query helper, resolveMistakeAction server action, unresolved mistakes page layout, MistakeItemRow Client Component, startRetestAction writing retestQueueId to metadata, and submitSessionAction updating retest_queue completed status.**
 
 Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, Session 18 row `TSP-081`, Session 19 row `TSP-057`, Session 20 rows `TSP-077`/`TSP-080`, Session 21 rows `TSP-066`/`TSP-067`, Session 27 row `TSP-116`, Session 28 row `TSP-117`, and Session 29 row `TSP-093` are Done.
 
@@ -302,8 +303,9 @@ Status outcome:
 - **TSP-057** - Done; pure decay helper/tests, pg_cron scheduler, active nightly job, and manual decay trigger verification are complete.
 - **TSP-059** - Done; mistake_items and retest_queue schema, RLS, grants, and indexes are live.
 - **TSP-060** - Done; mistake item classifier/job, submit wire-up, tests, and live smoke are complete.
+- **TSP-061** - Review; fetchMistakeItems query helper, resolveMistakeAction direct update action, server mistakes page with exam/status/type filters, and MistakeItemRow components are implemented and await browser smoke.
 - **TSP-062** - Done; simple retest scheduler, retest queue job, submit wire-up, tests, and live smoke are complete.
-- **TSP-063** - Done; due retest rows can start `concept_retest` sessions from the dashboard, and those sessions now route through balanced recency-aware selection.
+- **TSP-063** - Done; due retest rows can start `concept_retest` sessions from the dashboard, and those sessions now route through balanced recency-aware selection. Closes the retest completion status gap.
 - **TSP-076** - Done; dashboard overview aggregation, server action wrapper, and pure helper tests are complete.
 - **TSP-077** - Done; dashboard next-best-action logic, unit tests, server card, and `#due-retests` anchor are complete.
 - **TSP-078** - Done; readiness card and dashboard data loading are complete.
@@ -324,7 +326,7 @@ Status outcome:
 
 Next immediate steps:
 
-1. **Session 32 - TSP-098** - compute question stats nightly.
+1. **Session 33 - TSP-098** - compute question stats nightly.
 2. **Founder config & wiring** - configure `SUPABASE_SERVICE_ROLE_KEY` in `.env` and wire cron trigger to `GET /api/jobs/run`.
 3. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
 4. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.

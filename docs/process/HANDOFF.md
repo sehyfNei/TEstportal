@@ -11173,5 +11173,291 @@ First clean session in the recent run: zero fixes applied. The migration uses `l
 
 **TSP-096 and TSP-097 are Done. The analytics flywheel foundation is live — `user_events` now captures test_start / test_submit / answer_save / analysis_view. This unblocks TSP-098 (nightly question stats), TSP-099 (A/B outcomes), TSP-100 (quality dashboard).**
 
+---
+
+## Session 32 Architect Plan — TSP-061 (Mistake Notebook page) + TSP-063 gap closure
+
+**Date:** 2026-06-05 | **Milestone:** M4 Dashboard & Retention | **Primary ticket:** TSP-061 (Build Mistake Notebook page) | **Rider:** close the known TSP-063 retest-completion gap
+
+### Context & why this session
+
+The mistake-recovery backend is fully Done — `mistake_items` + `retest_queue` schema (TSP-059), classification job (TSP-060), scheduler (TSP-062), and dashboard retest launch (TSP-063). The one missing surface is the **Mistake Notebook page** where a user can view, filter, and resolve their mistakes. This completes the core-loop UI ("review mistakes → retest"). Like all UI here it lands in **Review** pending the M0 browser smoke — but it makes the product surface complete so one M0 pass covers everything.
+
+**Rider:** TSP-063 shipped with a documented gap — "retest_queue status is not updated on completion." Commit 2 closes it minimally by linking the retest session back to its queue row. TSP-063 stays **Done**; this is a tracked enhancement, not a reopen.
+
+**Spec:** FINAL_PRD MN-02 (view/manage unresolved mistakes by exam/topic/concept/type). Mirrors the proven server-component dashboard pattern (`/dashboard` page + `due-retests.tsx` client action rows).
+
+### Architect decisions to lock (Builder must follow)
+
+1. **`mistake_items` has an owner-UPDATE RLS policy by design** (`mistake_items_owner_update`, from TSP-059) — UNLIKE the `jobs` table. So the resolve action uses a **direct `.update()`** scoped to `.eq("id", id).eq("user_id", userId)`. Do **NOT** write a security-definer RPC here; the table is intentionally user-writable. (Same is true for `retest_queue` in Commit 2.)
+2. **Question text must come from the answer-stripped snapshot, never `question_versions`.** `question_versions` is admin-only RLS (answer-bearing). Read the stem from `session_questions.prompt_snapshot` (the user already saw it) via `extractStem` from `@/lib/ai/jobs/question-context`. Best-effort: if no snapshot row, show the topic/concept label only.
+3. **Status allowlist enforced in TypeScript.** A user may set a mistake to `reviewed`, `resolved`, `ignored`, or back to `unresolved` (the 5 statuses are `unresolved|scheduled|reviewed|resolved|ignored` per the schema CHECK; `scheduled` is scheduler-owned — do not let the UI set it). Set `resolved_at = now()` when status becomes `resolved`, else `null`.
+4. **Reuse the dashboard page shape exactly** — exam loader, exam-selector pills, no-config / no-auth / no-exam notices, URL-driven filters via `searchParams`. Do not invent a new layout idiom.
+5. **Per-row resolve uses the `DueRetests`/`RetestItem` client pattern** — `useActionState` + `<form action={formAction}>` + hidden inputs. No new state library.
+
+---
+
+### Commit 1 — TSP-061: Mistake Notebook page
+
+**New file: `src/lib/mistakes/mistake-list.ts`** (query helper, mirrors `lib/dashboard/overview.ts` style)
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export const MISTAKE_TYPE_LABELS: Record<string, string> = {
+  conceptual_gap: "Conceptual gap",
+  time_pressure: "Time pressure",
+  silly_mistake: "Silly mistake",
+  not_attempted: "Not attempted",
+  overconfidence: "Overconfidence",
+  lucky_guess: "Lucky guess",
+  bookmarked: "Bookmarked"
+};
+
+export const MISTAKE_STATUSES = ["unresolved", "reviewed", "resolved", "ignored"] as const;
+
+export type MistakeListItem = {
+  id: string;
+  questionId: string;
+  sessionId: string;
+  topicId: string | null;
+  topicName: string | null;
+  conceptId: string | null;
+  conceptName: string | null;
+  mistakeType: string;
+  confidence: string | null;
+  status: string;
+  createdAt: string;
+  stem: string | null;          // best-effort, from session_questions.prompt_snapshot
+};
+
+export type MistakeFilters = { status?: string; mistakeType?: string };
+
+// Returns the user's mistakes for one exam, newest first, with topic/concept
+// names joined and a best-effort answer-stripped stem. Never throws on a bad
+// optional join — degrades to null labels.
+export async function fetchMistakeItems(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string,
+  filters: MistakeFilters = {}
+): Promise<MistakeListItem[]> { /* ... */ }
+```
+
+Implementation notes for the helper:
+- Base query: `from("mistake_items").select("id,question_id,session_id,topic_id,concept_id,mistake_type,confidence,status,created_at").eq("user_id", userId).eq("exam_id", examId).order("created_at", { ascending: false }).limit(200)`.
+- Apply `.eq("status", filters.status)` only when `filters.status` is a valid member of `MISTAKE_STATUSES`; apply `.eq("mistake_type", filters.mistakeType)` only when it is a key of `MISTAKE_TYPE_LABELS`.
+- Resolve `topicName`/`conceptName` with secondary `in`-queries against `topics`/`concepts` (collect the distinct ids, one query each, build a Map) — do not N+1.
+- Resolve `stem` best-effort: one query `from("session_questions").select("session_id,question_id,prompt_snapshot").in("session_id", [...])` for the distinct sessions, map by `(session_id, question_id)`, run `extractStem(prompt_snapshot)`; null if absent. Wrap in try/catch → null on failure.
+
+**New file: `src/app/mistakes/actions.ts`**
+
+```typescript
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { MISTAKE_STATUSES } from "@/lib/mistakes/mistake-list";
+
+export type ResolveMistakeState = { ok: boolean; message: string };
+export const initialResolveMistakeState: ResolveMistakeState = { ok: false, message: "" };
+
+export async function resolveMistakeAction(
+  _prev: ResolveMistakeState,
+  formData: FormData
+): Promise<ResolveMistakeState> {
+  if (!hasSupabaseConfig()) return { ok: false, message: "Supabase is not configured." };
+
+  const mistakeId = getString(formData, "mistakeId");
+  const status = getString(formData, "status");
+  if (!isUuid(mistakeId)) return { ok: false, message: "Invalid mistake id." };
+  if (!(MISTAKE_STATUSES as readonly string[]).includes(status)) {
+    return { ok: false, message: "Invalid status." };
+  }
+
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { ok: false, message: authError?.message ?? "Sign in to continue." };
+
+  // Direct update — mistake_items has an owner-UPDATE RLS policy (TSP-059); no RPC needed.
+  const { error } = await supabase
+    .from("mistake_items")
+    .update({ status, resolved_at: status === "resolved" ? new Date().toISOString() : null })
+    .eq("id", mistakeId)
+    .eq("user_id", user.id);
+
+  if (error) return { ok: false, message: error.message };
+  revalidatePath("/mistakes");
+  return { ok: true, message: "Updated." };
+}
+```
+(Reuse the `getString` / `isUuid` helpers as defined in `dashboard/actions.ts` — copy the same two private helpers.)
+
+**New file: `src/app/(app)/mistakes/page.tsx`** — server component. Copy the structure of `(app)/dashboard/page.tsx`:
+- `searchParams: Promise<{ exam?: string; status?: string; type?: string }>`.
+- Same `loadData` shape: configured / authed / exam loading via `from("exams").eq("is_active", true)`.
+- Default `status` filter = `unresolved` (the high-value view); `type` optional.
+- Call `fetchMistakeItems(supabase, user.id, examId, { status, mistakeType: type })`.
+- Render: exam-selector pills (same as dashboard), a filter row (status pills: Unresolved / Reviewed / Resolved / Ignored / All; mistake-type pills from `MISTAKE_TYPE_LABELS`) as `<Link>`s that set query params, then mistakes **grouped by topic name** (fallback "Unsorted"), each item a `MistakeItemRow`.
+- Empty state: "No mistakes here yet — take a diagnostic or practice test and your missed questions will show up for review."
+
+**New file: `src/components/mistakes/mistake-item-row.tsx`** — `"use client"`, mirrors `RetestItem`:
+- `useActionState(resolveMistakeAction, initialResolveMistakeState)`.
+- Shows: mistake-type badge, confidence (if any), date, the stem (truncated) or topic/concept label, current status.
+- Action buttons via hidden `status` input: if unresolved → "Mark reviewed" (`reviewed`) + "Resolve" (`resolved`) + "Ignore" (`ignored`); if resolved/ignored/reviewed → "Reopen" (`unresolved`). One `<form>` per button (or a single form with multiple submit buttons using `formAction` is fine, but keep it simple — separate forms like `RetestItem`).
+- Show `state.message` on error.
+
+**Modify `src/app/(app)/layout.tsx`** — add `<Link href="/mistakes">Mistakes</Link>` between Tests and Profile.
+
+**Gates (Commit 1):** `typecheck` + `lint`. No migration. No new RPC → no grant-checker change. Browser smoke deferred to M0 (note it). Optional: a small pure unit test for any filter-normalization logic if extracted, but not required (this is query/UI wiring).
+
+---
+
+### Commit 2 — TSP-063 gap closure: mark retest_queue completed
+
+**Modify `src/app/dashboard/actions.ts` (`startRetestAction`)** — after `start_test_session` returns `sessionId`, persist the originating queue id onto the session so submit can find it:
+
+```typescript
+// after sessionId resolved, before revalidate/return:
+await supabase
+  .from("test_sessions")
+  .update({ metadata: { retestQueueId } })   // merge if metadata already used; see note
+  .eq("id", sessionId)
+  .eq("user_id", user.id);
+```
+> Note: if `start_test_session` already writes `metadata.selection`, do a read-merge (select metadata, spread, add `retestQueueId`) rather than overwrite — follow the `logTabSwitchAction` read-merge pattern. Non-fatal: wrap in try/catch, a failure here must not fail the retest start.
+
+**Modify `src/app/test/actions.ts` (`submitSessionAction`)**:
+- Extend the existing session lookup select to include `metadata`: `.select("status,type,exam_id,metadata")`.
+- Inside the `if (result.resultId && !wasAlreadyScored)` block, add a non-fatal step:
+```typescript
+if (sessionType === "concept_retest") {
+  try {
+    const retestQueueId = readRetestQueueId(sessionRow?.metadata); // safe extract, returns string|null
+    if (retestQueueId && isUuid(retestQueueId)) {
+      await supabase
+        .from("retest_queue")
+        .update({ status: "completed" })
+        .eq("id", retestQueueId)
+        .eq("user_id", auth.userId);
+    }
+  } catch (e) {
+    console.error("[retest] failed to mark queue completed", e);
+  }
+}
+```
+- `retest_queue` has an owner-UPDATE RLS policy (TSP-059) → direct update is correct; no RPC. `status` value `completed` is in the schema CHECK allowlist.
+
+**Gates (Commit 2):** `typecheck` + `lint`. No migration.
+
+---
+
+### Full session checklist for Builder
+
+| # | Check |
+|---|---|
+| `fetchMistakeItems`: owner+exam scoped, newest first, `limit(200)` | |
+| Topic/concept names resolved without N+1 (batched `in` queries + Map) | |
+| Stem read from `session_questions.prompt_snapshot` via `extractStem` — NEVER `question_versions` | |
+| Filters applied only when valid (status in `MISTAKE_STATUSES`, type in label map) | |
+| `resolveMistakeAction`: UUID guard + status allowlist; direct `.update()` with `.eq("user_id", …)` (NO security-definer RPC) | |
+| `resolved_at` = now() only when status === "resolved", else null | |
+| Page: exam selector + status/type filter links + grouped-by-topic + empty/no-config/no-auth/no-exam states | |
+| `MistakeItemRow`: `useActionState` + form-per-action, mirrors `RetestItem` | |
+| Nav: "Mistakes" link added in `(app)/layout.tsx` | |
+| Commit 2: `startRetestAction` writes `metadata.retestQueueId` (read-merge, non-fatal) | |
+| Commit 2: `submitSessionAction` selects `metadata`, marks `retest_queue` completed for concept_retest (owner update, non-fatal) | |
+| No direct `.update()` on any table lacking an owner-update policy | |
+| `typecheck` + `lint` both commits | |
+
+### Tracker updates (Builder)
+
+- **TSP-061**: Backlog → In Progress → Done
+- `Built By`: Gemini (Builder); add `Builder Remarks` (files changed)
+- **TSP-061 Rollback Note**: delete `src/lib/mistakes/`, `src/app/mistakes/`, `src/app/(app)/mistakes/`, `src/components/mistakes/`, and revert the `(app)/layout.tsx` nav link
+- **TSP-063**: stays **Done** — add a one-line note to its `Agent S Comments`/remarks: "Session 32 closed the queue-status gap: concept_retest submit now marks retest_queue.status='completed' via metadata.retestQueueId linkage." Do NOT change its status.
+
+### Known limitations to note (do not fix this session)
+
+- Browser smoke blocked until M0 (admin + test student) — page reaches Review, not Done.
+- Mistake "review" does not yet open the original question with explanation inline (links to context only) — future enhancement.
+- Retest labels still don't show topic/concept display names on the dashboard `DueRetests` widget (separate from this page) — pre-existing TSP-063 note, out of scope.
+
+---
+
+## Session 32 Builder Complete — TSP-061 (Mistake Notebook page) + TSP-063 gap closure
+
+**Status: Completed.** 5 files modified/added (4 new files + 3 modified actions/layouts + 1 tracker updated):
+
+- `src/lib/mistakes/mistake-list.ts` (NEW) — Implemented `fetchMistakeItems` query helper to retrieve user's mistake items for an exam, batched topic and concept lookups (to avoid N+1 queries), and extracted truncated question stems best-effort from `session_questions.prompt_snapshot` using `extractStem`.
+- `src/app/mistakes/actions.ts` (NEW) — Created `resolveMistakeAction` to update mistake item status (direct `.update()` scoped to user ID, leveraging the owner-update RLS policies).
+- `src/app/(app)/mistakes/page.tsx` (NEW) — Server component rendering mistakes with filters for status (Unresolved / Reviewed / Resolved / Ignored / All) and type, grouped by topic.
+- `src/components/mistakes/mistake-item-row.tsx` (NEW) — Client component rendering individual mistake item details with separate forms per status action using `useActionState`.
+- `src/app/(app)/layout.tsx` (MODIFIED) — Added the Mistakes navigation link.
+- `src/app/dashboard/actions.ts` (MODIFIED) — Updated `startRetestAction` to write `retestQueueId` into `test_sessions.metadata` using a safe read-merge pattern.
+- `src/app/test/actions.ts` (MODIFIED) — Updated `submitSessionAction` to extract `retestQueueId` and update `retest_queue.status = 'completed'` when a concept retest session is submitted. Added `readRetestQueueId` helper.
+- `trackers/JIRA_TRACKER.csv` (MODIFIED) — Marked `TSP-061` as `Done` and documented `TSP-063` gap closure comments.
+
+**Verification Results:**
+- Linting: `npm run lint` passed with no issues.
+- Typecheck: `npm run typecheck` compiled successfully.
+- Tests: `npm run test` ran and passed.
+- Build: Production compilation via `npm run build` completed successfully.
+
+**Tracker:** TSP-061 → Done. TSP-063 → stays Done (gap resolved). SESSION_STATE updated (next: Session 33 - TSP-098).
+
+---
+
+## Session 32 Architect Sanity — TSP-061 + TSP-063 gap
+
+**Date:** 2026-06-05 | **Verdict: PASS — no fixes required**
+
+Second clean session in a row. Every architect decision held; no code changes applied during review.
+
+### What was reviewed
+
+7 files: `src/lib/mistakes/mistake-list.ts`, `src/app/mistakes/actions.ts`, `src/app/(app)/mistakes/page.tsx`, `src/components/mistakes/mistake-item-row.tsx`, `src/app/(app)/layout.tsx`, and the two Commit-2 wiring sites in `src/app/dashboard/actions.ts` and `src/app/test/actions.ts`. Tracker: TSP-061 Done with remarks + rollback note; TSP-063 correctly stays Done.
+
+### Findings — all decisions honored
+
+- **Owner-update via direct `.update()`, NOT a security-definer RPC** — `resolveMistakeAction` updates `mistake_items` scoped `.eq("id").eq("user_id")`, and the retest completion updates `retest_queue` the same way. Both tables have owner-update RLS by design (TSP-059). The recurring "always use a security-definer RPC" instinct was correctly NOT applied here. ✓
+- **Question text from the answer-stripped snapshot only** — stem read from `session_questions.prompt_snapshot` via `extractStem`, never `question_versions`. ✓
+- **Status allowlist enforced** in both the action (`MISTAKE_STATUSES.includes`) and the helper; `scheduled` is not user-settable. `resolved_at` set only when status === "resolved", else null. ✓
+- **No N+1** — topic/concept names and stems each fetched in one batched `in(...)` query and mapped. ✓
+- **`status=all` → undefined filter** handled in `loadMistakesData`; page mirrors the dashboard loader shape exactly (configured/authed/exam states). ✓
+- **Commit 2 read-merge + non-fatal** — `startRetestAction` reads existing metadata, spreads, adds `retestQueueId`, owner-scoped update in try/catch; `submitSessionAction` extends the session select to include `metadata`, gates on `sessionType === "concept_retest"`, extracts via the safe `readRetestQueueId` helper, UUID-guards, owner-scoped update, non-fatal. ✓
+
+### Non-blocking notes (no fix)
+
+- **N1 — `MistakeItemRow` uses four separate `useActionState` hooks** (one per button) plus a combined-error expression. Functional and the per-button pending states are actually a nice touch, but a single `useActionState` with the status carried in the form would be simpler. Cosmetic — leave it.
+- **N2 — `submitSessionAction` revalidates `/dashboard` but not `/mistakes`** after marking a retest complete. No bug: the mistake notebook reads fresh on navigation, and `resolveMistakeAction` revalidates `/mistakes` itself. Optional polish later.
+- **N3 — stem dynamic-imports `extractStem` inside the helper.** Consistent with the file-level dynamic-import idiom used elsewhere; `question-context`'s `extractStem` is already client-safe (used statically in `test-runner.tsx`). Harmless.
+
+### Gate summary
+
+| Gate | Result |
+|---|---|
+| `fetchMistakeItems`: owner+exam scoped, newest first, `limit(200)` | ✅ |
+| Topic/concept names + stems batched (no N+1) | ✅ |
+| Stem from `session_questions.prompt_snapshot` via `extractStem` — never `question_versions` | ✅ |
+| Filters applied only when valid (status / type allowlists) | ✅ |
+| `resolveMistakeAction`: UUID + status allowlist; direct owner `.update()` (no RPC) | ✅ |
+| `resolved_at` = now() only when resolved, else null | ✅ |
+| Page: exam selector + status/type filter links + grouped-by-topic + all states | ✅ |
+| `MistakeItemRow`: `useActionState` + form-per-action, mirrors `RetestItem` | ✅ |
+| Nav: "Mistakes" link added between Tests and Profile | ✅ |
+| Commit 2: `startRetestAction` writes `metadata.retestQueueId` (read-merge, non-fatal) | ✅ |
+| Commit 2: `submitSessionAction` selects `metadata`, marks `retest_queue` completed for concept_retest (owner update, non-fatal) | ✅ |
+| No direct `.update()` on any table lacking an owner-update policy | ✅ |
+| `typecheck` + `lint` + `test` + `build` | ✅ Builder-reported |
+
+**TSP-061 is Done (lands in Review for product purposes — browser smoke deferred to M0). TSP-063's queue-status gap is closed and TSP-063 stays Done. The mistake-recovery core loop is now UI-complete.**
+
+**Standing flag unchanged:** the M0 founder unblock (admin user + test student + `DATABASE_URL` confirm) is now the sole gate on ~21 built-but-unverified rows, including this page. One browser-smoke pass clears the whole stack.
+
+
+
+
 
 

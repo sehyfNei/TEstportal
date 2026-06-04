@@ -369,7 +369,7 @@ export async function submitSessionAction(
   const supabase = await createClient();
   const statusResult = await supabase
     .from("test_sessions")
-    .select("status,type,exam_id")
+    .select("status,type,exam_id,metadata")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -378,7 +378,7 @@ export async function submitSessionAction(
   }
 
   const sessionRow = statusResult.data as
-    | { status?: string; type?: string; exam_id?: string }
+    | { status?: string; type?: string; exam_id?: string; metadata?: unknown }
     | null
     | undefined;
   const wasAlreadyScored = sessionRow?.status === "scored";
@@ -454,6 +454,21 @@ export async function submitSessionAction(
         }
       } catch (planError) {
         console.error("[plan] enqueue failed for result", result.resultId, planError);
+      }
+    }
+
+    if (sessionType === "concept_retest") {
+      try {
+        const retestQueueId = readRetestQueueId(sessionRow?.metadata);
+        if (retestQueueId && isUuid(retestQueueId)) {
+          await supabase
+            .from("retest_queue")
+            .update({ status: "completed" })
+            .eq("id", retestQueueId)
+            .eq("user_id", auth.userId);
+        }
+      } catch (e) {
+        console.error("[retest] failed to mark queue completed", e);
       }
     }
   }
@@ -809,4 +824,12 @@ function toMetadataRecord(value: unknown): Record<string, unknown> {
 function numericMetadataValue(value: unknown) {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function readRetestQueueId(metadata: unknown): string | null {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const record = metadata as Record<string, unknown>;
+    return typeof record.retestQueueId === "string" ? record.retestQueueId : null;
+  }
+  return null;
 }
