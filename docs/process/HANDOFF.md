@@ -11461,3 +11461,305 @@ Second clean session in a row. Every architect decision held; no code changes ap
 
 
 
+
+---
+
+# Session 33 — Architect Plan (TSP-028: question flags & quarantine)
+
+**Milestone:** M2 (Quality & Selection) — critical-path row. **Author:** Architect (Claude). **Date:** 2026-06-05.
+
+## Why this row
+
+The roadmap's critical path is M2 *before* the M3/M4/M5 depth we've already built. TSP-028 is the
+last user-facing quality-loop gap in M2: users can't yet report a bad question, and there is no
+mechanism to auto-pull a question that several users flag. It also **unblocks TSP-092** (M5 flagged
+content queue) and feeds the data flywheel.
+
+The schema already exists — `question_flags`, `questions.flag_count`, `question_stats.flag_count`,
+`quality_tier='quarantine'` — and TSP-029 already excludes `quarantine` from *all* selection
+unconditionally. So this session is mostly **behavior over existing tables**: a definer RPC to accept
+flags + auto-quarantine at threshold, a user report widget, and a lean admin resolution surface.
+
+**Founder decision surfaced (roadmap M2, noted not blocking):** admin-role model — single `is_admin()`
+vs reviewer/approver split. **Build single-admin** (`is_admin()`), consistent with every existing admin
+RPC. Flag this for the founder; segregation-of-duties can layer on later without reworking this.
+
+**Product knob:** auto-quarantine threshold = **3 distinct open flags**. Encode as a named SQL constant
+so it's tunable in one place. This is a deliberate default, not a spec value — call it out in remarks.
+
+## Scope boundary vs TSP-092
+
+TSP-028 = the *mechanism* (user flag -> count -> threshold quarantine) + a **minimal** admin view that
+lists open flags and lets an admin resolve/reject a flag, retire, or restore. The **rich triage queue**
+(bulk actions, filters, per-reason analytics) is TSP-092 (M5). Keep this admin surface lean; do not
+pre-build TSP-092.
+
+---
+
+## Deliverable 1 — Migration `supabase/migrations/202606050001_question_flags_quarantine.sql`
+
+Two security-definer RPCs + one partial unique index. **These are legitimately `language plpgsql`** —
+each is multi-statement (insert + conditional update + count). Do NOT convert to `language sql`
+(that rule is only for *single-statement* functions; this is the inverse case).
+
+### 1a. Partial unique index — one open flag per user per question
+
+```sql
+create unique index if not exists question_flags_one_open_per_user
+on public.question_flags (question_id, user_id)
+where status = 'open' and user_id is not null;
+```
+
+This makes re-flagging idempotent and prevents one user inflating the count toward quarantine.
+
+### 1b. `submit_question_flag(p_question_id uuid, p_reason text, p_details text)` -> jsonb
+
+Security-definer is **required**: a normal authenticated user cannot update `questions`
+(only `questions_admin_all` RLS), but flagging must bump `flag_count` and (at threshold) flip
+`quality_tier`/`status`. This is exactly the "definer RPC for a state transition on an RLS table with
+no user-update policy" pattern (cf. memory). Logic:
+
+1. `v_uid := auth.uid();` if null -> `raise exception 'authentication required' using errcode='42501';`
+2. Validate `p_reason in ('incorrect_answer','ambiguous','wrong_topic','outdated','low_quality','other')`
+   else raise `22023`.
+3. `select status, quality_tier into v_status, v_tier from public.questions where id = p_question_id for update;`
+   if not found -> raise `'question not found'`. If `v_status <> 'live'` -> raise
+   `'question is not open for flagging'` (only live questions are user-facing).
+4. Insert the flag with `on conflict (question_id, user_id) where status='open' do nothing` — capture
+   whether a row was inserted (`insert ... returning id into v_flag_id;` then `get diagnostics` /
+   check `v_flag_id is null`). If no row inserted (duplicate open flag), skip count changes and return
+   early with `quarantined=false, duplicate=true`.
+5. On a real insert: recompute `v_open := count(*) from public.question_flags where question_id=p_question_id and status='open';`
+   Write that count to **both** `questions.flag_count` and `question_stats.flag_count` (upsert the stats
+   row `on conflict (question_id) do update`, mirroring `set_question_quality_tier`). Keep the two counts
+   in lockstep — always set to the recomputed `v_open`, never a blind `+1`.
+6. **Threshold quarantine:** if `v_open >= 3` and `v_tier <> 'quarantine'`:
+   - `update public.questions set quality_tier='quarantine' where id=p_question_id;`
+     and upsert `question_stats.quality_tier='quarantine'`.
+   - Transition status `live -> flagged` **through the same audit trail** the lifecycle uses: insert a
+     `question_status_events (question_id, from_status='live', to_status='flagged', actor=v_uid,
+     note='auto-quarantine: N open flags')` and `update questions set status='flagged'`.
+     (Do this inline — we're already in a definer fn; do NOT call `set_question_status` because that
+     re-checks `is_admin()` and the caller is a student.) `live->flagged` is a valid lifecycle transition.
+   - Set `v_quarantined := true`.
+7. Return `jsonb_build_object('flag_id', v_flag_id, 'open_flags', v_open, 'quarantined', v_quarantined, 'duplicate', false)`.
+
+### 1c. `resolve_question_flag(p_flag_id uuid, p_resolution text, p_note text default null)` -> jsonb
+
+Admin-only flag-row resolution. Scope is intentionally narrow: it resolves the **flag**, not the
+question. Restoring the question itself (`flagged->live`) and the tier (`quarantine->silver/bronze`) stays
+with the existing `set_question_status` / `set_question_quality_tier` RPCs, driven from the admin UI —
+keeps responsibilities separated and avoids duplicating lifecycle logic.
+
+1. `if not public.is_admin() then raise exception 'admin role required' using errcode='42501'; end if;`
+2. Validate `p_resolution in ('resolved','rejected')` else raise `22023`.
+3. `select question_id, status into v_qid, v_flag_status from public.question_flags where id=p_flag_id for update;`
+   not found -> raise. If `v_flag_status not in ('open','reviewing')` -> return `changed=false`
+   (idempotent; already closed).
+4. `update public.question_flags set status=p_resolution, resolved_by=auth.uid(), resolved_at=now() where id=p_flag_id;`
+5. Recompute `v_open` for `v_qid` and write to `questions.flag_count` + `question_stats.flag_count`
+   (same lockstep upsert as 1b step 5).
+6. Return `jsonb_build_object('flag_id', p_flag_id, 'question_id', v_qid, 'resolution', p_resolution, 'open_flags', v_open, 'changed', true)`.
+
+### 1d. Grants (mandatory — the TSP-024 grant bug must not recur)
+
+```sql
+revoke all on function public.submit_question_flag(uuid, text, text) from public;
+revoke all on function public.resolve_question_flag(uuid, text, text) from public;
+grant execute on function public.submit_question_flag(uuid, text, text) to authenticated;
+grant execute on function public.resolve_question_flag(uuid, text, text) to authenticated;
+```
+
+Add **both** new RPCs to `scripts/check-rpc-grants.js` so the grant check covers them.
+
+---
+
+## Deliverable 2 — Flag reasons helper + user report widget
+
+### 2a. `src/lib/question-bank/flag-reasons.ts` (NEW)
+
+Mirror `src/lib/analytics/event-types.ts` exactly:
+
+```ts
+export const FLAG_REASONS = [
+  "incorrect_answer","ambiguous","wrong_topic","outdated","low_quality","other"
+] as const;
+export type FlagReason = (typeof FLAG_REASONS)[number];
+export const FLAG_REASON_LABELS: Record<FlagReason, string> = {
+  incorrect_answer: "Incorrect answer",
+  ambiguous: "Ambiguous / unclear",
+  wrong_topic: "Wrong topic",
+  outdated: "Outdated",
+  low_quality: "Low quality",
+  other: "Other"
+};
+export function isValidFlagReason(value: unknown): value is FlagReason {
+  return typeof value === "string" && (FLAG_REASONS as readonly string[]).includes(value);
+}
+```
+
+Keep this list **in sync with the SQL CHECK constraint and the RPC validation** — they are three copies
+of the same allowlist (same N11-style "stay in sync" caveat as quality/exposure). Note it in remarks.
+
+### 2b. `flagQuestionAction` — server action
+
+Add to `src/app/test/actions.ts` (alongside `rateExplanationAction`, same object-arg + `{ ok, message }`
+return shape). Signature: `flagQuestionAction({ questionId, reason, details })`.
+Guards in order: `hasSupabaseConfig()` -> auth (reuse the file's existing auth pattern) ->
+`isUuid(questionId)` -> `isValidFlagReason(reason)` -> trim `details` to <= 500 chars (nullable). Then
+`supabase.rpc('submit_question_flag', { p_question_id, p_reason, p_details })`. On error return
+`{ ok:false, message }`; on success return `{ ok:true, message: quarantined ? 'Thanks — flagged for review.' : 'Thanks — reported.' }`.
+Do **not** read back through `.select()`; the RPC returns jsonb directly.
+
+### 2c. `src/components/test/report-question.tsx` (NEW, `"use client"`)
+
+Mirror `explanation-rating.tsx`: a "Report this question" button that reveals the `FLAG_REASONS` as
+buttons (+ optional details `<textarea>`), `useTransition`, optimistic disable, success/duplicate/error
+text. Props: `{ questionId: string }`. On submit calls `flagQuestionAction`. Collapse after success.
+
+### 2d. Wire into `TestRunner`
+
+Render `<ReportQuestion questionId={current.questionId} />` in the question area (near the renderer,
+not gated on `locked`). Confirm the field name in `src/lib/test-session/answer-shape.ts` (`QuestionState`)
+and pass the real question id; if the runner currently only holds `session_question` ids, surface the
+underlying `question_id` from the prompt-snapshot loader. **Do not expose answer keys** — only the
+question id is needed.
+
+---
+
+## Deliverable 3 — Admin flag visibility + resolution + tests + smoke
+
+### 3a. `resolveFlagAction` — admin server action
+
+New `src/app/admin/questions/flag-actions.ts` (`"use server"`). `useActionState`-compatible signature
+`(prev, formData)` returning `{ ok, message }` (mirror the retry form in `src/app/admin/jobs`). Reads
+`flagId` + `resolution` from formData, validates resolution in {resolved,rejected}, calls
+`resolve_question_flag`, then `revalidatePath('/admin/questions/flags')`. The page is a Server Component;
+admin enforcement is also defense-in-depth in the RPC (`is_admin()`), but add the existing
+`requireAdminForAction` guard used by other admin actions.
+
+### 3b. `src/app/admin/questions/flags/page.tsx` (NEW)
+
+Mirror `src/app/admin/ai-ratings/page.tsx` structure (`loadOpenFlags` -> `{ configured, loadError, rows }`,
+`Panel`, table). Query `question_flags` where `status in ('open','reviewing')`, newest first, `limit(100)`,
+joining minimal question metadata (`questions(id,status,quality_tier,exam_id,topic_id)`) and showing the
+reason label, details, the question's current status + tier, and the open-flag count. Each row has a
+small form -> `resolveFlagAction` with **Resolve** and **Reject** buttons (hidden `flagId` + `resolution`
+inputs), plus a link to `/admin/questions/[questionId]` for the full edit/restore/tier controls (which
+already exist). Empty state: "No open flags." Add the **Flagged** nav link to
+`src/components/admin/admin-nav.tsx` and a card on the admin overview (`src/app/admin/page.tsx`),
+matching how `/admin/ai-ratings` and `/admin/jobs` are surfaced.
+
+### 3c. Unit tests — `src/tests/unit/flag-reasons.test.ts` (NEW)
+
+Cover `isValidFlagReason` (each valid reason true; non-string/empty/unknown false) and that
+`FLAG_REASON_LABELS` has a label for every `FLAG_REASONS` entry (no missing keys). This is the
+offline-verifiable slice that lets the *helper* reach Done despite the browser blocker.
+
+### 3d. Live smoke — `scripts/smoke-question-flags.js` (NEW)
+
+Follow `scripts/smoke-mistake-items.js` conventions (load `DATABASE_URL` from `.env`, set a fake
+`auth.uid()` via `set_config` where needed, clean up after). Assert: (1) one live question, three
+distinct user ids each call `submit_question_flag` -> after the 3rd, `quality_tier='quarantine'`,
+`status='flagged'`, `flag_count=3`, and a `question_status_events` row `live->flagged`; (2) a duplicate
+flag from the same user does **not** increment the count; (3) `resolve_question_flag` as admin closes a
+flag and `flag_count` drops to the open-flag count; (4) a `quarantine` question is excluded from a
+`start_test_session` pick (reuses the existing selection guarantee). Document this is gated on the M0
+live-DB unblock if it can't run now.
+
+---
+
+## Verification gates (Builder)
+
+- `corepack pnpm exec vitest run src/tests/unit/flag-reasons.test.ts`
+- `corepack pnpm typecheck` · `corepack pnpm lint` · `corepack pnpm test` · `corepack pnpm build`
+- `node --check scripts/smoke-question-flags.js` and `node --check scripts/check-rpc-grants.js`
+- If live DB reachable: `node run-migrations.js` (applies `202606050001`), `node scripts/check-rpc-grants.js`
+  (now 12 RPCs incl. the 2 new), `node scripts/smoke-question-flags.js`. If not reachable, note it —
+  the SQL behavior is then Architect-Sanity-reviewed and TSP-028 lands in Review pending M0.
+
+## Security checklist (must hold)
+
+- `submit_question_flag` / `resolve_question_flag` are `security definer`, `set search_path = public`,
+  `revoke all from public`, `grant execute to authenticated`. (required)
+- Student path never updates `questions` directly — only via the definer RPC.
+- `resolve_question_flag` enforces `is_admin()` (errcode 42501) before any write.
+- Auto-quarantine status change writes a `question_status_events` audit row (actor = flagging user).
+- Report widget exposes only `question_id`; no answer keys or explanations reach the client.
+- Reason allowlist enforced in TS **and** SQL CHECK **and** RPC (three copies — keep in sync).
+
+## Expected commits
+
+Cleanly separable into two:
+1. **TSP-028 (schema + mechanism):** migration `202606050001`, `flag-reasons.ts`, `flagQuestionAction`,
+   `report-question.tsx`, TestRunner wiring, `flag-reasons.test.ts`, `smoke-question-flags.js`,
+   grant-checker entry.
+2. **TSP-028 (admin surface):** `flags/page.tsx`, `flag-actions.ts`, admin-nav + overview card.
+
+(Builder may also land as one commit if the pieces stay entangled; prefer two.)
+
+## Tracker
+
+Set TSP-028 -> In Progress (then Builder remarks on completion). It stays **Review** for product
+purposes until the M0 browser/live smoke pass — same ceiling as the other ~21 rows. The
+`flag-reasons` helper + unit test are the only fully-offline-verifiable parts.
+
+
+---
+
+# Session 33 — Architect Sanity Review (TSP-028: question flags & quarantine)
+
+**Reviewer:** Architect (Claude). **Date:** 2026-06-05. **Verdict: PASS (1 blocking bug found + fixed by Architect).**
+
+The Builder delivered TSP-028 in 3 commits (`b29382d` schema+mechanism, `67d92cb` admin surface, `50771d1` docs) closely following the plan. One blocking defect was found in the core RPC and fixed during this review; everything else is clean.
+
+## BLOCKING finding S33-A — `submit_question_flag` ON CONFLICT predicate mismatch (FIXED)
+
+The insert used:
+```sql
+on conflict (question_id, user_id) where status = 'open'
+```
+but the partial unique index is:
+```sql
+... where status = 'open' and user_id is not null
+```
+Postgres partial-index **arbiter inference** requires the index predicate to be *implied by* the ON CONFLICT predicate. `status='open'` does not imply `user_id is not null`, so Postgres cannot match the index and raises **"there is no unique or exclusion constraint matching the ON CONFLICT specification"** — on *every* call to `submit_question_flag`, i.e. the very first time any user reports any question.
+
+**Why no gate caught it:** `create function` DDL does not execute the body, so `node run-migrations.js` applied it "successfully"; the live behavioral smoke (`smoke-question-flags.js`) is blocked by the M0 ceiling; and the only offline test (`flag-reasons.test.ts`) doesn't touch SQL. Classic latent-SQL gap.
+
+**Confirmed empirically** against the live DB (temp table + identical partial index): the Builder's predicate errors; the full predicate succeeds.
+
+**Fix applied (Architect):** arbiter predicate changed to `where status = 'open' and user_id is not null` (exact match to the index). Applied in two places:
+1. `supabase/migrations/202606050001_question_flags_quarantine.sql` (source of truth / fresh installs).
+2. **Re-applied the corrected `create or replace function` directly to the live DB** (the migration tracker won't re-run an already-applied file). Verified `has_function_privilege('authenticated', ...,'execute') = true` afterward.
+
+## Gate summary
+
+| Gate | Result |
+|---|---|
+| Migration: partial unique index (one open flag/user/question) | ✅ |
+| `submit_question_flag` security definer, `set search_path=public`, revoke/grant | ✅ |
+| Auth guard (errcode 42501) before any write | ✅ |
+| Reason allowlist enforced in SQL CHECK + RPC + TS (`flag-reasons.ts`) — three copies in sync | ✅ |
+| `for update` row lock on the question before mutation | ✅ |
+| Duplicate open flag → no-op (returns `duplicate:true`, no count change) | ✅ (after S33-A fix) |
+| Counts recomputed (never blind +1); `questions.flag_count` + `question_stats.flag_count` in lockstep | ✅ |
+| Threshold (3) → quality_tier='quarantine' + status live→flagged with **inline audit event** (no `set_question_status` call) | ✅ |
+| `resolve_question_flag` admin-only (`is_admin()` 42501), validates resolution, idempotent on closed flags, lockstep recount | ✅ |
+| `flagQuestionAction`: hasSupabaseConfig → requireAuth → isUuid → isValidFlagReason → 500-char trim → RPC; no read-back | ✅ |
+| `ReportQuestion` widget mirrors `ExplanationRating`; collapses on success | ✅ |
+| `currentQuestion.questionId` = real `questions.id` (from `session_questions.question_id`), matches `submit_question_flag`'s `where id =` | ✅ verified via page loader |
+| Admin flags page: open/reviewing flags, question join, tier/status, editor link, Resolve/Reject forms | ✅ |
+| `resolveFlagAction`: `requireAdminForAction` + RPC + revalidate | ✅ |
+| Grant checker: 12 → 14 RPCs (both new RPCs present, executable) | ✅ |
+| typecheck / lint / build / `flag-reasons` unit test | ✅ Builder-reported + HEAD build clean |
+
+## Notes / non-blocking
+
+- **N33-1 (data prerequisite):** flagging requires `status='live'` questions to exist. The bank currently has ~zero live questions, so the browser smoke for this feature depends on an admin first creating/publishing questions via `/admin/questions`. Fold into the M0 smoke pass.
+- **N33-2 (allowlist drift):** the reason list now exists in 3 places (TS, SQL CHECK, RPC `in (...)`). Acceptable per plan, but any future reason change must touch all three (same caveat as quality/exposure N11).
+- **Founder role-model decision** (single-admin vs reviewer/approver) remains open and non-blocking; built single-admin as planned.
+
+## Status
+
+**TSP-028 → Review** (same M0 ceiling as ~21 other rows: needs live questions + browser/live smoke). The mechanism is now correct and live-verified at the SQL-inference level; `smoke-question-flags.js` should run as part of the M0 pass once questions are seeded. The S33-A fix is the only code change this review.

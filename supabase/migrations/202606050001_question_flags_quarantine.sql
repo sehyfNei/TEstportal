@@ -79,7 +79,7 @@ begin
   -- 4. Insert the flag; on duplicate open flag from same user, do nothing
   insert into public.question_flags (question_id, user_id, reason, details, status)
   values (p_question_id, v_uid, p_reason, p_details, 'open')
-  on conflict (question_id, user_id) where status = 'open'
+  on conflict (question_id, user_id) where status = 'open' and user_id is not null
   do nothing
   returning id into v_flag_id;
 
