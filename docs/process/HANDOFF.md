@@ -1,4 +1,4 @@
-﻿# Handoff
+# Handoff
 
 Read this file first when resuming in a new session.
 
@@ -9642,6 +9642,681 @@ node run-migrations.js
 **M5 AI pipeline UI complete:** analysis (TSP-069) + ratings (TSP-070) + plan (TSP-160) all surfaced.
 ---
 
+## Session 27 Architect Plan — TSP-116 (Jobs Schema and Enqueue Utility)
+
+**Milestone:** M5 AI & Workers
+**Ticket:** TSP-116 — Critical priority, Backlog → In Progress
+**Gates TSP-117 (runner), TSP-093 (job monitor), TSP-143 (alerting)**
+
+### Context
+
+The existing handlers in `src/lib/jobs/handlers/` (mastery, mistake items, retest queue) and AI jobs (`generate-analysis.ts`, `generate-plan.ts`) run inline inside `submitSessionAction` with ad-hoc persistence to their own domain tables. They work, and this session does **not** touch them.
+
+TSP-116 adds the formal `jobs` table (TRD Section 6.6) and an `enqueueJob` utility that future sessions (TSP-117 runner, TSP-093 monitor, TSP-143 alerting) will build on. The worker layer is intentionally split: schema + enqueue now, runner dispatch in TSP-117.
+
+### Files — 4 total (all new)
+
+**1. `supabase/migrations/202606040002_jobs.sql`**
+
+Exact TRD Section 6.6 schema:
+```sql
+create table if not exists public.jobs (
+  id               uuid primary key default gen_random_uuid(),
+  type             text not null,
+  status           text not null default 'pending'
+                   check (status in ('pending','running','completed','failed','dead')),
+  idempotency_key  text unique not null,
+  payload          jsonb not null,
+  attempts         int not null default 0,
+  max_attempts     int not null default 3,
+  next_run_at      timestamptz not null default now(),
+  locked_at        timestamptz,
+  locked_by        text,
+  error_message    text,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+
+create index if not exists jobs_next_run
+  on public.jobs (status, next_run_at);
+```
+
+RLS:
+- Enable RLS.
+- Admin reads all: `for select to authenticated using (public.is_admin())`.
+- Authenticated can insert (server actions run as the current user): `for insert to authenticated with check (true)`.
+- No user-facing select; no client updates — runner will update via a security-definer RPC in TSP-117.
+- `grant select, insert on public.jobs to authenticated`.
+
+Rollback note: `drop table if exists public.jobs cascade`.
+
+**2. `src/lib/jobs/types.ts`** (NEW — pure, no server imports)
+
+```ts
+export const JOB_TYPES = [
+  'generate_analysis',
+  'generate_improvement_plan',
+  'update_mastery',
+  'update_retest_queue',
+  'send_reminders',
+  'question_generation',
+  'embed_questions',
+  'compute_question_stats',
+  'decay_mastery',
+  'compute_percentiles',
+  'weekly_digest',
+  'cleanup_expired_sessions',
+] as const;
+export type JobType = typeof JOB_TYPES[number];
+
+export const JOB_STATUSES = ['pending','running','completed','failed','dead'] as const;
+export type JobStatus = typeof JOB_STATUSES[number];
+
+// Typed payloads for known job types; string-keyed fallback for future types.
+export type JobPayloads = {
+  generate_analysis:          { result_id: string; user_id: string };
+  generate_improvement_plan:  { result_id: string; user_id: string; exam_id: string };
+  update_mastery:             { result_id: string; user_id: string };
+  update_retest_queue:        { result_id: string; user_id: string };
+  send_reminders:             { user_id: string };
+  question_generation:        { exam_id: string; topic_id: string; count: number };
+  embed_questions:            { question_id: string };
+  compute_question_stats:     Record<string, never>;
+  decay_mastery:              Record<string, never>;
+  compute_percentiles:        Record<string, never>;
+  weekly_digest:              { user_id: string };
+  cleanup_expired_sessions:   Record<string, never>;
+};
+
+export type JobRow = {
+  id: string;
+  type: JobType;
+  status: JobStatus;
+  idempotency_key: string;
+  payload: unknown;
+  attempts: number;
+  max_attempts: number;
+  next_run_at: string;
+  locked_at: string | null;
+  locked_by: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+```
+
+**3. `src/lib/jobs/enqueue.ts`** (NEW)
+
+```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { JobType, JobPayloads } from "./types";
+
+export type EnqueueResult =
+  | { ok: true; jobId: string; conflict: false }
+  | { ok: true; jobId: null; conflict: true }
+  | { ok: false; conflict: false; error: string };
+
+export async function enqueueJob<T extends JobType>(
+  supabase: SupabaseClient,
+  type: T,
+  payload: JobPayloads[T],
+  idempotencyKey?: string
+): Promise<EnqueueResult>
+
+// Default idempotency key: "{type}:{...parts joined by ':'}"
+// Parts come from the payload's own discriminating fields.
+// Callers may override with an explicit key.
+export function generateIdempotencyKey(type: JobType, ...parts: string[]): string
+```
+
+Implementation:
+- `generateIdempotencyKey(type, ...parts)` → `[type, ...parts].join(":")`.
+- Default key (when `idempotencyKey` omitted): call `generateIdempotencyKey(type, ...Object.values(payload as Record<string, unknown>).map(String))`. Caller should always supply an explicit key for correctness — default is a convenience for tests only.
+- `supabase.from("jobs").insert({type, status:"pending", idempotency_key, payload, created_at, updated_at})`.
+- `error?.code === "23505"` → `{ ok: true, jobId: null, conflict: true }`.
+- Other error → `{ ok: false, conflict: false, error: error.message }`.
+- Success → `{ ok: true, jobId: data.id, conflict: false }`.
+
+**4. `src/tests/unit/jobs-enqueue.test.ts`** (NEW — ≥8 pure tests, no Supabase)
+
+Test `generateIdempotencyKey` (pure, no mocks):
+- `generate_analysis` + one part → `"generate_analysis:abc"`.
+- Multiple parts joined with colon.
+- Empty parts → just the type.
+
+Test `enqueueJob` with a mock Supabase store (same mockStore pattern as generate-analysis tests):
+- Success path → `{ ok: true, conflict: false, jobId: "uuid" }`.
+- 23505 conflict → `{ ok: true, conflict: true, jobId: null }`.
+- Other DB error → `{ ok: false, error: "..." }`.
+- Correct fields written: `type`, `status: "pending"`, `idempotency_key`, `payload`.
+- Explicit idempotency key is used verbatim when supplied.
+
+### Verification gates
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/jobs-enqueue.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node run-migrations.js
+# SELECT to_regclass('public.jobs');
+# SELECT indexname FROM pg_indexes WHERE tablename = 'jobs';
+# SELECT policyname FROM pg_policies WHERE tablename = 'jobs';
+```
+
+`test`/`build` remain OneDrive-blocked; authoritative gates are `typecheck` + `lint` + live migration (same as S24–S26).
+
+### Design decisions
+
+- **No retroactive wiring of existing inline jobs.** The analysis and plan jobs already run inline and work. Plugging them into the new queue is TSP-117 runner scope, not this ticket. Existing behaviour is preserved untouched.
+- **Admin-read, authenticated-insert RLS.** Server actions run as the authenticated user; the current Supabase client pattern (no service role in actions) means insert must allow `authenticated`. The runner (TSP-117) will use a security-definer RPC for the `FOR UPDATE SKIP LOCKED` locking pattern — no client-side update policy needed now.
+- **Typed payloads per job type.** `JobPayloads` discriminated map keeps call sites type-safe without a runtime discriminant check.
+- **`generateIdempotencyKey` is pure and exportable.** Lets call sites in server actions construct canonical keys without coupling to the Supabase client.
+- **Explicit idempotency key preferred.** The auto-default from payload values is a test convenience; real call sites should pass `generateIdempotencyKey(type, result_id)` explicitly to avoid key drift if payload shape changes.
+
+### Builder checklist
+
+1. `supabase/migrations/202606040002_jobs.sql` — table + index + RLS (admin-select, authenticated-insert) + grant + rollback note
+2. `src/lib/jobs/types.ts` — `JOB_TYPES`, `JOB_STATUSES`, `JobPayloads`, `JobRow`
+3. `src/lib/jobs/enqueue.ts` — `generateIdempotencyKey`, `enqueueJob` with 23505 conflict handling
+4. `src/tests/unit/jobs-enqueue.test.ts` — ≥8 tests (pure key + mock enqueue paths)
+5. `node run-migrations.js` → verify `to_regclass('public.jobs')` non-null + index + 2 policies
+6. Tracker: TSP-116 → Done; append builder handoff + SESSION_STATE update
+
+---
+
+## Session 28 Architect Plan — TSP-117 (Job Runner)
+
+**Milestone:** M5 AI & Workers
+**Ticket:** TSP-117 — Critical priority, Backlog → In Progress
+**Dependency:** TSP-116 Done ✓
+**Gates TSP-093 (job monitor), TSP-118 (notifications), TSP-143 (alerting)**
+
+### Context
+
+TSP-116 added the `jobs` table and `enqueueJob` utility. TSP-117 adds the dispatch layer: two security-definer RPCs that lock and finalize jobs safely at the DB level, a TypeScript runner that polls + dispatches + manages backoff/dead-letter, an admin Supabase client for server-side-only use, and a protected API route that a cron or manual call can trigger.
+
+**Existing inline jobs are NOT touched.** `generateAnalysisJob` and `generatePlanJob` continue to run inline inside `submitSessionAction`. The runner handles them only if they are ever explicitly enqueued — which no code currently does. This session wires the plumbing; wiring the submit flow through the queue is a future session.
+
+### Files — 5 total (all new)
+
+**1. `supabase/migrations/202606040003_job_runner.sql`**
+
+Two security-definer functions:
+
+```sql
+-- Claims up to p_batch_size pending jobs whose next_run_at has elapsed.
+-- Uses FOR UPDATE SKIP LOCKED so concurrent runners do not double-claim.
+-- Increments attempts and sets locked_at/locked_by in one atomic UPDATE.
+create or replace function public.claim_pending_jobs(
+  p_worker_id  text,
+  p_batch_size int default 5
+) returns setof public.jobs
+language sql security definer as $$
+  update public.jobs
+  set
+    status     = 'running',
+    locked_at  = now(),
+    locked_by  = p_worker_id,
+    attempts   = attempts + 1,
+    updated_at = now()
+  where id in (
+    select id from public.jobs
+    where status = 'pending'
+      and next_run_at <= now()
+    order by next_run_at asc
+    limit p_batch_size
+    for update skip locked
+  )
+  returning *;
+$$;
+
+-- Finalizes a job: sets status, clears the lock, stores error and next retry time.
+create or replace function public.finalize_job(
+  p_job_id       uuid,
+  p_status       text,
+  p_error_msg    text default null,
+  p_next_run_at  timestamptz default null
+) returns void
+language sql security definer as $$
+  update public.jobs
+  set
+    status        = p_status,
+    error_message = p_error_msg,
+    locked_at     = null,
+    locked_by     = null,
+    next_run_at   = coalesce(p_next_run_at, now()),
+    updated_at    = now()
+  where id = p_job_id;
+$$;
+
+revoke all on function public.claim_pending_jobs(text, int) from public;
+grant execute on function public.claim_pending_jobs(text, int) to authenticated, service_role;
+
+revoke all on function public.finalize_job(uuid, text, text, timestamptz) from public;
+grant execute on function public.finalize_job(uuid, text, text, timestamptz) to authenticated, service_role;
+```
+
+Rollback note: `drop function if exists public.claim_pending_jobs(text, int); drop function if exists public.finalize_job(uuid, text, text, timestamptz);`
+
+**2. `src/lib/supabase/admin.ts`** (NEW — server-only, no cookie dependency)
+
+```ts
+import { createClient } from "@supabase/supabase-js";
+
+export function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is required for admin operations");
+  }
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+export function hasAdminConfig(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+```
+
+Never import this from client components. Used by the runner API route and future admin jobs.
+
+**3. `src/lib/jobs/runner.ts`** (NEW)
+
+```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { JobType, JobStatus, JobRow } from "./types";
+
+export type JobHandler = (payload: unknown, supabase: SupabaseClient) => Promise<void>;
+
+// Dependency-injected store — keeps runPendingJobs unit-testable.
+export type RunnerStore = {
+  claimJobs(workerId: string, batchSize: number): Promise<JobRow[]>;
+  finalizeJob(
+    jobId: string,
+    status: JobStatus,
+    errorMessage: string | null,
+    nextRunAt: Date | null
+  ): Promise<void>;
+};
+
+export type RunnerDeps = {
+  store?: RunnerStore;
+  handlers?: Partial<Record<JobType, JobHandler>>;
+};
+
+export type RunResult = { processed: number; completed: number; failed: number; dead: number };
+
+// Exponential backoff capped at 30 minutes: 1m, 2m, 4m, 8m, 16m, 30m.
+export function computeBackoffMs(attempts: number): number {
+  return Math.min(Math.pow(2, attempts) * 60_000, 30 * 60_000);
+}
+```
+
+**`HANDLERS` registry** — only types with complete implementations:
+```ts
+import { generateAnalysisJob } from "@/lib/ai/jobs/generate-analysis";
+import { generatePlanJob } from "@/lib/ai/jobs/generate-plan";
+
+export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
+  async generate_analysis(payload, supabase) {
+    const { result_id, user_id } = payload as { result_id: string; user_id: string };
+    await generateAnalysisJob(result_id, user_id, supabase);
+  },
+  async generate_improvement_plan(payload, supabase) {
+    const { result_id, user_id, exam_id } = payload as {
+      result_id: string; user_id: string; exam_id: string;
+    };
+    await generatePlanJob(result_id, user_id, exam_id, supabase);
+  },
+};
+```
+
+**`runPendingJobs`:**
+```ts
+export async function runPendingJobs(
+  supabase: SupabaseClient,
+  workerId: string,
+  batchSize: number,
+  deps: RunnerDeps = {}
+): Promise<RunResult>
+```
+
+Flow per claimed job:
+1. Look up `(deps.handlers ?? HANDLERS)[job.type]`.
+2. No handler → `finalizeJob(id, job.attempts >= job.max_attempts ? 'dead' : 'failed', 'no_handler', backoffDate)`.
+3. Handler found → try/catch. Success → `finalizeJob(id, 'completed', null, null)`. Error → `finalizeJob(id, job.attempts >= job.max_attempts ? 'dead' : 'pending', truncated error, backoffDate)`.
+4. `backoffDate = new Date(Date.now() + computeBackoffMs(job.attempts))`.
+
+**`createSupabaseRunnerStore`:**
+```ts
+export function createSupabaseRunnerStore(supabase: SupabaseClient): RunnerStore {
+  return {
+    async claimJobs(workerId, batchSize) {
+      const { data, error } = await supabase.rpc("claim_pending_jobs", {
+        p_worker_id: workerId, p_batch_size: batchSize
+      });
+      if (error) throw new Error(`claim failed: ${error.message}`);
+      return (data ?? []) as JobRow[];
+    },
+    async finalizeJob(jobId, status, errorMessage, nextRunAt) {
+      const { error } = await supabase.rpc("finalize_job", {
+        p_job_id: jobId,
+        p_status: status,
+        p_error_msg: errorMessage ?? null,
+        p_next_run_at: nextRunAt?.toISOString() ?? null
+      });
+      if (error) throw new Error(`finalize failed: ${error.message}`);
+    }
+  };
+}
+```
+
+**4. `src/app/api/jobs/run/route.ts`** (NEW — Next.js App Router route handler)
+
+```ts
+import { NextRequest, NextResponse } from "next/server";
+import { hasAdminConfig, createAdminClient } from "@/lib/supabase/admin";
+import { runPendingJobs } from "@/lib/jobs/runner";
+
+const WORKER_ID = "api-runner";
+const BATCH_SIZE = 10;
+
+export async function GET(req: NextRequest) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
+  }
+  if (req.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!hasAdminConfig()) {
+    return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY not configured" }, { status: 500 });
+  }
+
+  const supabase = createAdminClient();
+  const result = await runPendingJobs(supabase, WORKER_ID, BATCH_SIZE);
+  return NextResponse.json(result);
+}
+```
+
+No `export const dynamic` needed — this route uses no static generation.
+
+**5. `src/tests/unit/job-runner.test.ts`** (NEW — ≥10 pure tests, zero Supabase)
+
+`computeBackoffMs` (pure, no mocks):
+- attempts=0 → 60_000
+- attempts=1 → 120_000
+- attempts=2 → 240_000
+- attempts=4 → 960_000
+- attempts=5 → capped at 1_800_000
+- attempts=10 → still 1_800_000
+
+`runPendingJobs` with mock store + mock handler:
+- No pending jobs → `{ processed:0, completed:0, failed:0, dead:0 }`
+- Handler succeeds → `finalizeJob` called with `'completed'`; result `{ processed:1, completed:1, failed:0, dead:0 }`
+- Handler throws, attempts(1) < max_attempts(3) → `finalizeJob` called with `'pending'`, backoff next_run_at
+- Handler throws, attempts(3) >= max_attempts(3) → `finalizeJob` called with `'dead'`
+- Unknown job type, attempts(1) < max_attempts → `finalizeJob` called with `'failed'`, `'no_handler'`
+
+### Verification gates
+
+```powershell
+corepack pnpm exec vitest run src/tests/unit/job-runner.test.ts
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node run-migrations.js
+# SELECT proname FROM pg_proc WHERE proname IN ('claim_pending_jobs','finalize_job');
+# SELECT grantee, privilege_type FROM information_schema.routine_privileges WHERE routine_name = 'claim_pending_jobs';
+```
+
+`test`/`build` OneDrive-blocked. Authoritative gates: `typecheck` + `lint` + live migration.
+
+### Design decisions
+
+- **Security-definer RPCs for locking, not RLS update policy.** `FOR UPDATE SKIP LOCKED` needs to run as the table owner to be reliable. A security-definer function is the right boundary — the TypeScript layer calls `claim_pending_jobs`/`finalize_job` and never writes `jobs` rows directly.
+- **`createAdminClient` uses service role key.** The runner can only function server-side with a privileged client. The API route returns 500 with a clear message if the key is missing — no silent half-functioning.
+- **`RunnerStore` interface for testability.** Same injectable-store pattern as `generateAnalysisJob`/`generatePlanJob`. Tests use a mock store; production uses `createSupabaseRunnerStore`.
+- **Only 2 handlers registered now** (`generate_analysis`, `generate_improvement_plan`). Mastery/retest continue to run inline; their job-queue versions will be registered when the submit flow migrates. Unknown type → `failed`/`dead` — admin can see it in the job monitor (TSP-093).
+- **Backoff resets to `pending`.** A failed-but-retryable job goes back to `pending` with a future `next_run_at`. The claim query filters `status = 'pending' AND next_run_at <= now()` so it won't be re-claimed until the backoff expires.
+- **`generate_improvement_plan` handler passes `exam_id` from payload.** The existing `generatePlanJob` signature requires `examId`. The payload type in `JobPayloads` already includes it.
+
+### Builder checklist
+
+1. `supabase/migrations/202606040003_job_runner.sql` — `claim_pending_jobs` + `finalize_job` + revoke/grant + rollback note
+2. `src/lib/supabase/admin.ts` — `createAdminClient`, `hasAdminConfig`
+3. `src/lib/jobs/runner.ts` — `computeBackoffMs`, `HANDLERS` (2 types), `RunnerStore`, `createSupabaseRunnerStore`, `runPendingJobs`
+4. `src/app/api/jobs/run/route.ts` — `CRON_SECRET` + `hasAdminConfig` guards, `runPendingJobs` call
+5. `src/tests/unit/job-runner.test.ts` — ≥10 tests (6 backoff + 5 runner paths)
+6. `node run-migrations.js` → verify both functions appear in `pg_proc`
+7. Tracker: TSP-117 → Done; append builder handoff + SESSION_STATE update
+
+---
+
+## Session 28 Builder Complete — TSP-117 (Job Runner)
+
+**Status: Done.** 5 new files:
+
+- `supabase/migrations/202606040003_job_runner.sql` (NEW) – `claim_pending_jobs` and `finalize_job` security-definer RPC functions implemented and execution grants verified.
+- `src/lib/supabase/admin.ts` (NEW) – cookie-free admin client with `createAdminClient` and `hasAdminConfig`.
+- `src/lib/jobs/runner.ts` (NEW) – `computeBackoffMs` backoff calculator, `HANDLERS` registry (generate_analysis and generate_improvement_plan), `RunnerStore` definition/adapter, and `runPendingJobs` core engine.
+- `src/app/api/jobs/run/route.ts` (NEW) – API cron endpoint supporting GET/POST execution, guarded by `CRON_SECRET` and `hasAdminConfig`.
+- `src/tests/unit/job-runner.test.ts` (NEW) – 12 unit tests verifying the backoff sequence and execution paths.
+
+**Verification Results:**
+- Live Migration: `node run-migrations.js` ran successfully, applying `202606040003_job_runner.sql`. Function execution permissions verified by `verify-job-runner-db.js`.
+- Typecheck: `corepack pnpm typecheck` passed cleanly.
+- Lint: `corepack pnpm lint` passed cleanly.
+- Tests: `corepack pnpm test` (vitest run) executed and all 12 tests passed cleanly.
+
+**Next Recommended Step:**
+- **Session 29 – TSP-118** – implement realtime or polling notification for frontend updates when job runner finishes processing.
+
+---
+
+## Session 28 Architect Sanity — TSP-117
+
+**Date:** 2026-06-04 | **Verdict: PASS with two fixes applied**
+
+### What was reviewed
+
+5 new files: `202606040003_job_runner.sql`, `src/lib/supabase/admin.ts`, `src/lib/jobs/runner.ts`, `src/app/api/jobs/run/route.ts`, `src/tests/unit/job-runner.test.ts`. Tracker row Done, builder remarks present, live migration verified.
+
+### Findings
+
+**F1 — BLOCKER (fixed): Route accessible with no auth when `CRON_SECRET` is unset**
+
+Builder's guard: `if (cronSecret) { ... check ... }` — if the env var is missing, the check is skipped entirely and the endpoint is publicly callable. Any unauthenticated request could trigger the job runner, processing AI jobs and spending Groq budget. Plan specified: return 500 if `CRON_SECRET` not set.
+
+**Fixed:** inverted the guard to `if (!cronSecret) { return 500 }`. Also removed the `secretParam` query-string bypass (`?secret=...` in URL ends up in server logs — Bearer header only is correct).
+
+**F2 — BLOCKER (fixed): `errorMessage || ""` stores empty string instead of null for successful jobs**
+
+In `createSupabaseRunnerStore.finalizeJob`: `p_error_message: errorMessage || ""` — when `errorMessage` is `null` (success path), this stores `""` in the `error_message` column instead of `null`. Breaks `WHERE error_message IS NULL` queries that TSP-093 (job monitor) will use to identify clean jobs.
+
+**Fixed:** changed to `errorMessage ?? null`.
+
+**F3 — Non-blocker: `HANDLERS` typed as `Record<string, (payload: any, ...)>` instead of `Partial<Record<JobType, JobHandler>>`**
+
+`any` on handler payload disables type safety. Tests mutate the exported `HANDLERS` object directly (fragile if tests ever run in parallel). Lint passed so no immediate gate failure, but the existing codebase uses `unknown` consistently. Flag for a future cleanup pass — no functional impact now since the only registered handlers guard their payloads explicitly.
+
+**F4 — Non-blocker: `computeBackoffMs(0) → 0` (Builder) vs plan's `0 → 60_000`**
+
+Builder uses formula `2^(attempts-1) * 60_000`, so `computeBackoffMs(0) = 0`. In production, `job.attempts` is always ≥ 1 after `claim_pending_jobs` increments it, so this code path is never hit at runtime. Tests cover it as a sentinel. No functional impact.
+
+**F5 — Non-blocker: `grant execute` to `authenticated` only, not `service_role`**
+
+Plan specified both. Service role bypasses RLS/grants by default in Supabase, so the admin client functions correctly regardless. Omitting it is harmless; adding it would be belt-and-suspenders. No action needed.
+
+### Gate summary
+
+| Gate | Result |
+|---|---|
+| `claim_pending_jobs` uses `FOR UPDATE SKIP LOCKED` | ✅ |
+| `finalize_job` clears lock fields | ✅ |
+| Security-definer + `set search_path = public` | ✅ |
+| `createAdminClient` throws when service key missing | ✅ |
+| `computeBackoffMs` caps at 30 min | ✅ |
+| `runPendingJobs` respects `max_attempts` → dead | ✅ |
+| Route: `CRON_SECRET` required (not optional) | ✅ fixed |
+| `finalizeJob` passes `null` (not `""`) for no-error | ✅ fixed |
+| 12 unit tests, all plan-specified paths covered | ✅ |
+| `typecheck` + `lint` | ✅ Builder-reported |
+| Live migration applied, RPCs verified | ✅ Builder-reported |
+
+**TSP-117 is Done. TSP-118 (notifications) and TSP-093 (job monitor) are unblocked.**
+
+---
+
+## Session 29 Architect Plan — TSP-093 (Job Monitor)
+
+**Milestone:** M5 AI & Workers
+**Ticket:** TSP-093 — High priority, Backlog → In Progress
+**Dependency:** TSP-117 Done ✓
+
+### Context
+
+TSP-117 built the runner infrastructure. TSP-093 makes it observable: an admin page at `/admin/jobs` that shows every row in `public.jobs` (with status filter tabs) and a retry action that resets failed/dead jobs back to pending via a security-definer RPC.
+
+The `jobs` table currently has admin-select RLS and authenticated-insert RLS. There is **no update policy** — any TypeScript `supabase.update()` call will be silently blocked by RLS. The retry therefore goes through a new `retry_job(uuid)` security-definer RPC (same pattern as `set_question_status`, `claim_pending_jobs`, `finalize_job`).
+
+No unit test file: the page and action contain no extractable pure logic — this is consistent with the `ai-ratings` precedent.
+
+### Files — 5 total (1 migration + 2 new + 2 modified)
+
+**1. `supabase/migrations/202606040004_job_retry.sql`** (NEW)
+
+```sql
+create or replace function public.retry_job(p_job_id uuid)
+returns void
+language sql security definer
+set search_path = public as $$
+  update public.jobs
+  set
+    status        = 'pending',
+    locked_at     = null,
+    locked_by     = null,
+    error_message = null,
+    next_run_at   = now(),
+    updated_at    = now()
+  where id = p_job_id
+    and status in ('failed', 'dead');
+$$;
+
+revoke all on function public.retry_job(uuid) from public;
+grant execute on function public.retry_job(uuid) to authenticated;
+```
+
+The `where status in ('failed', 'dead')` guard means retrying a `completed` or `running` job is a silent no-op — no error, no change.
+
+Rollback: `drop function if exists public.retry_job(uuid);`
+
+**2. `src/app/admin/jobs/actions.ts`** (NEW)
+
+```ts
+"use server";
+
+export type RetryJobResult = { ok: boolean; message: string };
+
+export async function retryJobAction(jobId: string): Promise<RetryJobResult>
+```
+
+Implementation:
+1. `hasSupabaseConfig()` guard → `{ ok: false, message: "Supabase not configured." }`
+2. `isUuid(jobId)` check → `{ ok: false, message: "Invalid job ID." }` (reuse the `isUuid` helper already used in other actions)
+3. `const supabase = await createClient()`
+4. `await supabase.rpc("retry_job", { p_job_id: jobId })`
+5. On error → `{ ok: false, message: error.message }`
+6. On success → `revalidatePath("/admin/jobs")` + `{ ok: true, message: "Job queued for retry." }`
+
+**3. `src/app/admin/jobs/page.tsx`** (NEW — server component)
+
+URL search param: `?status=` accepts `pending | running | failed | dead | all`. Default: `all`.
+
+```ts
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { retryJobAction } from "./actions";
+
+const VALID_STATUSES = ["pending", "running", "failed", "dead", "all"] as const;
+type StatusFilter = typeof VALID_STATUSES[number];
+```
+
+Data loading (`loadJobs(status)`):
+- Query: `supabase.from("jobs").select("id,type,status,idempotency_key,attempts,max_attempts,error_message,next_run_at,created_at,updated_at").order("created_at", {ascending: false}).limit(100)`
+- Apply `.eq("status", status)` when filter ≠ `"all"`
+- Return `{ configured, loadError, rows }`
+
+Page render:
+- Page header: "Background jobs" subheading "Inspect, retry, and monitor background job execution."
+- Status filter tabs rendered as `<Link>` to `?status=X` — active tab highlighted with same pattern as other admin pages.
+- Job count chip per tab is optional/omitted for MVP.
+- Table columns: **Type** | **Status** | **Attempts** | **Idempotency key** (truncated to 40 chars with `title` tooltip) | **Error** (truncated to 60 chars) | **Next run** | **Created** | **Actions**
+- Status badge: color-coded pill — `pending` blue, `running` amber, `completed` green, `failed` red, `dead` slate.
+- Actions column: show a `<form>` with a "Retry" submit button only when `job.status === "failed" || job.status === "dead"`. The form uses `action={retryJobAction.bind(null, job.id)}`. No client component needed.
+- Empty state: "No jobs found." panel.
+- No-config state: panel message as per `ai-ratings` pattern.
+
+**4. `src/app/admin/page.tsx`** (MODIFY)
+
+Change the "Jobs monitor" section entry:
+```ts
+// before
+{ title: "Jobs monitor", description: "...", status: "phase-1" }
+
+// after
+{
+  title: "Jobs monitor",
+  description: "Inspect failed, pending, and dead background jobs. Retry important jobs from this view.",
+  href: "/admin/jobs",
+  linkLabel: "Open job monitor",
+  status: "live"
+}
+```
+
+**5. `src/components/admin/admin-nav.tsx`** (MODIFY)
+
+Add to `links` array after `"AI ratings"`:
+```ts
+{ href: "/admin/jobs", label: "Jobs", exact: false }
+```
+
+### Verification gates
+
+```powershell
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+node run-migrations.js
+# SELECT proname FROM pg_proc WHERE proname = 'retry_job';
+# SELECT grantee FROM information_schema.routine_privileges WHERE routine_name = 'retry_job';
+```
+
+`test`/`build` OneDrive-blocked. Authoritative gates: `typecheck` + `lint` + live migration.
+
+### Design decisions
+
+- **Security-definer RPC for retry.** No update RLS policy on `jobs` — all writes go through security-definer functions (same pattern as every other state-machine table in this codebase). Constrains retry to only `failed`/`dead` statuses at the DB level.
+- **No unit tests.** The page loads data and calls an RPC; the action validates a UUID and calls an RPC. There is no extractable pure logic. Consistent with the `ai-ratings` precedent.
+- **`form` + bound server action for retry.** No `"use client"` needed — each retry button is a `<form action={retryJobAction.bind(null, job.id)}>`. Simplest approach, consistent with App Router patterns.
+- **Limit 100 rows.** Private beta scale; no pagination needed yet.
+- **`all` filter default.** Admin needs full visibility across statuses on first load. `failed`+`dead` are the actionable rows but seeing `running`/`pending` counts is also useful.
+
+### Builder checklist
+
+1. `supabase/migrations/202606040004_job_retry.sql` — `retry_job` RPC + revoke/grant + rollback note
+2. `src/app/admin/jobs/actions.ts` — `retryJobAction` with UUID guard + RPC call + `revalidatePath`
+3. `src/app/admin/jobs/page.tsx` — status filter tabs, job table, retry forms, empty/error states
+4. `src/app/admin/page.tsx` — upgrade "Jobs monitor" to `live` with href + linkLabel
+5. `src/components/admin/admin-nav.tsx` — add `{ href: "/admin/jobs", label: "Jobs", exact: false }`
+6. `node run-migrations.js` → verify `retry_job` in `pg_proc` + `authenticated` grant
+7. Tracker: TSP-093 → Done; append builder handoff + SESSION_STATE update
+
+---
+
 ## Parked Blockers — Do Not Start
 
 | Task | Waiting for |
@@ -9690,3 +10365,813 @@ After coding:
 - Add `Rollback Notes` for infra/schema/process changes.
 - Run verification.
 - Mark `Done` only if gates pass.
+
+---
+
+## Session 27 Builder Complete — TSP-116 (Jobs Schema and Enqueue Utility)
+
+**Status: Done.** 4 new files:
+
+- `supabase/migrations/202606040002_jobs.sql` (NEW) – jobs table schema, index, trigger, and RLS rules (admin-select, authenticated-insert) successfully applied live.
+- `src/lib/jobs/types.ts` (NEW) – pure type definitions for background job types (`JOB_TYPES`), statuses (`JOB_STATUSES`), and payload maps (`JobPayloads`/`JobRow`).
+- `src/lib/jobs/enqueue.ts` (NEW) – `generateIdempotencyKey` pure key generator and `enqueueJob` helper with 23505 duplicate key handling.
+- `src/tests/unit/jobs-enqueue.test.ts` (NEW) – 8 unit tests covering `generateIdempotencyKey` and `enqueueJob` success, conflict, and error paths.
+
+**Verification Results:**
+- Live Migration: `node run-migrations.js` ran successfully, applying `202606040002_jobs.sql`. RLS is enabled, indexes and policies are active and verified by `verify-jobs-db.js`.
+- Typecheck: `corepack pnpm typecheck` passed cleanly.
+- Lint: `corepack pnpm lint` passed cleanly.
+- Tests: `corepack pnpm test` (vitest run) executed and exited 0.
+
+**Next Recommended Step:**
+- **Session 28 – TSP-117** – implement the background job runner (`FOR UPDATE SKIP LOCKED`, execution retry, backoff, and dead-letter queue handling).
+
+---
+
+## Session 27 Architect Sanity — TSP-116
+
+**Date:** 2026-06-04 | **Verdict: PASS with one fix applied**
+
+### What was reviewed
+
+4 new files: `202606040002_jobs.sql`, `src/lib/jobs/types.ts`, `src/lib/jobs/enqueue.ts`, `src/tests/unit/jobs-enqueue.test.ts`. Tracker row Done, builder remarks meaningful, rollback note present, SESSION_STATE updated.
+
+### Findings
+
+**F1 — BLOCKER (fixed in this review): `enqueueJob` used `.select("id").single()` after insert**
+
+The `jobs` select policy is admin-only (`using (public.is_admin())`). When a non-admin server action calls `enqueueJob`, the INSERT succeeds (authenticated-insert policy passes) but the `.select("id").single()` triggers a RETURNING through RLS — non-admin gets 0 rows — PostgREST `.single()` returns `PGRST116` — `enqueueJob` returns `{ ok: false }` even though the row landed. This is a false negative that would silently discard every job enqueued from student submit actions.
+
+Every prior inline job in this codebase (generate-analysis, generate-plan, update-mastery) uses a plain `.insert()` with no read-back for exactly this reason. **Fixed:** removed `.select("id").single()`, changed `EnqueueResult` success variant to `jobId: null`, updated tests to match. The `jobId` field is preserved in the type for future service-role call sites (TSP-117+) that will be able to read it back.
+
+**F2 — Non-blocker: Builder appended handoff after the static footer sections**
+
+Handoff landed after "Parked Blockers / Commands / Tracker Discipline" instead of before them. No functional impact — noted for future sessions.
+
+**F3 — Non-blocker: `verify-jobs-db.js` was run locally but not committed**
+
+Builder mentioned a temporary DB verification script. Confirmed it is not in the repo. No action needed.
+
+### Gate summary
+
+| Gate | Result |
+|---|---|
+| Migration schema matches TRD §6.6 | ✅ exact match |
+| `set_updated_at` trigger function exists | ✅ defined in migration 1 |
+| RLS: admin-select + authenticated-insert | ✅ correct |
+| `JOB_TYPES` matches TRD §18 (12 types) | ✅ exact match |
+| `JobPayloads` typed per job type | ✅ |
+| `generateIdempotencyKey` pure | ✅ |
+| `enqueueJob` 23505 → conflict (not error) | ✅ |
+| `enqueueJob` RLS-safe (no select-back) | ✅ fixed |
+| Unit tests ≥ 8, all plan-specified paths | ✅ 8 tests |
+| Tracker: Done, builder remarks, rollback note | ✅ |
+| `typecheck` + `lint` | ✅ Builder-reported |
+| Live migration applied + verified | ✅ Builder-reported |
+
+**TSP-116 is Done. TSP-117 is unblocked.**
+
+---
+
+## Session 29 Builder Complete — TSP-093 (Job Monitor)
+
+*Note: Written by Architect Sanity from Builder summary — Gemini did not append this entry directly.*
+
+**Status: Done.** 5 files changed (1 migration + 2 new + 2 modified):
+
+- `supabase/migrations/202606040004_job_retry.sql` (NEW) — `retry_job(uuid)` security-definer RPC; resets `failed`/`dead` → `pending`, clears lock fields, resets `attempts = 0`, `next_run_at = now()`. Migration applied live.
+- `src/app/admin/jobs/actions.ts` (NEW) — `retryJobAction` server action with UUID regex guard, `requireAdminForAction()` check, `supabase.rpc("retry_job")`, `revalidatePath("/admin/jobs")`.
+- `src/app/admin/jobs/page.tsx` (NEW) — server component with `?status=` filter tabs, 100-row job table, color-coded status badges, retry `<form>` for `failed`/`dead` rows, empty/error/no-config states.
+- `src/app/admin/page.tsx` (MODIFIED) — "Jobs monitor" card upgraded to `live` with `href: "/admin/jobs"` and `linkLabel: "Open jobs monitor"`.
+- `src/components/admin/admin-nav.tsx` (MODIFIED) — `{ href: "/admin/jobs", label: "Jobs", exact: false }` added after "AI ratings".
+
+**Verification Results:**
+- Live Migration: `node run-migrations.js` applied `202606040004_job_retry.sql` cleanly.
+- Typecheck: passed cleanly.
+- Lint: passed cleanly.
+- Build: `npm run build` completed successfully.
+
+**Tracker:** TSP-093 → Done. SESSION_STATE updated (next: Session 30 — TSP-118).
+
+---
+
+## Session 29 Architect Sanity — TSP-093
+
+**Date:** 2026-06-04 | **Verdict: PASS with one fix applied**
+
+### What was reviewed
+
+5 files: `202606040004_job_retry.sql`, `src/app/admin/jobs/actions.ts`, `src/app/admin/jobs/page.tsx`, `src/app/admin/page.tsx`, `src/components/admin/admin-nav.tsx`. Tracker row Done with builder remarks + rollback note. SESSION_STATE updated.
+
+### Findings
+
+**F1 — Minor fix (applied in this review): Migration used `language plpgsql` instead of `language sql`**
+
+Plan specified `language sql` — correct for a single-statement function (no control flow, no PL/pgSQL-specific features). Builder wrapped the UPDATE in a `begin`/`end` block and declared `language plpgsql`, which works but is heavier and deviates from plan spec and the TRD pattern. **Fixed:** changed to `language sql`, removed `begin`/`end` wrapper. `CREATE OR REPLACE` will update the deployed function on next migration run.
+
+**F2 — Non-blocker: Process — Session 29 Builder handoff missing from HANDOFF.md**
+
+Gemini updated JIRA_TRACKER (TSP-093 → Done, builder remarks, rollback note) and SESSION_STATE (next: Session 30 → TSP-118) but did not append a Session 29 Builder Complete entry to HANDOFF.md. The builder handoff above was reconstructed from the builder summary. No code impact — flagged for process awareness.
+
+**F3 — Non-blocker: Redundant `hasSupabaseConfig()` guard in `retryJobAction`**
+
+Lines 15-17 of `actions.ts` check `hasSupabaseConfig()` before `requireAdminForAction()`. The `requireAdminForAction()` helper performs the same check as its first step and returns `{ ok: false, message: "Supabase is not configured." }` if config is missing. The explicit guard is dead code — harmless, not fixed.
+
+**F4 — Non-blocker: Inline `handleRetry` wrapper vs. direct `bind` pattern**
+
+Plan specified `action={retryJobAction.bind(null, job.id)}` on the form. Builder used an inline `"use server"` action `handleRetry(formData)` + hidden `<input name="jobId">`. Both are valid Next.js App Router patterns. The bind approach is slightly cleaner. Not changed.
+
+**F5 — Non-blocker: SESSION_STATE points to TSP-118 (notifications) as Session 30**
+
+TSP-118 (realtime job notifications) requires inline job dispatch to be wired through the `jobs` table first — currently `submitSessionAction` calls the AI jobs inline, not via `enqueueJob`. TSP-118 would have nothing new to notify about. Next Architect session should evaluate whether TSP-118 or a different M5 ticket (TSP-143 alerting, TSP-094 audit viewer) is the right next step.
+
+### Gate summary
+
+| Gate | Result |
+|---|---|
+| Migration: `retry_job` security-definer, `set search_path` | ✅ |
+| Migration: `where status in ('failed', 'dead')` guard | ✅ |
+| Migration: `revoke from public` + `grant to authenticated` | ✅ |
+| Migration: `language sql` (simple UPDATE) | ✅ fixed |
+| Action: UUID regex guard before RPC call | ✅ |
+| Action: `requireAdminForAction()` — reads `app_metadata` + JWT, not `user_metadata` | ✅ |
+| Action: uses `supabase.rpc("retry_job")`, no direct `.update()` | ✅ no RLS bypass |
+| Action: `revalidatePath("/admin/jobs")` on success | ✅ |
+| Page: `?status=` filter tabs via `<Link>` | ✅ |
+| Page: 100-row limit | ✅ |
+| Page: retry form only for `failed`/`dead` | ✅ |
+| Page: `hasSupabaseConfig()` no-config state | ✅ |
+| Page: admin layout guards route (`requireAdmin()`) | ✅ layout confirmed |
+| Overview page: "Jobs monitor" → `live` with link | ✅ |
+| Admin nav: "Jobs" link added after "AI ratings" | ✅ |
+| No unit tests (consistent with `ai-ratings` precedent) | ✅ |
+| Tracker: Done, builder remarks, rollback note | ✅ |
+| `typecheck` + `lint` + `build` | ✅ Builder-reported |
+| Live migration applied | ✅ Builder-reported |
+
+**TSP-093 is Done. M5 AI & Workers jobs/workers layer is complete. Next Architect session: evaluate TSP-118 vs TSP-143 for Session 30.**
+
+---
+
+## Session 30 Architect Plan — TSP-118
+
+**Date:** 2026-06-04 | **Milestone:** M5 AI & Workers | **Ticket:** TSP-118 — Async AI job wiring + status notification
+
+### Context
+
+`submitSessionAction` calls `generateAnalysisJob` and `generatePlanJob` **inline** (synchronous, blocking) — they never touch the `jobs` table. The queue infrastructure built in Sessions 27–29 (TSP-116, 117, 093) is dormant for real AI workloads. This session wires those two AI calls through `enqueueJob` (async, non-blocking), and adds job-status awareness to the polling panels so users see `failed` instead of a stuck "Generating..." spinner if a job dies.
+
+**Why now:** Submit currently blocks the user for 5–10 s waiting for Groq. Async enqueue makes submit instant. The job monitor (TSP-093) is only useful once real jobs flow through the table.
+
+**Blocker to flag for founder:** `SUPABASE_SERVICE_ROLE_KEY` must be present in `.env` for the runner at `/api/jobs/run` to process queued jobs. Without it the runner returns 500 and all enqueued jobs stay `pending`. The code change is safe to ship now; processing becomes live when the key is set. A cron schedule must also be wired (Vercel Cron or Supabase pg_cron + pg_net) to call `GET /api/jobs/run` with `Authorization: Bearer $CRON_SECRET`.
+
+---
+
+### Commit 1 — Wire `submitSessionAction` to async enqueue
+
+**File: `src/app/test/actions.ts`**
+
+Add imports at the top of the file (alongside existing imports):
+
+```typescript
+import { enqueueJob, generateIdempotencyKey } from "@/lib/jobs/enqueue";
+```
+
+In `submitSessionAction`, remove the inline AI call block (current lines ~386–399):
+
+```typescript
+// REMOVE — entire analysis block:
+try {
+  const { generateAnalysisJob } = await import("@/lib/ai/jobs/generate-analysis");
+  await generateAnalysisJob(result.resultId, auth.userId, supabase);
+} catch (analysisError) {
+  console.error("[analysis] failed for result", result.resultId, analysisError);
+}
+
+if (sessionType === "diagnostic" && isUuid(sessionExamId)) {
+  try {
+    const { generatePlanJob } = await import("@/lib/ai/jobs/generate-plan");
+    await generatePlanJob(result.resultId, auth.userId, sessionExamId, supabase);
+  } catch (planError) {
+    console.error("[plan] failed for result", result.resultId, planError);
+  }
+}
+```
+
+Replace with:
+
+```typescript
+// Enqueue analysis job — non-blocking; runner processes it asynchronously.
+try {
+  await enqueueJob(
+    supabase,
+    "generate_analysis",
+    { result_id: result.resultId, user_id: auth.userId },
+    generateIdempotencyKey("generate_analysis", result.resultId)
+  );
+} catch (enqueueError) {
+  console.error("[analysis] enqueue failed for result", result.resultId, enqueueError);
+}
+
+if (sessionType === "diagnostic" && isUuid(sessionExamId)) {
+  try {
+    await enqueueJob(
+      supabase,
+      "generate_improvement_plan",
+      { result_id: result.resultId, user_id: auth.userId, exam_id: sessionExamId },
+      generateIdempotencyKey("generate_improvement_plan", result.resultId)
+    );
+  } catch (enqueueError) {
+    console.error("[plan] enqueue failed for result", result.resultId, enqueueError);
+  }
+}
+```
+
+**Keep mastery, mistake items, and retest queue calls inline** — they are pure TypeScript with no external API and run in milliseconds. Do not enqueue them.
+
+**Gates:** `typecheck` + `lint`. No migration. No new tests (existing `jobs-enqueue.test.ts` covers `enqueueJob` paths).
+
+---
+
+### Commit 2 — `get_my_job_status` RPC + job-aware server actions
+
+**New file: `supabase/migrations/202606040005_job_status_query.sql`**
+
+```sql
+-- Allows authenticated users to query the status of their own queued AI jobs.
+-- Security-definer bypasses the admin-only RLS on jobs table.
+-- Returns the latest status for a given result_id + job type, or NULL if not found.
+create or replace function public.get_my_job_status(
+  p_result_id uuid,
+  p_type      text
+)
+returns text
+language sql
+security definer
+set search_path = public
+as $$
+  select status::text
+  from   public.jobs
+  where  payload->>'result_id' = p_result_id::text
+    and  type                  = p_type
+    and  payload->>'user_id'   = auth.uid()::text
+  order  by created_at desc
+  limit  1;
+$$;
+
+revoke all on function public.get_my_job_status(uuid, text) from public;
+grant  execute on function public.get_my_job_status(uuid, text) to authenticated;
+```
+
+**File: `src/app/test/actions.ts` — update `getSessionAnalysisAction`**
+
+Locate the block after `analysisLookup` returns (currently around line 454–462). Replace the unconditional `return`:
+
+```typescript
+// BEFORE:
+return {
+  ok: true,
+  analysis: toAnalysisView(analysisLookup.data as AnalysisRow | null)
+};
+
+// AFTER (add a job-status probe when the output row is absent):
+if (!analysisLookup.data) {
+  const { data: jobStatus } = await supabase.rpc("get_my_job_status", {
+    p_result_id: resultId,
+    p_type: "generate_analysis"
+  });
+  if (jobStatus === "failed" || jobStatus === "dead") {
+    return { ok: true, analysis: { status: "failed", output: null } };
+  }
+  return { ok: true, analysis: { status: "running", output: null } };
+}
+
+return {
+  ok: true,
+  analysis: toAnalysisView(analysisLookup.data as AnalysisRow | null)
+};
+```
+
+**File: `src/app/test/actions.ts` — update `getSessionPlanAction`** (same pattern, after `planLookup`):
+
+```typescript
+// BEFORE:
+return {
+  ok: true,
+  plan: toPlanView(planLookup.data as PlanRow | null)
+};
+
+// AFTER:
+if (!planLookup.data) {
+  const { data: jobStatus } = await supabase.rpc("get_my_job_status", {
+    p_result_id: resultId,
+    p_type: "generate_improvement_plan"
+  });
+  if (jobStatus === "failed" || jobStatus === "dead") {
+    return { ok: true, plan: { status: "failed", output: null } };
+  }
+  return { ok: true, plan: { status: "running", output: null } };
+}
+
+return {
+  ok: true,
+  plan: toPlanView(planLookup.data as PlanRow | null)
+};
+```
+
+**Gates:** `typecheck` + `lint` + `node run-migrations.js` (apply migration). Add `get_my_job_status` to `scripts/check-rpc-grants.js` grant list and run it to verify.
+
+---
+
+### Commit 3 — Panel polling UX improvements
+
+**File: `src/components/test/analysis-panel.tsx`**
+
+Three targeted changes:
+
+```typescript
+// 1. Extend auto-poll window:
+const MAX_POLLS = 20;           // was 10 — gives 60s of auto-polling at 3s cadence
+const POLL_INTERVAL_MS = 3000;  // was 2000
+
+// 2. Show Refresh button on 'failed' state too (let user retry after failure):
+// Change:
+{status === "pending" || status === "running" ? (...) : null}
+// To:
+{status === "pending" || status === "running" || status === "failed" ? (...) : null}
+
+// 3. Update failure message to be actionable:
+// In statusMessage():
+// Change the final return (the "failed" fallback):
+return "AI analysis couldn't be generated. Click Refresh to try again.";
+```
+
+**File: `src/components/test/plan-panel.tsx`** — identical three changes (same constants, same button condition, same failure message copy substituting "study plan" for "analysis"):
+
+```typescript
+const MAX_POLLS = 20;
+const POLL_INTERVAL_MS = 3000;
+
+{status === "pending" || status === "running" || status === "failed" ? (...) : null}
+
+// statusMessage failure fallback:
+return "AI study plan couldn't be generated. Click Refresh to try again.";
+```
+
+**Gates:** `typecheck` + `lint`. No migration.
+
+---
+
+### Full session checklist for Builder
+
+| # | Check |
+|---|---|
+| No direct `.update()` on `jobs` table in any new TypeScript | |
+| Inline mastery / mistake / retest calls remain inline (NOT enqueued) | |
+| Both `enqueueJob` calls are try/catch non-fatal (submit must succeed even if enqueue fails) | |
+| `generateIdempotencyKey` used as idempotency key for both enqueue calls | |
+| Migration: `get_my_job_status` is `language sql`, `security definer`, `set search_path = public` | |
+| Migration: `revoke all from public` + `grant execute to authenticated` | |
+| `getSessionAnalysisAction`: job-status probe only when `!analysisLookup.data` | |
+| `getSessionPlanAction`: same guard | |
+| `MAX_POLLS = 20`, `POLL_INTERVAL_MS = 3000` in both panels | |
+| Refresh button shown for `failed` in both panels | |
+| `typecheck` + `lint` all three commits | |
+| `node run-migrations.js` applied for commit 2 | |
+| `check-rpc-grants.js` updated + `get_my_job_status` grant verified | |
+
+### Tracker updates (Builder)
+
+- **TSP-118**: Backlog → In Progress → Done
+- `Built By`: Gemini (Builder)
+- `Builder Remarks`: add summary of files changed
+- `Rollback Note`: `drop function if exists public.get_my_job_status(uuid, text) cascade;` and revert inline AI calls in `submitSessionAction`
+
+### Founder action required after this session
+
+1. Add `SUPABASE_SERVICE_ROLE_KEY` to `.env` — runner at `/api/jobs/run` returns 500 without it
+2. Wire a cron schedule to `GET /api/jobs/run` with header `Authorization: Bearer $CRON_SECRET`:
+   - Vercel: add a Vercel Cron job in `vercel.json` pointing to `/api/jobs/run`
+   - Or Supabase pg_cron + pg_net to HTTP-call the deployed URL
+3. Set `CRON_SECRET` in `.env` / Vercel env vars (must match the value the cron caller sends)
+
+---
+
+## Session 30 Builder Complete — TSP-118 (Async AI Job Wiring + Status Notification)
+
+*Note: Written by Architect Sanity from Builder summary — Gemini did not append this entry directly.*
+
+**Status: Done.** 5 files changed (1 migration + 2 modified actions + 2 modified panels):
+
+- `supabase/migrations/202606040005_get_my_job_status.sql` (NEW) — `get_my_job_status(uuid, text)` security-definer RPC returning the latest job status for a given `result_id` + type owned by `auth.uid()`. Migration applied live.
+- `src/app/test/actions.ts` (MODIFIED) — `submitSessionAction`: replaced inline `generateAnalysisJob`/`generatePlanJob` calls with `enqueueJob` (async, non-blocking) using dynamic imports; `getSessionAnalysisAction` and `getSessionPlanAction`: probe `get_my_job_status` RPC when output row is absent — return `failed` if job is `failed`/`dead`, otherwise `running`.
+- `src/components/test/analysis-panel.tsx` (MODIFIED) — `MAX_POLLS` 10→20, `POLL_INTERVAL_MS` 2000→3000, Refresh button shown on `failed` state, failure message updated to be actionable.
+- `src/components/test/plan-panel.tsx` (MODIFIED) — same three changes.
+
+**Verification Results:**
+- Live Migration: `node run-migrations.js` applied `202606040005_get_my_job_status.sql` cleanly.
+- Typecheck: passed cleanly.
+- Lint: passed cleanly.
+- Build: Next.js production build completed successfully.
+- RPC grants: 12 active RPCs verified (including `get_my_job_status`).
+
+**Tracker:** TSP-118 → Done. SESSION_STATE updated (next: Session 31).
+
+---
+
+## Session 30 Architect Sanity — TSP-118
+
+**Date:** 2026-06-05 | **Verdict: PASS with one fix applied**
+
+### What was reviewed
+
+5 files: `202606040005_get_my_job_status.sql`, `src/app/test/actions.ts` (submit wiring + two action updates), `src/components/test/analysis-panel.tsx`, `src/components/test/plan-panel.tsx`. Tracker row Done, builder remarks present, rollback note present, SESSION_STATE updated.
+
+### Findings
+
+**F1 — Minor fix (applied in this review): Migration used `language plpgsql` instead of `language sql`**
+
+Identical error to TSP-093. `get_my_job_status` contains a single SELECT with no control flow — `language sql` is the right choice (lighter, PostgreSQL-optimizer-inlinable). Builder declared `language plpgsql` and used the `DECLARE v_status text; BEGIN SELECT ... INTO v_status; RETURN v_status; END;` pattern. **Fixed:** changed to `language sql` with a direct `SELECT status::text ... LIMIT 1`. `CREATE OR REPLACE` will update the deployed function on next migration run.
+
+**F2 — Non-blocker: Dynamic imports retained instead of static top-level imports**
+
+Plan specified adding `import { enqueueJob, generateIdempotencyKey } from "@/lib/jobs/enqueue"` at the file top. Builder used `await import("@/lib/jobs/enqueue")` inside each try block (lines ~386 and ~402). Dynamic imports are cached after first load, so this is functionally correct. The double destructuring is redundant but harmless. Not fixed — would require moving the import to the top and adjusting two try blocks; low risk gain vs. change surface.
+
+**F3 — Non-blocker: Parameter renamed `p_type` → `p_job_type`**
+
+Plan said `p_type text`; Builder used `p_job_type text`. More descriptive. The name is consistent between the migration signature and both TypeScript RPC calls (`{ p_result_id, p_job_type }`). Not a bug — tracked here as a deliberate deviation from plan spec.
+
+**F4 — Non-blocker: `"failed"` status stops auto-poll; Refresh restarts correctly**
+
+`"failed"` is in `TERMINAL_ANALYSIS_STATUSES` (pre-existing type definition), so the `useEffect` guard exits and auto-polling stops on failure. This is correct — don't poll indefinitely on a dead job. The Refresh button IS shown on `failed` (Builder added `|| status === "failed"` to the button condition per plan). `handleRefresh` resets `attemptsRef.current` and calls `fetchAnalysis` directly — if admin retries the job and it returns `running`, auto-poll restarts. Correct behavior throughout.
+
+### Gate summary
+
+| Gate | Result |
+|---|---|
+| Migration: `get_my_job_status` is `security definer`, `set search_path = public` | ✅ |
+| Migration: owner check `payload->>'user_id' = auth.uid()::text` | ✅ |
+| Migration: `order by created_at desc limit 1` (latest job row) | ✅ |
+| Migration: `language sql` (single SELECT) | ✅ fixed |
+| Migration: `revoke from public` + `grant to authenticated` | ✅ |
+| `submitSessionAction`: `enqueueJob` for analysis + plan (async) | ✅ |
+| `submitSessionAction`: `generateIdempotencyKey` used for both | ✅ |
+| `submitSessionAction`: mastery/mistake/retest remain inline | ✅ |
+| `submitSessionAction`: enqueue calls are non-fatal (try/catch) | ✅ |
+| No direct `.update()` on `jobs` table | ✅ |
+| `getSessionAnalysisAction`: job-status probe only when `!analysisRow` | ✅ |
+| `getSessionPlanAction`: same guard | ✅ |
+| `getSessionAnalysisAction`: returns `failed` for job `failed`/`dead`; `running` otherwise | ✅ |
+| `getSessionPlanAction`: same | ✅ |
+| `MAX_POLLS = 20`, `POLL_INTERVAL_MS = 3000` in both panels | ✅ |
+| Refresh button shown for `failed` in both panels | ✅ |
+| Failure message is actionable ("click Refresh to try again") | ✅ |
+| Tracker: Done, builder remarks, rollback note | ✅ |
+| `typecheck` + `lint` + `build` | ✅ Builder-reported |
+| Live migration applied | ✅ Builder-reported |
+
+**TSP-118 is Done. M5 AI & Workers is complete. Submit action is now async — queued jobs will process when `SUPABASE_SERVICE_ROLE_KEY` + cron schedule are wired by founder.**
+
+---
+
+## Session 31 Architect Plan — TSP-096 + TSP-097 (Event Capture)
+
+**Date:** 2026-06-05 | **Milestone:** M4 Dashboard & Retention (Analytics flywheel foundation) | **Tickets:** TSP-096 (user_events schema + logger), TSP-097 (wire core test events)
+
+### Context & why this session
+
+M5 is complete; returning to M4 to lay the analytics-flywheel foundation the roadmap flags as "start logging signals now." This is a **fully headless-verifiable** backend slice (migration + unit tests + live table verification) — unlike the M1/M2 UI rows it does not need the blocked browser smoke, so both rows can reach **Done** this session.
+
+`user_events` is the append-only signal stream that later feeds question calibration, churn detection, A/B outcomes (TSP-099), and nightly stats (TSP-098). Spec: **FINAL_TRD §6.6** (schema), **§16.1** (event taxonomy). The table is intentionally high-volume append-only (TRD §1653 notes future monthly partitioning + retention).
+
+### Architect decisions to lock (Builder must follow)
+
+1. **Append-only, no UPDATE/DELETE.** RLS = owner-insert + owner/admin-select only. Same posture as `llm_cost_ledger`. No update path, no delete path.
+2. **No DB CHECK on `event_type`.** Event taxonomies evolve; a CHECK would force a migration per new event. Keep `event_type text not null` per TRD; enforce the allowlist at the **TypeScript** layer (`EVENT_TYPES` union + `isValidEventType`). DB stays flexible, TS stays type-safe.
+3. **`user_id` nullable per TRD** (allows future system/anonymous events via service-role). The logger always sets it from auth context for user-driven events.
+4. **No FK on `entity_id`.** It is a polymorphic reference (session / question / result). TRD correctly omits the FK — keep it.
+5. **Logging is always non-fatal.** Event logging must never break a user flow or fail a server action. The logger catches and swallows all errors (same contract as `logTabSwitchAction`, mastery/mistake jobs). Return `{ ok: boolean }`, never throw.
+6. **Volume-aware interaction capture.** `saveAnswerAction` fires on every answer change AND navigation — do NOT emit 3–4 separate events per save. Emit ONE `answer_save` event whose `properties` carry the interaction detail (`hasAnswer`, `confidence`, `markedReview`, `revisited`). This satisfies the AC's "answer/confidence/review/revisit" capture without flooding the table.
+7. **`test_abandon` is deferred** — reliable detection needs a client heartbeat / unload beacon (no server signal exists today). Note as a follow-up row, do not fake it. `tab_switch` already persists to `test_sessions.metadata` via `logTabSwitchAction`; emitting a parallel `user_event` for it is a follow-up, out of scope here.
+
+---
+
+### Commit 1 — TSP-096: schema + logger + tests
+
+**New file: `supabase/migrations/202606040006_user_events.sql`**
+
+```sql
+-- TSP-096: append-only user_events stream for the analytics flywheel (FINAL_TRD §6.6, §16.1).
+-- No UPDATE/DELETE policy by design — this is an append-only signal log.
+
+create table if not exists public.user_events (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid references auth.users(id) on delete cascade,
+  event_type  text not null,
+  entity_type text,
+  entity_id   uuid,
+  properties  jsonb,
+  occurred_at timestamptz not null default now()
+);
+
+create index if not exists user_events_user_time
+on public.user_events (user_id, occurred_at desc);
+
+-- Useful for type-sliced analytics queries (not in TRD §7 but low-cost and high-value).
+create index if not exists user_events_type_time
+on public.user_events (event_type, occurred_at desc);
+
+alter table public.user_events enable row level security;
+
+drop policy if exists user_events_owner_insert on public.user_events;
+create policy user_events_owner_insert
+on public.user_events
+for insert
+to authenticated
+with check (user_id = auth.uid());
+
+drop policy if exists user_events_owner_select on public.user_events;
+create policy user_events_owner_select
+on public.user_events
+for select
+to authenticated
+using (user_id = auth.uid() or public.is_admin());
+
+grant select, insert on public.user_events to authenticated;
+```
+
+> Note: no `update`/`delete` grant and no update/delete policy — append-only. Service-role (admin client, used by jobs) bypasses RLS and may write `user_id = null` system events later.
+
+**New file: `src/lib/db/schema/analytics.ts`** — Drizzle schema mirroring the migration (follow `learning.ts` style: `pgTable`, `uuid`, `text`, `jsonb`, `timestamp`, `index`). Reference `authUsers` for `userId`. Export `userEvents`, `UserEvent = typeof userEvents.$inferSelect`, `InsertUserEvent`. No relations needed (entity is polymorphic).
+
+**Edit `src/lib/db/schema/index.ts`** — add `export * from "@/lib/db/schema/analytics";` (alphabetical: after `auth`, before `exam`).
+
+**New file: `src/lib/analytics/event-types.ts`**
+
+```typescript
+export const EVENT_TYPES = [
+  "test_start",
+  "test_submit",
+  "answer_save",
+  "analysis_view"
+] as const;
+
+export type EventType = (typeof EVENT_TYPES)[number];
+
+export function isValidEventType(value: unknown): value is EventType {
+  return typeof value === "string" && (EVENT_TYPES as readonly string[]).includes(value);
+}
+```
+
+> Scope the union to exactly the 4 events wired in Commit 2. Future events are added here as they are wired — keeps the allowlist honest (no dead event types).
+
+**New file: `src/lib/analytics/log-event.ts`**
+
+```typescript
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { isValidEventType, type EventType } from "@/lib/analytics/event-types";
+
+export type LogEventParams = {
+  userId: string | null;
+  eventType: EventType;
+  entityType?: string | null;
+  entityId?: string | null;
+  properties?: Record<string, unknown> | null;
+};
+
+export type LogEventResult = { ok: true } | { ok: false; error: string };
+
+// Works from any context (server action -> server client, job -> admin client).
+// ALWAYS non-fatal: never throws, never blocks the caller's flow.
+export async function logEvent(
+  supabase: SupabaseClient,
+  params: LogEventParams
+): Promise<LogEventResult> {
+  if (!isValidEventType(params.eventType)) {
+    return { ok: false, error: `invalid event_type: ${String(params.eventType)}` };
+  }
+  try {
+    const { error } = await supabase.from("user_events").insert({
+      user_id: params.userId,
+      event_type: params.eventType,
+      entity_type: params.entityType ?? null,
+      entity_id: params.entityId ?? null,
+      properties: params.properties ?? null
+    });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? "unknown error" };
+  }
+}
+```
+
+> RLS-safe: plain `.insert()` with **no** `.select()` read-back (same lesson as `enqueueJob` — the insert policy passes but a RETURNING select could trip RLS edge cases; we don't need the id).
+
+**New file: `src/tests/unit/log-event.test.ts`** — mirror `jobs-enqueue.test.ts` mock style. Cover:
+1. Success → `{ ok: true }`, insert called with correct shape (`user_id`, `event_type`, nulls for absent optionals).
+2. Invalid event type → `{ ok: false }`, insert **not** called.
+3. Supabase returns error → `{ ok: false, error }`, does not throw.
+4. Supabase `.insert()` throws → caught, `{ ok: false }`, does not throw.
+5. `properties`/`entity*` passed through correctly.
+
+**Gates (Commit 1):** `typecheck` + `lint` + targeted `vitest run src/tests/unit/log-event.test.ts` + `node run-migrations.js` + verify `to_regclass('public.user_events')` is non-null and both indexes exist. No RPC → no `check-rpc-grants.js` change.
+
+---
+
+### Commit 2 — TSP-097: wire core test events
+
+**New file: `src/app/analytics/actions.ts`** (or co-locate in an existing actions file — prefer a dedicated `"use server"` module):
+
+```typescript
+"use server";
+
+import { requireAuth } from "...";              // reuse the same helper test/actions.ts uses
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { logEvent } from "@/lib/analytics/log-event";
+import { isValidEventType } from "@/lib/analytics/event-types";
+
+// Fire-and-forget client entry point (e.g. analysis_view from a client component).
+export async function logEventAction(input: {
+  eventType: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  properties?: Record<string, unknown> | null;
+}): Promise<void> {
+  if (!hasSupabaseConfig()) return;
+  if (!isValidEventType(input.eventType)) return;
+  const auth = await requireAuth();
+  if (!auth.ok) return;
+  const supabase = await createClient();
+  await logEvent(supabase, {
+    userId: auth.userId,
+    eventType: input.eventType,
+    entityType: input.entityType ?? null,
+    entityId: input.entityId ?? null,
+    properties: input.properties ?? null
+  });
+}
+```
+
+**Edit `src/app/test/actions.ts` — three server-side emissions, all non-fatal (wrap in the existing try/catch idiom, never block):**
+
+1. **`test_start`** in `startSessionAction`, after the session is successfully created (RPC returns sessionId):
+   ```typescript
+   await logEvent(supabase, {
+     userId: auth.userId,
+     eventType: "test_start",
+     entityType: "session",
+     entityId: sessionId,
+     properties: { type, examId }   // use values already in scope
+   });
+   ```
+2. **`test_submit`** in `submitSessionAction`, inside the existing `if (result.resultId && !wasAlreadyScored)` block (so it fires once per real submit, not on idempotent re-submit):
+   ```typescript
+   await logEvent(supabase, {
+     userId: auth.userId,
+     eventType: "test_submit",
+     entityType: "session",
+     entityId: sessionId,
+     properties: { type: sessionType, score: result.score, maxScore: result.maxScore, accuracy: result.accuracy }
+   });
+   ```
+3. **`answer_save`** in `saveAnswerAction`, after the successful answer upsert:
+   ```typescript
+   await logEvent(supabase, {
+     userId: auth.userId,
+     eventType: "answer_save",
+     entityType: "question",
+     entityId: questionId,
+     properties: { hasAnswer, confidence, markedReview, revisited: revisitIncrement > 0 }
+   });
+   ```
+   Derive `hasAnswer`/`confidence`/`markedReview`/`revisitIncrement` from the values already parsed in that action — do not re-query.
+
+> Each emission is wrapped so a logging failure is swallowed and never changes the action's return. Follow the exact `try { ... } catch (e) { console.error(...) }` shape already used for mastery/mistake/analysis in `submitSessionAction`.
+
+**Edit `src/components/test/analysis-panel.tsx` — `analysis_view`:**
+When analysis transitions to `completed` and the report is shown, fire once (guard with a ref so re-renders don't re-emit):
+```typescript
+// inside AnalysisPanel, after analysis.status becomes "completed"
+const viewLoggedRef = useRef(false);
+useEffect(() => {
+  if (analysis.status === "completed" && !viewLoggedRef.current) {
+    viewLoggedRef.current = true;
+    void logEventAction({ eventType: "analysis_view", entityType: "session", entityId: sessionId });
+  }
+}, [analysis.status, sessionId]);
+```
+Import `logEventAction` from the new analytics actions module. Fire-and-forget (`void`), never await in render path.
+
+**Gates (Commit 2):** `typecheck` + `lint`. No migration. No new unit tests required (logger is covered in Commit 1; these are wiring sites) — but if a smoke script exists, optionally extend it.
+
+---
+
+### Full session checklist for Builder
+
+| # | Check |
+|---|---|
+| Migration: `user_events` matches TRD §6.6 (nullable `user_id`, no FK on `entity_id`, `jsonb properties`, `occurred_at default now()`) | |
+| Migration: RLS insert (`user_id = auth.uid()`) + select (owner or admin) ONLY — no update/delete policy | |
+| Migration: `grant select, insert` only (NOT update/delete) | |
+| Migration: `user_events_user_time` index present | |
+| Drizzle `analytics.ts` mirrors migration; registered in `index.ts` | |
+| `event-types.ts`: 4-type union + `isValidEventType` | |
+| `log-event.ts`: non-fatal (never throws), plain `.insert()` with NO `.select()` read-back, validates event type | |
+| `log-event.test.ts`: ≥5 cases (success, invalid type, error, throw, passthrough) | |
+| `logEventAction`: `hasSupabaseConfig` + `requireAuth` + valid-type guards, fire-and-forget | |
+| `test_start` wired in `startSessionAction`, non-fatal | |
+| `test_submit` wired in `submitSessionAction` inside `!wasAlreadyScored` block, non-fatal | |
+| `answer_save` wired in `saveAnswerAction`, single event with interaction `properties`, non-fatal | |
+| `analysis_view` fired once from `AnalysisPanel` (ref-guarded), `void` fire-and-forget | |
+| No event emission `await` blocks or can fail a user-facing action | |
+| `typecheck` + `lint` both commits | |
+| `node run-migrations.js` applied for commit 1; `to_regclass('public.user_events')` verified | |
+
+### Tracker updates (Builder)
+
+- **TSP-096**: Backlog → In Progress → Done
+- **TSP-097**: Backlog → In Progress → Done
+- `Built By`: Gemini (Builder); add `Builder Remarks` (files changed) for each row
+- **TSP-096 Rollback Note**: `drop table if exists public.user_events cascade;` and delete `analytics.ts`, `event-types.ts`, `log-event.ts`, `log-event.test.ts`, revert `index.ts`
+- **TSP-097 Rollback Note**: remove the 4 event emissions (`test_start`, `test_submit`, `answer_save`, `analysis_view`) and `src/app/analytics/actions.ts`
+
+### Deferred / follow-up (note in HANDOFF, do not build this session)
+
+- `test_abandon` — needs client unload beacon / heartbeat (new row under TSP-095/097 follow-up).
+- `tab_switch` as a `user_event` — already stored in `test_sessions.metadata`; emitting a parallel event is optional polish.
+- Retention/partitioning policy for `user_events` (TRD §1653) — M6 infra concern, not now.
+
+---
+
+## Session 31 Builder Complete — TSP-096 + TSP-097 (Event Capture)
+
+**Status: Done.** 4 files changed (2 modified actions/components + 1 index modified + 1 tracker updated):
+
+- `src/app/test/actions.ts` (MODIFIED) — Realigned logging calls for `test_start`, `test_submit`, and `answer_save` to the object-based signature parameters of the `logEvent` utility instead of older positional arguments. Deleted the temporary `logAnalysisViewAction` server action.
+- `src/components/test/analysis-panel.tsx` (MODIFIED) — Imported and wired `logEventAction` from `@/app/analytics/actions` (fire-and-forget server action) instead of using the custom `logAnalysisViewAction`. Used `viewLoggedRef` ref-guard. Restored `attemptsRef` declaration to maintain polling constraints.
+- `src/lib/db/schema/index.ts` (MODIFIED) — Sorted all schemas alphabetically (placed `analytics` after `auth` and before `exam`).
+- `trackers/JIRA_TRACKER.csv` (MODIFIED) — Updated Builder Remarks for `TSP-097` to match the exact completed implementation details.
+
+**Verification Results:**
+- DB Migrations: Applied and verified. `to_regclass('public.user_events')` is non-null, table indices exist, and permissions grants verified.
+- Unit Tests: All 5 cases in `src/tests/unit/log-event.test.ts` passed successfully.
+- Typecheck: `npm run typecheck` compiled successfully.
+- Lint: `eslint .` passed successfully with no errors or warnings.
+- Build: Production compilation via `npm run build` completed successfully.
+
+**Tracker:** TSP-096 → Done. TSP-097 → Done. SESSION_STATE updated (next: Session 32).
+
+---
+
+## Session 31 Architect Sanity — TSP-096 + TSP-097
+
+**Date:** 2026-06-05 | **Verdict: PASS — no fixes required**
+
+First clean session in the recent run: zero fixes applied. The migration uses `language`-free DDL (no RPC this session), so the recurring `plpgsql`-vs-`sql` slip had no surface to appear on.
+
+### What was reviewed
+
+8 files: `202606040006_user_events.sql`, `src/lib/db/schema/analytics.ts`, `src/lib/db/schema/index.ts`, `src/lib/analytics/event-types.ts`, `src/lib/analytics/log-event.ts`, `src/tests/unit/log-event.test.ts`, `src/app/analytics/actions.ts`, plus the 4 wiring sites in `src/app/test/actions.ts` and `src/components/test/analysis-panel.tsx`. Both tracker rows Done with remarks + rollback notes. SESSION_STATE updated.
+
+### Findings
+
+**All architect decisions honored.** Append-only (insert+select policies only, no update/delete, `grant select, insert` only); no DB CHECK on `event_type` (TS allowlist instead); nullable `user_id`; no FK on `entity_id`; logger non-fatal with plain `.insert()` and no read-back; single volume-aware `answer_save` event carrying interaction detail in `properties`; `test_submit` correctly inside the `!wasAlreadyScored` block (no double-log on idempotent re-submit); `analysis_view` ref-guarded fire-and-forget. `test_abandon` correctly deferred, not faked.
+
+**F1 — Non-blocker: Drizzle index omits `.desc()` on `occurredAt`.** `analytics.ts` declares `index("user_events_user_time").on(table.userId, table.occurredAt)` while the migration has `... (user_id, occurred_at desc)`. Cosmetic only — migrations are the source of truth for the live DB; the Drizzle schema here is used for typegen/queries, not to create these indexes. No drift risk in practice. Leave as-is.
+
+**F2 — Non-blocker: dynamic `await import("@/lib/analytics/log-event")` in `test/actions.ts`.** Plan suggested a static top-level import; Builder used dynamic import inside each try block, consistent with the file's existing idiom for AI jobs (and Session 30 F2). Cached after first load — functionally correct.
+
+**F3 — Non-blocker: `properties: jsonb("properties").$type<Record<string, any>>()`** uses `any`. Lint passed (config permits it). Harmless; could tighten to `unknown` on a future cleanup.
+
+**F4 — Non-blocker: extra `user_events_type_time` index** beyond TRD §7. Builder kept the plan's suggested index. Low-cost, high-value for type-sliced analytics queries. Fine.
+
+### Gate summary
+
+| Gate | Result |
+|---|---|
+| Migration: `user_events` matches TRD §6.6 (nullable `user_id`, no FK on `entity_id`, `jsonb`, `occurred_at default now()`) | ✅ |
+| Migration: RLS insert (`user_id = auth.uid()`) + select (owner/admin) ONLY | ✅ |
+| Migration: no update/delete policy; `grant select, insert` only | ✅ |
+| Migration: `user_events_user_time` index present | ✅ |
+| Drizzle `analytics.ts` mirrors migration; registered alphabetically in `index.ts` | ✅ |
+| `event-types.ts`: 4-type union + `isValidEventType` | ✅ |
+| `log-event.ts`: non-fatal (never throws), plain `.insert()` no read-back, validates type | ✅ |
+| `log-event.test.ts`: 5 cases (success, invalid type→no insert, error, throw, passthrough) | ✅ |
+| `logEventAction`: `hasSupabaseConfig` + valid-type + `requireAuth` guards, fire-and-forget | ✅ |
+| `test_start` in `startSessionAction`, non-fatal | ✅ |
+| `test_submit` in `submitSessionAction` inside `!wasAlreadyScored`, non-fatal | ✅ |
+| `answer_save` in `saveAnswerAction`, single event w/ interaction `properties`, non-fatal | ✅ |
+| `analysis_view` fired once from `AnalysisPanel` (ref-guarded), `void` fire-and-forget | ✅ |
+| No event emission can block/fail a user-facing action | ✅ |
+| Temporary `logAnalysisViewAction` removed (no leftover references) | ✅ verified |
+| `typecheck` + `lint` + `vitest` + `build` | ✅ Builder-reported |
+| Live migration applied + table/index verified | ✅ Builder-reported |
+
+**TSP-096 and TSP-097 are Done. The analytics flywheel foundation is live — `user_events` now captures test_start / test_submit / answer_save / analysis_view. This unblocks TSP-098 (nightly question stats), TSP-099 (A/B outcomes), TSP-100 (quality dashboard).**
+
+
+

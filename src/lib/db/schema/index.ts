@@ -1,4 +1,5 @@
 export * from "@/lib/db/schema/auth";
+export * from "@/lib/db/schema/analytics";
 export * from "@/lib/db/schema/exam";
 export * from "@/lib/db/schema/learning";
 export * from "@/lib/db/schema/question";

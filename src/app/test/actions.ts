@@ -127,6 +127,21 @@ export async function startSessionAction(
   }
 
   const result = toStartSessionResult(data);
+
+  // Log test_start event non-fatally
+  try {
+    const { logEvent } = await import("@/lib/analytics/log-event");
+    await logEvent(supabase, {
+      userId: auth.userId,
+      eventType: "test_start",
+      entityType: "session",
+      entityId: result.session_id,
+      properties: { type, examId }
+    });
+  } catch (logError) {
+    console.error("[analytics] failed to log test_start event", logError);
+  }
+
   revalidatePath("/dashboard");
 
   return {
@@ -253,6 +268,21 @@ export async function saveAnswerAction(
     return { ok: false, message: error.message };
   }
 
+  // Log answer_save event non-fatally
+  try {
+    const { logEvent } = await import("@/lib/analytics/log-event");
+    const hasAnswer = selectedAnswerResult.selectedAnswer !== null;
+    await logEvent(supabase, {
+      userId: auth.userId,
+      eventType: "answer_save",
+      entityType: "question",
+      entityId: questionId,
+      properties: { hasAnswer, confidence, markedReview, revisited: revisitIncrement > 0 }
+    });
+  } catch (logError) {
+    console.error("[analytics] failed to log answer_save event", logError);
+  }
+
   return {
     ok: true,
     message: "Answer saved.",
@@ -365,6 +395,19 @@ export async function submitSessionAction(
   const result = toSubmitSessionResult(data);
   if (result.resultId && !wasAlreadyScored) {
     try {
+      const { logEvent } = await import("@/lib/analytics/log-event");
+      await logEvent(supabase, {
+        userId: auth.userId,
+        eventType: "test_submit",
+        entityType: "session",
+        entityId: sessionId,
+        properties: { type: sessionType, score: result.score, maxScore: result.maxScore, accuracy: result.accuracy }
+      });
+    } catch (logError) {
+      console.error("[analytics] failed to log test_submit event", logError);
+    }
+
+    try {
       await updateMasteryJob(result.resultId, createSupabaseMasteryRepository(supabase));
     } catch (masteryError) {
       console.error("[mastery] update failed for result", result.resultId, masteryError);
@@ -383,18 +426,34 @@ export async function submitSessionAction(
     }
 
     try {
-      const { generateAnalysisJob } = await import("@/lib/ai/jobs/generate-analysis");
-      await generateAnalysisJob(result.resultId, auth.userId, supabase);
+      const { enqueueJob, generateIdempotencyKey } = await import("@/lib/jobs/enqueue");
+      const enqueueRes = await enqueueJob(
+        supabase,
+        "generate_analysis",
+        { result_id: result.resultId, user_id: auth.userId },
+        generateIdempotencyKey("generate_analysis", result.resultId)
+      );
+      if (!enqueueRes.ok) {
+        console.error("[analysis] enqueue failed:", enqueueRes.error);
+      }
     } catch (analysisError) {
-      console.error("[analysis] failed for result", result.resultId, analysisError);
+      console.error("[analysis] enqueue failed for result", result.resultId, analysisError);
     }
 
     if (sessionType === "diagnostic" && isUuid(sessionExamId)) {
       try {
-        const { generatePlanJob } = await import("@/lib/ai/jobs/generate-plan");
-        await generatePlanJob(result.resultId, auth.userId, sessionExamId, supabase);
+        const { enqueueJob, generateIdempotencyKey } = await import("@/lib/jobs/enqueue");
+        const enqueueRes = await enqueueJob(
+          supabase,
+          "generate_improvement_plan",
+          { result_id: result.resultId, user_id: auth.userId, exam_id: sessionExamId },
+          generateIdempotencyKey("generate_improvement_plan", result.resultId)
+        );
+        if (!enqueueRes.ok) {
+          console.error("[plan] enqueue failed:", enqueueRes.error);
+        }
       } catch (planError) {
-        console.error("[plan] failed for result", result.resultId, planError);
+        console.error("[plan] enqueue failed for result", result.resultId, planError);
       }
     }
   }
@@ -455,9 +514,29 @@ export async function getSessionAnalysisAction(
     return { ok: false, message: analysisLookup.error.message };
   }
 
+  const analysisRow = analysisLookup.data as AnalysisRow | null;
+  if (!analysisRow) {
+    const { data: jobStatus } = await supabase.rpc("get_my_job_status", {
+      p_result_id: resultId,
+      p_job_type: "generate_analysis"
+    });
+
+    if (jobStatus === "failed" || jobStatus === "dead") {
+      return {
+        ok: true,
+        analysis: { status: "failed", output: null }
+      };
+    }
+
+    return {
+      ok: true,
+      analysis: { status: "running", output: null }
+    };
+  }
+
   return {
     ok: true,
-    analysis: toAnalysisView(analysisLookup.data as AnalysisRow | null)
+    analysis: toAnalysisView(analysisRow)
   };
 }
 
@@ -506,11 +585,33 @@ export async function getSessionPlanAction(sessionId: string): Promise<PlanActio
     return { ok: false, message: planLookup.error.message };
   }
 
+  const planRow = planLookup.data as PlanRow | null;
+  if (!planRow) {
+    const { data: jobStatus } = await supabase.rpc("get_my_job_status", {
+      p_result_id: resultId,
+      p_job_type: "generate_improvement_plan"
+    });
+
+    if (jobStatus === "failed" || jobStatus === "dead") {
+      return {
+        ok: true,
+        plan: { status: "failed", output: null }
+      };
+    }
+
+    return {
+      ok: true,
+      plan: { status: "running", output: null }
+    };
+  }
+
   return {
     ok: true,
-    plan: toPlanView(planLookup.data as PlanRow | null)
+    plan: toPlanView(planRow)
   };
 }
+
+
 
 export type RateExplanationInput = {
   rating: RatingValue;

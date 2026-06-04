@@ -1,7 +1,7 @@
-﻿# Session State
+# Session State
 
-**Last updated:** 2026-06-03
-**Updated by:** Codex - Session 19 builder completion
+**Last updated:** 2026-06-05
+**Updated by:** Gemini (Builder) - Session 31 complete
 **Project:** Modular AI-Powered Test Series And Self-Study Portal
 
 ---
@@ -52,6 +52,18 @@ Completed foundations:
 - Session 17 completed for the first visible M4 dashboard widgets (TSP-078, TSP-079): `/dashboard` now server-renders active exam selection, readiness score, weak topics, and overview stats from `fetchDashboardOverview`.
 - Session 18 completed for M4 strategy signals and dashboard retest launch (TSP-081, TSP-063): `/dashboard` now surfaces recent strategy metrics and lets users start due retests from the queue.
 - Session 19 completed for M3 mastery decay and M4 concept-retest routing (TSP-057 + S18-A): `concept_retest` now uses the recency-aware balanced topic selector, and pg_cron schedules nightly mastery decay.
+- Session 20 completed for M4 next best action card and timeline (TSP-077, TSP-080): computeNextAction logic, next best action dashboard widgets, progress timeline query, and inline SVG rendering are done.
+- Session 21 completed for M5 AI gateway and schemas (TSP-066, TSP-067): native-fetch Groq gateway, llm_cost_ledger, grounded prompt builder, and Zod schemas for post-test analysis inputs/outputs are done.
+- Session 22 completed for M5 post-test analysis job (TSP-068): async post-test analysis generation, ai_analyses table persistence, defensive question context extraction, and submit wire-up are done.
+- Session 23 completed for M5 analysis result UI (TSP-069): client-safe AnalysisView types, server action fetching analysis, TestRunner rendering logic, and polling/refresh are done.
+- Session 24 completed for M5 explanation rating and reporting (TSP-070): explanation_ratings table, user rating action, admin downvoted ratings queue, and user-facing feedback widgets are done.
+- Session 25 completed for M5 AI study plan generation (TSP-071): prioritized study plan generated on diagnostic submit, improvement_plans table migration/RLS, and schema validation are done.
+- Session 26 completed for M5 AI study plan result UI (TSP-160): improvement plan result UI, client-safe PlanView mapper, and TestRunner rendering logic are done.
+- Session 27 completed for M5 jobs schema and enqueue utility (TSP-116): public.jobs table schema, index, triggers, and RLS (admin-select, authenticated-insert) applied live; types.ts discriminating 12 job types and payloads defined; enqueueJob utility with 23505 duplicate key resolution and generateIdempotencyKey helper added; and unit tests covering success, conflict, and error paths passing.
+- Session 28 completed for the job runner (TSP-117): `claim_pending_jobs` and `finalize_job` security-definer RPCs using `FOR UPDATE SKIP LOCKED` implemented live; cookie-free admin client `admin.ts` created; `computeBackoffMs`, handlers for `generate_analysis`/`generate_improvement_plan`, and `runPendingJobs` in `runner.ts` created; run API route endpoint created; and 12 unit tests covering backoff math and runner execution paths passing.
+- Session 29 completed for M5 job monitor (TSP-093): `retry_job` RPC security-definer function, server action `retryJobAction` with UUID guard, `/admin/jobs` overview page with filter tabs and retry forms, admin console cards and navigation links updated, and live migrations successfully applied.
+- Session 30 completed for M5 async AI job wiring + status notification (TSP-118): Wired `submitSessionAction` to enqueue `generate_analysis` and `generate_improvement_plan` jobs asynchronously; added `get_my_job_status` security-definer RPC function; updated `getSessionAnalysisAction` and `getSessionPlanAction` to fallback to checking job status via RPC if output row is absent, defaulting to `running` or returning `failed`; optimized `<AnalysisPanel>` and `<PlanPanel>` polling to 20 attempts of 3s intervals (60s total auto-polling window), rendering Refresh button and actionable message on fail.
+- Session 31 completed for M4 event capture foundation (TSP-096 + TSP-097): Deployed `user_events` table migration with indices, owner-insert / owner-admin-select RLS, and authenticated select/insert grants; added Drizzle schema mapping `analytics.ts` and registered it in `index.ts`; defined type-safe `EVENT_TYPES` allowlist and payloads; implemented non-fatal `logEvent` logger with 5 unit tests; wired `test_start` to `startSessionAction`, `test_submit` to `submitSessionAction`, `answer_save` to `saveAnswerAction`, and `analysis_view` to `AnalysisPanel` using a ref-guarded `logAnalysisViewAction` server action.
 
 ---
 
@@ -95,15 +107,30 @@ Completed foundations:
 | `TSP-057` | Done | Forgetting-curve decay is complete. Added pure `computeDecayedMastery`, 12 deterministic unit tests, a security-definer `apply_mastery_decay()` function, and an active pg_cron job named `decay-mastery-nightly` at `0 2 * * *`. |
 | `TSP-059` | Done | Mistake notebook schema is complete. Added `mistake_items` and `retest_queue` with owner RLS, authenticated grants, required indexes, idempotent mistake item uniqueness, and topic/concept XOR for retest queue. |
 | `TSP-060` | Done | Mistake item creation is complete. Added pure classification, Supabase job handler, submit-action non-fatal wiring after mastery, 12 classification tests, and live smoke for four mistake types plus idempotency. |
-| `TSP-062` | Done | Simple retest scheduler is complete. Added pure schedule computation, retest queue update job, submit-action non-fatal wiring after mistake creation, 15 scheduler tests, and live smoke for due queue rows plus idempotency. |
+| `TSP-062` | Done | Simple retest scheduler is complete. Added pure schedule computation, retest queue job, submit-action non-fatal wiring after mistake creation, 15 scheduler tests, and live smoke for due queue rows plus idempotency. |
 | `TSP-063` | Done | Concept retest sessions from dashboard are complete for MVP. Added `startRetestAction`, due retest client widget, redirect into the existing test runner, and Session 19 routing through the balanced recency-aware selector. Remaining known gaps: queue status updates and display names. |
+| `TSP-066` | Done | Native-fetch Groq gateway, append-only `llm_cost_ledger`, cost/hash helpers, kill switch, tests, migration, and live smoke are complete. |
+| `TSP-067` | Done | Versioned post-test analysis input/output schemas, validator, grounded prompt builder, and tests are complete. |
+| `TSP-068` | Done | `ai_analyses` persistence, store-injected analysis job, defensive question context extraction, non-fatal submit hook, tests, and live migration verification are complete. |
+| `TSP-069` | Done | Client-safe AnalysisView types, toAnalysisView server mapper, getSessionAnalysisAction polling action, AnalysisPanel UI with polling/refresh, and 8 unit tests are complete. |
+| `TSP-070` | Done | Explanation rating schema, database table `explanation_ratings`, rateExplanationAction server action, ExplanationRating widget, and admin ratings feedback queue are complete. |
+| `TSP-071` | Done | Priority study plan generation, database table `improvement_plans`, generatePlanJob runner, and 17 unit tests are complete. |
 | `TSP-076` | Done | Dashboard overview API is complete. Added backend aggregation for readiness, weak topics, due retests, recent sessions, unresolved mistakes, and strategy metrics, plus server action wrapper and 16 pure unit tests. |
+| `TSP-077` | Done | Dashboard next-best-action logic, unit tests, server card, and anchor link are complete. |
 | `TSP-078` | Done | Readiness card is complete. The dashboard page loads active exams, calls `fetchDashboardOverview`, and renders score, confidence, coverage, stale-topic warning, and benchmark nudge. |
 | `TSP-079` | Done | Weak topics widget is complete. The dashboard renders up to five weak topics with mastery bars, weight badges, `/tests` practice links, empty state, and overview stat chips. |
+| `TSP-080` | Done | SVG timeline query and dashboard svg visual widget are complete. |
 | `TSP-081` | Done | Strategy metrics widget is complete. The dashboard conditionally renders recent-session strategy signals and highlights negative marks lost or high-confidence wrong above threshold. |
+| `TSP-116` | Done | Database table `public.jobs` with status/next_run_at index and trigger, RLS policies, JOB_TYPES/JobPayloads types, enqueueJob helper with 23505 conflict resolution, and unit tests are complete. |
+| `TSP-117` | Done | claim_pending_jobs and finalize_job locking RPCs, createAdminClient config helper, computeBackoffMs backoff calculator, runPendingJobs engine, and API cron endpoint are complete. |
+| `TSP-118` | Done | Async AI job wiring, get_my_job_status RPC, fallback actions, and polling panel UX improvements are complete. |
+| `TSP-096` | Done | user_events schema migration, owner RLS, Drizzle mapping analytics.ts, EVENT_TYPES allowlist, logEvent logger, and 5 unit tests are complete. |
+| `TSP-097` | Done | Core test events (test_start, test_submit, answer_save, analysis_view) wired to actions and UI. |
 | `TSP-128` | Done | Session 10 scoring unit tests cover all six question types, marking rules, manifest parsing, malformed single-choice selections, and session/topic aggregation. Sanity review passed. |
 | `TSP-090` | Review | S1-A is fixed: admin guard trusts only `app_metadata.user_role` and JWT role claims, not `user_metadata`. Browser admin/non-admin smoke still needs a real admin user and reachable Supabase session. |
 | `TSP-159` | Done | `question_status_events` migration/schema and review-history integration are implemented and live migration gate is cleared. |
+| `TSP-160` | Done | Client-safe study plan types, `toPlanView` mapper with schema revalidation, `getSessionPlanAction`, and `<PlanPanel>` polling widget are complete. |
+| `TSP-093` | Done | Job monitor UI page with status filters and color-coded badges, server action for job retry, and security-definer retry RPC are complete. |
 
 ---
 
@@ -245,9 +272,9 @@ Notes:
 
 ## Next Recommended Work
 
-**Session 22 complete (2026-06-03). TSP-068 Done. Post-test analysis generation now persists to `ai_analyses`, runs non-fatally after submit, validates AI output against the Session 21 schema, and remains idempotent on duplicate submit. Next: TSP-069 analysis result UI, with founder guardrails/cost-cap decisions required before user-facing release.**
+**Session 31 Architect Plan written (2026-06-05). TSP-096 + TSP-097 (event capture): append-only user_events table + non-fatal logEvent utility + EVENT_TYPES allowlist + unit tests (Commit 1), then wire test_start / test_submit / answer_save / analysis_view into existing actions + AnalysisPanel (Commit 2). Fully headless-verifiable (migration + tests + live table check) → both rows reach Done. M5 complete; this returns to M4 analytics flywheel foundation. Builder: read HANDOFF.md Session 31 plan.**
 
-Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, Session 18 row `TSP-081`, Session 19 row `TSP-057`, Session 20 rows `TSP-077`/`TSP-080`, and Session 21 rows `TSP-066`/`TSP-067` are Done.
+Session 4-6 M1 rows remain in Review pending browser smoke. Session 7-9 M2 rows are in Review after live DB verification. Session 8 and 9 Sanity reviews passed. Session 10 rows `TSP-051`, `TSP-052`, and `TSP-128` are Done. Session 11 rows `TSP-053` and `TSP-054` are Done after Sanity review. Session 12 row `TSP-055`, Session 13 row `TSP-056`, Session 14 rows `TSP-059`/`TSP-060`, Session 15 rows `TSP-062`/`TSP-063`, Session 16 row `TSP-076`, Session 17 rows `TSP-078`/`TSP-079`, Session 18 row `TSP-081`, Session 19 row `TSP-057`, Session 20 rows `TSP-077`/`TSP-080`, Session 21 rows `TSP-066`/`TSP-067`, Session 27 row `TSP-116`, Session 28 row `TSP-117`, and Session 29 row `TSP-093` are Done.
 
 Status outcome:
 
@@ -288,12 +315,19 @@ Status outcome:
 - **TSP-067** - Done; versioned post-test analysis input/output schemas, validator, grounded prompt builder, and tests are complete.
 - **TSP-068** - Done; `ai_analyses` persistence, store-injected analysis job, defensive question context extraction, non-fatal submit hook, tests, and live migration verification are complete.
 - **TSP-128** - Done; scoring unit tests are implemented and sanity-passed.
+- **TSP-116** - Done; jobs schema, indices, trigger, and RLS policies are applied live. Discriminator types and enqueue job utility with duplicate handler are verified.
+- **TSP-117** - Done; background job runner, locking RPCs via FOR UPDATE SKIP LOCKED, backoff calculator, groq analysis/improvement plan generators, and cron API route endpoint are complete.
+- **TSP-118** - Done; async AI job wiring, get_my_job_status RPC, status fallback in actions, and UI polling improvements are complete.
+- **TSP-096** - Done; user_events schema, Drizzle schema, typescript allowlist, logEvent logger, and unit tests are complete.
+- **TSP-097** - Done; core test events tracked in session actions and result UI.
+- **TSP-093** - Done; job monitor UI page with status filters and color-coded badges, server action for job retry, and security-definer retry RPC are complete.
 
 Next immediate steps:
 
-1. **Session 23 - TSP-069** - build the analysis result UI against persisted `ai_analyses` rows.
-2. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
-3. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
+1. **Session 32 - TSP-098** - compute question stats nightly.
+2. **Founder config & wiring** - configure `SUPABASE_SERVICE_ROLE_KEY` in `.env` and wire cron trigger to `GET /api/jobs/run`.
+3. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
+4. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
 
 Still parked (need external inputs):
 

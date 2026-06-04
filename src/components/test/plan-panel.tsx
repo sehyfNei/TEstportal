@@ -5,8 +5,8 @@ import { getSessionPlanAction } from "@/app/test/actions";
 import { isTerminalPlanStatus, type PlanStatus, type PlanView } from "@/lib/ai/plan-view";
 import type { PlanOutput } from "@/lib/ai/schemas/plan";
 
-const MAX_POLLS = 10;
-const POLL_INTERVAL_MS = 2000;
+const MAX_POLLS = 20;
+const POLL_INTERVAL_MS = 3000;
 
 type PlanPanelProps = {
   initialPlan: PlanView | null;
@@ -74,7 +74,7 @@ function PendingPanel({
           <p className="text-sm font-medium text-primary">AI study plan</p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{statusMessage(status)}</p>
         </div>
-        {status === "pending" || status === "running" ? (
+        {status === "pending" || status === "running" || status === "failed" ? (
           <button
             className="h-9 rounded-md border border-border px-3 text-sm font-semibold transition hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isPolling}
@@ -98,7 +98,7 @@ function statusMessage(status: PlanStatus): string {
     return "AI study plans are currently turned off.";
   }
 
-  return "We couldn't generate a study plan for this attempt.";
+  return "We couldn't generate a study plan for this attempt. You can click Refresh to try again.";
 }
 
 function PlanReport({ output }: { output: PlanOutput }) {

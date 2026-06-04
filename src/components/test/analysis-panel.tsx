@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { getSessionAnalysisAction } from "@/app/test/actions";
+import { logEventAction } from "@/app/analytics/actions";
 import { ExplanationRating } from "@/components/test/explanation-rating";
 import {
   isTerminalAnalysisStatus,
@@ -10,8 +11,8 @@ import {
 } from "@/lib/ai/analysis-view";
 import type { AnalysisOutput } from "@/lib/ai/schemas/analysis";
 
-const MAX_POLLS = 10;
-const POLL_INTERVAL_MS = 2000;
+const MAX_POLLS = 20;
+const POLL_INTERVAL_MS = 3000;
 
 export type QuestionLabel = {
   sequence: number;
@@ -36,6 +37,14 @@ export function AnalysisPanel({
   );
   const [isPolling, startPolling] = useTransition();
   const attemptsRef = useRef(0);
+  const viewLoggedRef = useRef(false);
+
+  useEffect(() => {
+    if (analysis.status === "completed" && !viewLoggedRef.current) {
+      viewLoggedRef.current = true;
+      void logEventAction({ eventType: "analysis_view", entityType: "session", entityId: sessionId });
+    }
+  }, [analysis.status, sessionId]);
 
   const fetchAnalysis = useCallback(() => {
     startPolling(async () => {
@@ -103,7 +112,7 @@ function PendingPanel({
           <p className="text-sm font-medium text-primary">AI analysis</p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{statusMessage(status)}</p>
         </div>
-        {status === "pending" || status === "running" ? (
+        {status === "pending" || status === "running" || status === "failed" ? (
           <button
             className="h-9 rounded-md border border-border px-3 text-sm font-semibold transition hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isPolling}
@@ -127,7 +136,7 @@ function statusMessage(status: AnalysisStatus): string {
     return "AI analysis is currently turned off.";
   }
 
-  return "We couldn't generate AI analysis for this attempt.";
+  return "We couldn't generate AI analysis for this attempt. You can click Refresh to try again.";
 }
 
 function AnalysisReport({
