@@ -855,7 +855,7 @@ async function randomChoice(arr) {
         null::uuid,
         'mcq',
         ${difficulty},
-        ${q.source},
+        'pyq',
         null::int,
         ${SOURCE_REF},
         false,
