@@ -470,7 +470,7 @@ const QUESTIONS = [
 
   // SCIENCE & TECHNOLOGY (15 questions)
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The speed of light is approximately?",
     options: ["300,000 km/s", "150,000 km/s", "450,000 km/s", "200,000 km/s"],
     correct: 0,
@@ -478,7 +478,7 @@ const QUESTIONS = [
     source: "UPSC 2015"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "Which element is essential for the formation of bones?",
     options: ["Phosphorus", "Calcium", "Magnesium", "All of the above"],
     correct: 3,
@@ -486,7 +486,7 @@ const QUESTIONS = [
     source: "UPSC 2016"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The symbol for Gold is?",
     options: ["Go", "Gd", "Au", "Ag"],
     correct: 2,
@@ -494,7 +494,7 @@ const QUESTIONS = [
     source: "UPSC 2014"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "How many bones are there in the human body?",
     options: ["186", "206", "226", "246"],
     correct: 1,
@@ -502,7 +502,7 @@ const QUESTIONS = [
     source: "UPSC 2015"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The process of conversion of light energy into chemical energy is called?",
     options: ["Respiration", "Photosynthesis", "Fermentation", "Oxidation"],
     correct: 1,
@@ -510,7 +510,7 @@ const QUESTIONS = [
     source: "UPSC 2014"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "Which gas is responsible for the greenhouse effect?",
     options: ["Oxygen", "Nitrogen", "Carbon Dioxide", "Hydrogen"],
     correct: 2,
@@ -518,7 +518,7 @@ const QUESTIONS = [
     source: "UPSC 2017"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The unit of frequency is?",
     options: ["Hertz", "Watt", "Joule", "Pascal"],
     correct: 0,
@@ -526,7 +526,7 @@ const QUESTIONS = [
     source: "UPSC 2013"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "Which of the following is a non-renewable resource?",
     options: ["Solar energy", "Wind energy", "Coal", "Hydro energy"],
     correct: 2,
@@ -534,7 +534,7 @@ const QUESTIONS = [
     source: "UPSC 2016"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The scientist who developed the theory of evolution is?",
     options: ["Gregor Mendel", "Charles Darwin", "Louis Pasteur", "Albert Einstein"],
     correct: 1,
@@ -542,7 +542,7 @@ const QUESTIONS = [
     source: "UPSC 2015"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "Which technology is used in modern smartphones for fast charging?",
     options: ["Lithium-ion batteries", "Nuclear fusion", "Solar cells", "Wind turbines"],
     correct: 0,
@@ -550,7 +550,7 @@ const QUESTIONS = [
     source: "UPSC 2019"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The planet closest to the Sun is?",
     options: ["Venus", "Earth", "Mercury", "Mars"],
     correct: 2,
@@ -558,7 +558,7 @@ const QUESTIONS = [
     source: "UPSC 2014"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "Which programming language is used for artificial intelligence?",
     options: ["C++", "Java", "Python", "Assembly"],
     correct: 2,
@@ -566,7 +566,7 @@ const QUESTIONS = [
     source: "UPSC 2020"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The device used to measure atmospheric pressure is?",
     options: ["Thermometer", "Barometer", "Hygrometer", "Anemometer"],
     correct: 1,
@@ -574,7 +574,7 @@ const QUESTIONS = [
     source: "UPSC 2018"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "Which metal is liquid at room temperature?",
     options: ["Iron", "Copper", "Mercury", "Aluminum"],
     correct: 2,
@@ -582,7 +582,7 @@ const QUESTIONS = [
     source: "UPSC 2017"
   },
   {
-    topic: "science-technology",
+    topic: "science-tech",
     text: "The concept of 'Internet of Things' (IoT) refers to?",
     options: ["Networking of physical devices", "Software development", "Web design", "Data analysis"],
     correct: 0,
@@ -690,7 +690,7 @@ const QUESTIONS = [
 
   // CURRENT AFFAIRS & INTERNATIONAL RELATIONS (10 questions)
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "Which country is the largest democracy in the world?",
     options: ["United States", "India", "Indonesia", "Brazil"],
     correct: 1,
@@ -698,7 +698,7 @@ const QUESTIONS = [
     source: "UPSC 2014"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "The United Nations was founded in which year?",
     options: ["1945", "1950", "1960", "1975"],
     correct: 0,
@@ -706,7 +706,7 @@ const QUESTIONS = [
     source: "UPSC 2015"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "Which country hosts the annual World Economic Forum?",
     options: ["Switzerland", "United States", "Germany", "France"],
     correct: 0,
@@ -714,7 +714,7 @@ const QUESTIONS = [
     source: "UPSC 2016"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "The Paris Climate Agreement aims to limit global warming to?",
     options: ["1.5 degrees Celsius", "2 degrees Celsius", "2.5 degrees Celsius", "3 degrees Celsius"],
     correct: 1,
@@ -722,7 +722,7 @@ const QUESTIONS = [
     source: "UPSC 2017"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "Which country is a permanent member of UN Security Council?",
     options: ["India", "Brazil", "Japan", "China"],
     correct: 3,
@@ -730,7 +730,7 @@ const QUESTIONS = [
     source: "UPSC 2014"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "The Association of Southeast Asian Nations (ASEAN) was founded in which year?",
     options: ["1955", "1965", "1967", "1975"],
     correct: 2,
@@ -738,7 +738,7 @@ const QUESTIONS = [
     source: "UPSC 2018"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "Which organization is responsible for promoting sustainable development goals?",
     options: ["WHO", "UNDP", "UNESCO", "All of the above"],
     correct: 3,
@@ -746,7 +746,7 @@ const QUESTIONS = [
     source: "UPSC 2019"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "India is a member of which regional organization?",
     options: ["SAARC", "ASEAN", "African Union", "Arab League"],
     correct: 0,
@@ -754,7 +754,7 @@ const QUESTIONS = [
     source: "UPSC 2016"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "The Kyoto Protocol is related to?",
     options: ["Nuclear non-proliferation", "Climate change", "Trade agreements", "Human rights"],
     correct: 1,
@@ -762,7 +762,7 @@ const QUESTIONS = [
     source: "UPSC 2015"
   },
   {
-    topic: "international-relations",
+    topic: "current-affairs",
     text: "The headquarters of BRICS is located in which country?",
     options: ["Russia", "China", "South Africa", "Brazil"],
     correct: 2,
@@ -875,7 +875,7 @@ async function randomChoice(arr) {
   `;
   console.log(`📊 Total live questions in UPSC Prelims: ${live.n}`);
 
-  const [byTopic] = await sql`
+  const byTopic = await sql`
     select name, count(*)::int count
     from public.questions q
     join public.topics t on q.topic_id = t.id

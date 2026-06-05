@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "PowerShell(cd \"C:\\\\Users\\\\Rakesh\\\\Documents\\\\Test_Portal\"; $out = node scripts/check-rpc-grants.js 2>&1 | Out-String; Write-Output \"EXITCODE=$LASTEXITCODE\"; Write-Output $out)",
+      "Read(//c/Users/Rakesh/Documents/Test_Portal/**)",
+      "Bash(grep -nEA3 \"SetAllCookies\" node_modules/@supabase/ssr/dist/module/types.d.ts)"
     ]
   }
 }
