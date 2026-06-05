@@ -165,7 +165,7 @@ function StatusHistory({ events }: { events: StatusEventRow[] }) {
           {events.slice(0, 4).map((event) => (
             <li key={event.id}>
               <p className="font-medium text-foreground">
-                {event.from_status.replaceAll("_", " ")} -> {event.to_status.replaceAll("_", " ")}
+                {event.from_status.replaceAll("_", " ")} {"->"} {event.to_status.replaceAll("_", " ")}
               </p>
               <p className="mt-1">{formatDate(event.created_at)}</p>
               {event.note ? <p className="mt-1">{event.note}</p> : null}
