@@ -91,5 +91,11 @@ export function scoreSession(
 
   summary.accuracy = summary.attempted ? summary.correct / summary.attempted : 0;
 
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  summary.score = round2(summary.score);
+  for (const topic of Object.values(summary.topicScores)) {
+    topic.score = round2(topic.score);
+  }
+
   return summary;
 }
