@@ -821,12 +821,20 @@ async function randomChoice(arr) {
 
   let created = 0;
   for (const q of QUESTIONS) {
-    const [topic_rec] = await sql`
+    // Find topic by slug; auto-create if missing so seed is self-contained
+    let [topic_rec] = await sql`
       select id from public.topics where exam_id = ${exam.id} and slug = ${q.topic} limit 1
     `;
     if (!topic_rec) {
-      console.warn(`⚠️  Topic "${q.topic}" not found in exam. Skipping.`);
-      continue;
+      const displayName = q.topic.split("-").map(w => w[0].toUpperCase() + w.slice(1)).join(" ");
+      const [created] = await sql`
+        insert into public.topics (exam_id, slug, name, weight_percent)
+        values (${exam.id}, ${q.topic}, ${displayName}, 5)
+        on conflict (exam_id, slug) do update set name = excluded.name
+        returning id
+      `;
+      topic_rec = created;
+      console.log(`  + Auto-created topic: ${q.topic}`);
     }
 
     const difficulty = q.difficulty;
@@ -839,28 +847,32 @@ async function randomChoice(arr) {
       correct_options: [q.correct]
     };
 
+    // Full 17-param signature for create_admin_question
     const result = await sql`
       select create_admin_question(
-        ${exam.id},
-        ${topic_rec.id},
+        ${exam.id}::uuid,
+        ${topic_rec.id}::uuid,
+        null::uuid,
         'mcq',
         ${difficulty},
-        ${tier},
+        ${q.source},
+        null::int,
+        ${SOURCE_REF},
+        false,
+        'en',
+        'draft',
         'practice',
-        ${JSON.stringify(content)},
-        'UPSC Prelims',
-        ${SOURCE_REF}
-      ) as question_id
+        ${tier},
+        ${JSON.stringify(content)}::jsonb,
+        '',
+        '',
+        ''
+      ) as result
     `;
 
-    if (result && result[0] && result[0].question_id) {
-      const qid = result[0].question_id;
-      await sql`
-        select set_question_status(
-          ${qid},
-          'live'
-        )
-      `;
+    const qid = result?.[0]?.result?.question_id ?? result?.[0]?.result;
+    if (qid) {
+      await sql`select set_question_status(${qid}::uuid, 'live')`;
       created++;
       if (created % 20 === 0) {
         console.log(`✓ Created ${created}/${QUESTIONS.length}...`);
