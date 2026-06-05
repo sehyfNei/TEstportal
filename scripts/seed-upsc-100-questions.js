@@ -822,7 +822,7 @@ async function randomChoice(arr) {
   let created = 0;
   for (const q of QUESTIONS) {
     const [topic_rec] = await sql`
-      select id from public.topics where exam_id = ${exam.id} and name ilike ${q.topic} limit 1
+      select id from public.topics where exam_id = ${exam.id} and slug = ${q.topic} limit 1
     `;
     if (!topic_rec) {
       console.warn(`⚠️  Topic "${q.topic}" not found in exam. Skipping.`);
