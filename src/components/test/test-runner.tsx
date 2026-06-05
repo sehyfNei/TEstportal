@@ -59,7 +59,7 @@ type SaveStatus = "idle" | "pending" | "saving" | "saved" | "failed";
 
 type DebouncedSave = {
   question: TestRunnerQuestion;
-  timerId: ReturnType<typeof window.setTimeout>;
+  timerId: number;
 };
 
 const INTEGER_SAVE_DEBOUNCE_MS = 800;

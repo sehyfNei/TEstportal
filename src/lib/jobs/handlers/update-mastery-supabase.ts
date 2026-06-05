@@ -198,10 +198,10 @@ export function createSupabaseMasteryRepository(supabase: SupabaseClient): Maste
 
     return {
       id: row.id,
-      masteryScore: row.mastery_score,
+      masteryScore: String(row.mastery_score),
       questionsAttempted: row.questions_attempted,
       questionsCorrect: row.questions_correct,
-      stabilityFactor: row.stability_factor
+      stabilityFactor: String(row.stability_factor)
     };
   }
 

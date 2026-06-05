@@ -257,12 +257,12 @@ async function loadAdminQuestionPageData(filters: AdminQuestionFilterValues & { 
     questions: loadError
       ? []
       : hasActiveFilters
-        ? (searchResult.questions as AdminQuestionRow[])
+        ? ((searchResult?.questions ?? []) as AdminQuestionRow[])
         : ((questionsResult.data ?? []) as AdminQuestionRow[]),
     total: loadError
       ? 0
       : hasActiveFilters
-        ? searchResult.total
+        ? (searchResult?.total ?? 0)
         : (questionsResult.count ?? (questionsResult.data?.length ?? 0))
   };
 }

@@ -47,7 +47,7 @@ export function evaluateAnswer(type: string, content: unknown, selectedAnswer: u
   const question = toRecord(content);
   const selected = toRecord(selectedAnswer);
 
-  if (!selected) {
+  if (!selected || !question) {
     return null;
   }
 
@@ -77,7 +77,11 @@ export function evaluateAnswer(type: string, content: unknown, selectedAnswer: u
     return null;
   }
 
-  return Boolean(correctOptions?.length) && arraysEqual(sortNumbers(selectedOptions), sortNumbers(correctOptions));
+  return (
+    correctOptions !== null &&
+    correctOptions.length > 0 &&
+    arraysEqual(sortNumbers(selectedOptions), sortNumbers(correctOptions))
+  );
 }
 
 export function scoreAnswer(

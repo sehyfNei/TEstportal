@@ -227,7 +227,7 @@ function parseCsv(rawPayload: string): string[][] {
 }
 
 function firstString(...values: Array<string | undefined | null>) {
-  return values.find((value): value is string => typeof value === "string" && value.trim())
+  return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)
     ?.trim();
 }
 

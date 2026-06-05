@@ -287,7 +287,7 @@ export function QuestionEditor({ mode, exams, topics, initialValue }: QuestionEd
           <div className="flex flex-wrap items-center gap-3">
             <button
               className="h-10 rounded-md border border-border px-4 text-sm font-semibold text-foreground transition hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isRetiring || initialValue.status === "retired"}
+              disabled={isRetiring || initialValue?.status === "retired"}
               type="submit"
             >
               {isRetiring ? "Retiring..." : "Retire question"}

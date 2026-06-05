@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { startSessionAction } from "@/app/test/actions";
+import { startSessionAction, type StartSessionActionState } from "@/app/test/actions";
 
 type ExamOption = {
   description: string | null;
@@ -11,7 +11,7 @@ type ExamOption = {
   slug: string;
 };
 
-const initialState = {
+const initialState: StartSessionActionState = {
   ok: false,
   message: ""
 };

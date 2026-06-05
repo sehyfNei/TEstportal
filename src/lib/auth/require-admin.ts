@@ -4,7 +4,7 @@ import { hasSupabaseConfig } from "@/lib/supabase/env";
 
 type AdminCheckResult = { ok: false; message: string } | { ok: true; userId: string };
 type RoleCarrier = {
-  app_metadata?: { user_role?: unknown };
+  app_metadata?: Record<string, unknown>;
 };
 
 // Server Component pages/layouts use redirects. In no-config scaffold mode, this

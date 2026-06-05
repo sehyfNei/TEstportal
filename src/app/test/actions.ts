@@ -774,7 +774,7 @@ function toStartSessionResult(value: unknown) {
   };
 }
 
-function toSubmitSessionResult(value: unknown): SubmitSessionActionState["result"] {
+function toSubmitSessionResult(value: unknown): NonNullable<SubmitSessionActionState["result"]> {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 
   return {

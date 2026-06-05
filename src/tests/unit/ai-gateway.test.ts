@@ -148,7 +148,7 @@ describe("callAi", () => {
       writeLedger: async () => {}
     });
 
-    expect(requestBody?.max_tokens).toBe(MAX_OUTPUT_TOKENS_CEILING);
+    expect((requestBody as { max_tokens?: number } | null)?.max_tokens).toBe(MAX_OUTPUT_TOKENS_CEILING);
   });
 
   it("keeps the successful return value when ledger writing throws", async () => {

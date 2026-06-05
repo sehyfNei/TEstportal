@@ -129,7 +129,7 @@ export function deriveReadinessConfidence(
     return "low";
   }
 
-  if (coverage >= 0.7 && hasBenchmarkSession && avgTopicConfidence !== "low") {
+  if (coverage >= 0.7 && hasBenchmarkSession) {
     return "high";
   }
 
