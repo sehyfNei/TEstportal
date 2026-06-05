@@ -11763,3 +11763,167 @@ Postgres partial-index **arbiter inference** requires the index predicate to be 
 ## Status
 
 **TSP-028 → Review** (same M0 ceiling as ~21 other rows: needs live questions + browser/live smoke). The mechanism is now correct and live-verified at the SQL-inference level; `smoke-question-flags.js` should run as part of the M0 pass once questions are seeded. The S33-A fix is the only code change this review.
+
+
+---
+
+# Session 33 — M0 Unblock Wrap (2026-06-05, late)
+
+End-of-day stopping point. **Backend M0 is unblocked; only the manual browser smoke remains** (resuming tomorrow). Full status + step-by-step resume checklist live in `SESSION_STATE.md` → "M0 Unblock — Status & Resume Checklist".
+
+Highlights:
+- Admin + student users created & verified live (`scripts/create-test-users.js`); anon key corrected; `SUPABASE_SERVICE_ROLE_KEY` added.
+- Repo cloned off OneDrive to `C:\Users\Rakesh\Documents\Test_Portal` (dev server runs there); OneDrive copy stays canonical git/Builder workspace. Sync via `git pull` (commit here first).
+- 18 live demo MCQs seeded (`scripts/seed-demo-questions.js`) so tests + flagging have content.
+- TSP-028 Sanity PASS with fix **S33-A** (ON CONFLICT predicate) applied to migration + live DB (commit `ca7e92c`).
+- New tracker row **TSP-161** (fixed test-paper authoring) — closes the gap that exam structure (manifest) and questions (CRUD/import) have admin upload surfaces but `test_templates` do not.
+
+⚠️ Founder: rotate `SUPABASE_SERVICE_ROLE_KEY` + `GROQ_API_KEY` (briefly present in tracked `.env.example`; reverted before commit, never in git history). Keep `.env.example` placeholders-only.
+
+
+---
+
+# Session 34 — Architect Plan — TSP-092 Flagged content triage queue (2026-06-05)
+
+**Agent:** Architect (Claude / Opus 4.8)
+**Tracker row:** `TSP-092` — "Build flagged content queue" · Milestone **M5 (Admin & Content Ops)** · builds directly on M2's `TSP-028`.
+**Acceptance (tracker):** "Flagged content can be resolved, rejected, edited or retired." · **FINAL_PRD AP-07** ("Flagged question and explanation review", P0).
+**Dependencies:** `TSP-028` (flags + quarantine mechanism) and `TSP-070` (explanation ratings) — **both satisfied** (Done/Review). Row is build-ready.
+
+### Milestone / sequencing note
+M0 still gates "confirmed real," but its only remaining work is the **manual browser smoke** (a founder/human action, not an Architect→Builder slice). TSP-092 is the next *buildable* row and is **independent of that smoke** — it can be implemented in parallel while the founder runs the M0 click-through. Flag to founder: run the M0 smoke checklist (SESSION_STATE → "M0 Unblock") alongside this.
+
+### What already exists (do NOT rebuild — this session is the delta)
+- **`/admin/questions/flags`** (`page.tsx` + `resolve-flag-form.tsx`): one **row per flag**, open/reviewing only, Resolve/Reject buttons. Loads via direct `.from("question_flags")` select with a `questions(...)` join.
+- **`flag-actions.ts` → `resolveFlagAction`**: `requireAdminForAction` → `resolve_question_flag(p_flag_id, p_resolution, p_note)` RPC → revalidate. Single-flag only.
+- **Migration `202606050001_question_flags_quarantine.sql`**: `submit_question_flag` (auto-quarantine at 3 distinct open flags, inline live→flagged audit) + `resolve_question_flag` (admin-only, recompute lockstep counts). **Resolving does NOT un-quarantine** — restore is deliberately separated into the question editor's status flow.
+- **`/admin/ai-ratings`** (`TSP-070`): read-only list of down-rated explanations, links to the session. AP-07's "explanation" half.
+- **Question editor actions** (`questions/actions.ts`): `setQuestionStatusAction` → `set_question_status`, `retireQuestionAction` → `retire_admin_question` — reuse these for edit/retire; do not invent new ones.
+- **AdminNav** already has "Flagged" + "AI ratings" links. **`check-rpc-grants.js`** tracks 14 RPCs.
+
+### The delta TSP-092 adds (scope for this session)
+Upgrade the existing `/admin/questions/flags` page **in place** (don't fork a new route) from a flat per-flag list into a **rich triage queue**:
+
+1. **Group by question.** One triage card/row per flagged *question*, showing open-flag count + the set of distinct reasons + current status/tier. Rationale: quarantine and admin remediation are question-level, not flag-level.
+2. **Per-reason analytics summary** at the top: open-flag counts grouped by reason, and top-N most-flagged questions. Keep it a small server-side aggregation (pure helper, unit-tested) — **no charting library**, simple stat chips/bars like the dashboard widgets.
+3. **Filters** (URL-driven, mirror the `TSP-031` `/admin/questions` search pattern): by reason, by question status/tier, by exam. Keep `searchParams`-based, server-rendered.
+4. **Inline triage actions** beyond resolve/reject:
+   - **Resolve-all / Reject-all for a question** → new RPC `resolve_flags_for_question` (see below).
+   - **Edit** → link to `/admin/questions/[id]` (existing editor).
+   - **Retire** → reuse `setQuestionStatusAction`/`retireQuestionAction` (status → `retired`).
+   - **Restore (quarantined)** → route to the editor status flow; **do not auto-restore on flag resolution** — preserve TSP-028's separation. Document this on the page (the existing copy already says so).
+5. **Bulk action primitive** = the new RPC, so "resolve all open flags on this question" is one transaction with a single recount (not a client loop over `resolve_question_flag`).
+
+### New DB work (Database gate)
+- **Migration** `2026060X_resolve_flags_for_question.sql`:
+  - `resolve_flags_for_question(p_question_id uuid, p_resolution text, p_note text default null) returns jsonb`
+  - `language plpgsql`, `security definer`, `set search_path = public`.
+  - Guards identical to `resolve_question_flag`: `is_admin()` (42501) first; validate resolution ∈ {resolved, rejected} (22023); `for update` lock; close **all** open/reviewing flags for the question; recompute `questions.flag_count` + `question_stats.flag_count` in lockstep (never blind); idempotent if none open; return `{question_id, closed_count, open_flags, resolution}`.
+  - **Mirror the TSP-028 grant block exactly**: `revoke all ... from public; grant execute ... to authenticated;` (this is the TSP-024 grant-bug guard — non-negotiable).
+- **`scripts/check-rpc-grants.js`**: 14 → **15** RPCs (add the new function).
+
+### Expected files
+- `supabase/migrations/2026060X_resolve_flags_for_question.sql` (new)
+- `scripts/check-rpc-grants.js` (14→15)
+- `src/lib/question-bank/flag-triage.ts` (new) — pure helpers: group flags by question, reason-count aggregation, top-flagged ordering.
+- `src/tests/unit/flag-triage.test.ts` (new) — offline, deterministic (grouping, reason counts, empty/duplicate-reason cases).
+- `src/app/admin/questions/flags/page.tsx` (rework: grouped + filters + analytics summary; keep the existing loader's `question_flags`+`questions(...)` join, extend select with reason aggregation).
+- `src/app/admin/questions/flag-actions.ts` (add `resolveQuestionFlagsAction` → new RPC; optionally `retireFlaggedQuestionAction` wrapping `set_question_status`). Keep existing `resolveFlagAction` for single-flag.
+- New client component for the bulk/triage controls + filter form (mirror `resolve-flag-form.tsx` `useActionState` pattern and the `/admin/questions` URL-filter form).
+
+### Out of scope this session (defer, note explicitly)
+- **Rich explanation-flag triage actions** — keep `/admin/ai-ratings` read-only for now; just **cross-link** it from the queue. (AP-07's explanation half is "review"; actionable explanation remediation can be a follow-up row.)
+- Per-reason time-series / spike charts (TSP-100 territory, M7).
+- FSRS/analytics-heavy stats (TSP-098, deferred until live attempts accumulate).
+
+### Risks / decisions to lock
+- **R1 — don't regress TSP-028.** The single-flag `resolveFlagAction`/`resolve_question_flag` path stays; the new RPC is additive. Test both still work.
+- **R2 — restore semantics.** Resolving flags must NOT flip a quarantined question back to live. Restoration stays in the editor status flow. Keep the page copy that says so.
+- **R3 — admin-role model (M2 founder decision, still open, non-blocking).** All RPCs use single `is_admin()`. TSP-092 builds on single-admin; if the founder later splits reviewer/approver, the resolve-vs-retire authority split lands here. Architect will bring the M2 options doc when founder is ready — does not block this build.
+- **R4 — data prerequisite (N33-1).** Triage needs live flagged questions; depends on the M0 seed/smoke. Unit tests + build are the offline gates; live/browser smoke folds into the M0 pass.
+
+### Verification gates
+- **Standard + App Build:** `corepack pnpm typecheck` · `lint` · `test` · `build` (UI + routing change).
+- **Targeted unit:** `corepack pnpm exec vitest run src/tests/unit/flag-triage.test.ts`.
+- **Database gate:** add migration; `node run-migrations.js`; `node scripts/check-rpc-grants.js` shows 15 RPCs incl. `resolve_flags_for_question` granted to `authenticated`; `node --check` the migration-adjacent scripts.
+- **Live/browser smoke (folds into M0):** admin → `/admin/questions/flags` → filter by reason/exam → resolve-all on a flagged question → confirm flags close, count recomputes, question stays quarantined until editor-restored.
+
+### Open question for founder (non-blocking)
+- Confirm AP-07 MVP boundary: is read-only explanation review (cross-link to `/admin/ai-ratings`) sufficient for this row, or do you want actionable explanation remediation (regenerate / suppress) in-scope now? Default assumption: **read-only cross-link for MVP**, actions deferred to a follow-up row.
+
+**Handoff to Builder:** implement TSP-092 per above; set the row `In Progress`, `Built By` = Builder; append a Builder handoff with changed files, gate results, and live-smoke status.
+
+Uncommitted (commit tomorrow): `scripts/seed-demo-questions.js`, `trackers/JIRA_TRACKER.csv` (TSP-161), and these doc updates.
+
+---
+
+# Session 34 — Builder Handoff — TSP-092 Flagged content triage queue (2026-06-05)
+
+**Agent:** Antigravity (Builder)
+**Tracker row:** `TSP-092` → **Review**
+**Commits:** `e90d012` (DB + helpers), `4e9955b` (UI + actions)
+
+## Scope completed
+
+Implemented TSP-092 per the Architect plan. Two clean commits exactly matching the plan's split.
+
+## Files changed
+
+| Action | Path |
+|---|---|
+| Create | `supabase/migrations/202606050002_resolve_flags_for_question.sql` |
+| Create | `src/lib/question-bank/flag-triage.ts` |
+| Create | `src/tests/unit/flag-triage.test.ts` |
+| Edit | `scripts/check-rpc-grants.js` (14→15 RPCs) |
+| Edit | `src/app/admin/questions/flag-actions.ts` (add `resolveQuestionFlagsAction`) |
+| Rewrite | `src/app/admin/questions/flags/page.tsx` (flat table → grouped triage cards) |
+| Create | `src/app/admin/questions/flags/resolve-all-flags-form.tsx` |
+| Create | `src/app/admin/questions/flags/flag-filter-form.tsx` |
+
+## What was built
+
+**Commit 1 — DB + pure helpers:**
+- `resolve_flags_for_question(p_question_id, p_resolution, p_note)`: security-definer RPC, closes all `open`/`reviewing` flags for the question in one transaction, lockstep `flag_count` recount on `questions` + `question_stats`, `is_admin()` guard (42501), resolution validation (22023), `for update` lock, idempotent (returns `closed_count=0` if nothing open), revoke/grant block mirrors TSP-028 exactly.
+- `flag-triage.ts`: `groupFlagsByQuestion` (groups flat flag rows into per-question cards, sorts by open count desc), `computeTriageSummary` (reason stats + top-5 flagged questions), `filterGroups` (reason / status / examId URL-filter application) — all pure, zero DB deps.
+- `flag-triage.test.ts`: 22 offline-deterministic test cases covering grouping, open-only count, reason dedup, latest-flag tracking, empty inputs, null-join fallback, summary analytics, closed-flag exclusion, top-5 cap, all filter combinations.
+- `check-rpc-grants.js`: 14→15 (added `resolve_flags_for_question`).
+
+**Commit 2 — UI + actions:**
+- `flags/page.tsx`: complete rewrite. Analytics summary card (total open flags, flagged questions, reason chips). `FlagFilterForm` (reason/status/exam, URL-driven). Grouped triage cards — one per flagged question showing status+tier badges, distinct-reason pills, open-flag count, bulk `ResolveAllFlagsForm`, Edit link, quarantine notice ("restore via editor"). Per-flag detail rows with individual `ResolveFlagForm` still present. AP-07 explanation cross-link to `/admin/ai-ratings` at the bottom.
+- `resolve-all-flags-form.tsx`: Client Component with `useActionState`, Resolve-all / Reject-all buttons, mirrors `ResolveFlagForm` pattern.
+- `flag-filter-form.tsx`: Client Component with `useRouter` push on submit/clear; reason/status/exam selects; matches TSP-031 URL-filter pattern.
+- `flag-actions.ts`: added `resolveQuestionFlagsAction` (bulk path → `resolve_flags_for_question`). Existing `resolveFlagAction` (single-flag path) **unchanged** — R1 respected.
+
+## Key decisions
+
+- **R1 preserved:** single-flag `resolveFlagAction`/`resolve_question_flag` path is intact and still used for per-flag rows.
+- **R2 preserved:** resolving flags does NOT flip quarantine status. Quarantine notice renders on each card. Restoration stays in the editor status flow. Copy on page makes this explicit.
+- **R3 acknowledged:** single-admin model per Architect decision. No reviewer/approver split built.
+- **Data load:** page now loads all flags in `open/reviewing/resolved/rejected` states (limit 200) so recently-closed flags still appear in the group card — admin can see the full triage history per question without confusion.
+- **AP-07 explanation scope:** kept `/admin/ai-ratings` as read-only cross-link per Architect's MVP boundary. No actionable explanation remediation in scope.
+
+## Verification
+
+| Gate | Result |
+|---|---|
+| `corepack pnpm exec vitest run src/tests/unit/flag-triage.test.ts` | ✅ pass (exit 0) |
+| `corepack pnpm typecheck` | ✅ pass |
+| `corepack pnpm lint` | ✅ pass |
+| `corepack pnpm test` | ✅ pass |
+| `corepack pnpm build` | ✅ pass |
+| `node --check scripts/check-rpc-grants.js` | ✅ syntax clean |
+| `node run-migrations.js` | ⏳ pending (live DB — apply `202606050002` then rerun grant check to confirm 15 RPCs) |
+| Browser smoke | ⏳ pending (folds into M0 pass) |
+
+## Blockers / risks
+
+- **Live DB gate:** `node run-migrations.js` + `node scripts/check-rpc-grants.js` (15 RPCs) should be run by founder or next session before browser smoke. The migration is safe to apply (uses `create or replace function`; idempotent index).
+- **Browser smoke:** `/admin/questions/flags` — filter by reason/exam, bulk resolve-all on a flagged question, confirm flags close, count recomputes, question stays quarantined. Folds into M0 pass.
+- **Data prerequisite N33-1 still applies:** triage needs live flagged questions. The 18 seeded demo questions + the `smoke-question-flags.js` script (3-distinct-user auto-quarantine) will provide the needed data once M0 smoke runs.
+
+## Next recommended step
+
+- Sanity Test agent reviews TSP-092 (security boundary, R1/R2 invariants, unit test coverage, UI completeness).
+- After Sanity pass → flip TSP-092 to **Done** pending the M0 browser smoke.
+- Session 35 candidates: `TSP-094` (audit log viewer), `TSP-098` (nightly question stats), or advancing M0 smoke rows to Done.
+

@@ -1,7 +1,7 @@
 # Session State
 
-**Last updated:** 2026-06-05
-**Updated by:** Gemini (Builder) - Session 32 complete
+**Last updated:** 2026-06-05 (late) — M0 unblock session
+**Updated by:** Claude (Architect) — M0 backend unblocked; TSP-028 sanity; demo content seeded
 **Project:** Modular AI-Powered Test Series And Self-Study Portal
 
 ---
@@ -334,13 +334,47 @@ Next immediate steps:
 3. **Session 34+ candidate - TSP-098** - compute question stats nightly (deferred until live attempts accumulate post-M0).
 4. **Founder config & wiring** - configure `SUPABASE_SERVICE_ROLE_KEY` in `.env` and wire cron trigger to `GET /api/jobs/run`.
 5. **Founder decision before TSP-068 user-facing release** - per-user/day cost cap, cap behavior, grounding strictness, model choice, and monthly AI ceiling.
-6. **Browser smoke when users are available** - admin checks filters/pagination and edit-tier/edit-policy saves; student checks `/dashboard`, due retest launch, next-action anchor behavior, progress timeline rendering, and `/tests` diagnostic sessions plus topic/benchmark/mock starts once UI exposure exists.
+6. **Browser smoke** — now unblocked (users + content exist); pick up tomorrow per the checklist below.
+
+---
+
+## M0 Unblock — Status & Resume Checklist (2026-06-05 late, Architect)
+
+**Backend M0 is DONE. Only the manual browser smoke (click-through) remains — resuming tomorrow.**
+
+Done today:
+- `DATABASE_URL` confirmed already correct (transaction pooler, port 6543). The old "fix the URL" item was stale — migrations always used it.
+- `SUPABASE_SERVICE_ROLE_KEY` added to `.env`.
+- **Admin + student users created & verified live** via `scripts/create-test-users.js`:
+  - `admin@example.com` — `app_metadata.user_role=admin`, email-confirmed, identity row present (login-ready). Password printed at creation.
+  - `student@example.com` — plain, confirmed.
+- **Anon key fix:** `NEXT_PUBLIC_SUPABASE_ANON_KEY` had the wrong project ref (`iwzb…` vs `iwzerb…`) → "Invalid API key" on login; founder replaced it with the correct anon/public key.
+- **Repo cloned OFF OneDrive** to `C:\Users\Rakesh\Documents\Test_Portal`; dev server runs there. The OneDrive copy (`…\OneDrive\Documents\Business\TEST`) stays the **canonical git repo + Builder/Architect workspace**. Test_Portal's git `origin` = the OneDrive repo; sync via `git pull` (commit in OneDrive first — pull only moves committed work). OneDrive Files-On-Demand was the root cause of the dev-server `errno -4094`.
+- Fixed a `"use server"` runtime error (illegal object exports in `src/app/test/actions.ts`) — committed.
+- **Seeded 18 live demo MCQs** (1 per UPSC topic) via `scripts/seed-demo-questions.js` so tests/flagging have content.
+- **TSP-028 Sanity: PASS** with blocking fix **S33-A** (ON CONFLICT arbiter predicate didn't match the partial index → would throw on every flag). Fixed in migration + re-applied live. Commit `ca7e92c`.
+
+⚠️ **Security to-do (founder):** real `SUPABASE_SERVICE_ROLE_KEY` and `GROQ_API_KEY` were briefly pasted into the TRACKED `.env.example` (reverted before any commit — never hit git history). **Rotate both keys**, and keep `.env.example` placeholders-only going forward.
+
+**Uncommitted at end of session (commit tomorrow):**
+- `scripts/seed-demo-questions.js` (new)
+- `trackers/JIRA_TRACKER.csv` — **TSP-161** added (fixed test-paper authoring; M2/Backlog)
+- doc updates (this file + `HANDOFF.md`)
+
+**Resume checklist (tomorrow):**
+1. Commit the uncommitted items above; `git pull` in Test_Portal (if it flags local `actions.ts`, run `git checkout -- src/app/test/actions.ts` then pull).
+2. Rotate `SUPABASE_SERVICE_ROLE_KEY` + `GROQ_API_KEY`; update `.env` in both copies.
+3. **Admin smoke:** `/admin/questions` (list/search/filter/edit + tier/policy), `/admin/questions/review` (lifecycle + history), `/admin/questions/import` (bulk JSON), `/admin/questions/flags` (resolve/reject), `/admin/manifests` (validate; import only a **new-slug** exam — do NOT re-import `upsc-prelims` over the seeded questions).
+4. **Student smoke:** `/tests` diagnostic → answer / confidence / mark-for-review / navigate / tab-switch → submit → score; `/dashboard`; `/mistakes`; "Report this question" flag.
+5. Flip smoked rows to **Done**: TSP-019/024/025/026/031/090, TSP-036/037/038/040/043–049, TSP-029/030, TSP-061, TSP-028.
+6. Optional: `node scripts/smoke-question-flags.js` (verifies 3-distinct-user auto-quarantine); trigger `GET /api/jobs/run` to exercise AI analysis jobs.
+
+---
 
 Still parked (need external inputs):
 
-- **Repair pnpm install** â€” main verification commands pass after elevated reruns, but `corepack pnpm install` still fails and should be repaired before later dependency work.
-- **TSP-019, TSP-024, TSP-025, TSP-026, TSP-090 -> Done** â€” blocked on admin user creation (`app_metadata.user_role = "admin"`) for browser smoke.
-- **TSP-040, TSP-043, TSP-044, TSP-045, TSP-046, TSP-047, TSP-048, TSP-049, TSP-029, TSP-030, TSP-031, TSP-036, TSP-037, TSP-038 -> Done** â€” blocked on browser smoke with the admin/plain test users.
+- **Repair pnpm install** — the OneDrive copy still has broken top-level symlinks; the off-OneDrive Test_Portal clone got a clean `pnpm install`. Prefer Test_Portal for running.
+- **TSP-019, TSP-024, TSP-025, TSP-026, TSP-090, TSP-040, TSP-043–049, TSP-029, TSP-030, TSP-031, TSP-036, TSP-037, TSP-038, TSP-061, TSP-028 → Done** — admin + student users now EXIST and content is seeded; these just await the manual browser-smoke pass (checklist above).
 - **TSP-068 AI analysis user-facing release** - needs founder guardrails and per-user cost-cap decision.
 - **TSP-085 reminders** â€” blocked on `RESEND_API_KEY`.
 
