@@ -11927,3 +11927,48 @@ Implemented TSP-092 per the Architect plan. Two clean commits exactly matching t
 - After Sanity pass → flip TSP-092 to **Done** pending the M0 browser smoke.
 - Session 35 candidates: `TSP-094` (audit log viewer), `TSP-098` (nightly question stats), or advancing M0 smoke rows to Done.
 
+
+---
+
+# Session 34 — Sanity Test — TSP-092 (2026-06-05)
+
+**Agent:** Sanity Test (Claude / Opus 4.8)
+**Scope reviewed:** TSP-092 flag triage queue — 3 commits (`e90d012`, `4e9955b`, `63172b4`).
+**Where run:** clean off-OneDrive clone `C:\Users\Rakesh\Documents\Test_Portal` (pulled HEAD `63172b4`), the only place tsc/vitest/build run to completion. The OneDrive copy still gives the exit-0-no-output illusion.
+
+## Verdict: TSP-092 — **PASS on its own merits.** Stays **Review** pending browser smoke (folds into M0). No new defects introduced by TSP-092.
+
+## Gates run (independent)
+
+| Gate | Result | Evidence |
+|---|---|---|
+| Unit — `flag-triage.test.ts` | ✅ **19/19 pass** | run in Test_Portal, full reporter output. **Handoff said 22 tests; actual is 19** (miscount, not a defect). |
+| Live DB migration | ✅ | `node run-migrations.js` → `202606050002_resolve_flags_for_question.sql applied successfully`; all migrations applied (idempotent NOTICEs only). |
+| RPC grants | ✅ **15/15** | `node scripts/check-rpc-grants.js` → `resolve_flags_for_question` present, `can_execute:true`; existing 14 unchanged. |
+| TSP-092 source typecheck | ✅ | the only tsc error is the **unrelated** `review/page.tsx` (see S34-A). No TSP-092 file errs. |
+| TSP-092 SWC compile (build) | ✅ | after S34-A fix, `✓ Compiled successfully in 12.6s` — flags page + both client components + actions + flag-triage all compile. |
+| Code review (security/invariants) | ✅ | see below. |
+| Browser smoke | ⏸️ deferred | admin-gated RPC needs a real admin JWT; a direct postgres call can't exercise `is_admin()`. Folds into M0 pass. |
+
+## Code-review findings (TSP-092)
+- **RPC `resolve_flags_for_question`**: `is_admin()` 42501 before any write ✅; resolution validated ✅; `for update` lock on the question ✅; closes all open/reviewing flags in one CTE; **lockstep recount** of `questions.flag_count` + `question_stats.flag_count` (not blind decrement) ✅; idempotent on zero (returns `closed_count:0`) ✅; **grant block mirrors TSP-028 exactly** (TSP-024 guard) ✅.
+- **R1 (single-flag path intact)** ✅ — `resolveFlagAction`/`resolve_question_flag` byte-for-byte unchanged; bulk action is purely additive.
+- **R2 (no un-quarantine)** ✅ — RPC never touches status/tier; action message states "Question stays quarantined until restored via the editor"; page copy + per-card quarantine notice consistent.
+- **AP-07 explanation half** ✅ — read-only cross-link to `/admin/ai-ratings`, per the agreed MVP boundary.
+
+## Non-blocking notes (TSP-092)
+- **N34-1 (UX/behavioral):** the loader now selects `open,reviewing,resolved,rejected` (limit 200) and the card list renders **every** group, including questions whose flags are all closed (`openFlagCount === 0`). Result: the "triage queue" shows already-resolved questions, and the "No open flags" empty state only appears when there are literally zero flag rows of any status. Recommend filtering the card list to `openFlagCount > 0` (keep closed flags as per-question history inside still-open cards). The summary block already filters correctly.
+- **N34-2 (scale):** a single `limit(200)` mixing 4 statuses ordered by `created_at desc` — at volume, a burst of recent closed flags can push older still-open flags out of the window. Fine now; scope the actionable query to open/reviewing (or raise/separate the limit) before real load.
+- **N34-3 (tracker hygiene):** the Builder's remark text landed in the **Rollback Notes** column; **Builder Remarks** and **Agent S Comments** were empty. I populated Agent S Comments. Recommend the next Builder move the remark to the correct column.
+
+## ⛔ SEPARATE PRE-EXISTING BLOCKERS surfaced this run (NOT caused by TSP-092 — repo-wide)
+Running the gates to completion in the clean clone exposed that **HEAD does not build**, independent of TSP-092:
+
+- **S34-A — JSX syntax error blocks compile (FIXED by Sanity, 1 char, uncommitted).** `src/app/admin/questions/review/page.tsx:168` had a literal `->` in JSX text; the bare `>` fails **both** `tsc` (TS1382) **and** SWC (`next build` "Failed to compile"). Last attributable to the squashed `63cb091` (Sessions 1–12). **Fix applied:** `->` → `{"->"}` in both repo copies. This also blocks the M0 `/admin/questions/review` route smoke. **Awaiting commit decision.**
+- **S34-B — ~20 `@typescript-eslint/no-explicit-any` ERRORS fail the `next build` lint phase (NOT fixed).** Files: `admin/jobs/actions.ts`, `admin/jobs/page.tsx`, `api/jobs/run/route.ts`, `lib/analytics/log-event.ts`, `lib/db/schema/analytics.ts`, `lib/jobs/runner.ts`, `lib/mistakes/mistake-list.ts`, `tests/unit/job-runner.test.ts`, `tests/unit/log-event.test.ts` (all from Sessions 27–31 / 60 / 96–97). These make `corepack pnpm build` (App Build Gate) and almost certainly `corepack pnpm lint` (Standard Gate) **red repo-wide.**
+- **META — verification integrity:** prior session claims of "typecheck/lint/build passed" were the documented OneDrive **exit-status illusion** (exit 0 with no real execution / interrupted build). The gates have been red for many sessions without detection. **This is the most important finding.** Recommend: (1) commit S34-A; (2) open a dedicated remediation row for S34-B (type the `any`s or scope an eslint override); (3) make the clean clone the canonical gate runner so "green" means green.
+
+## Next recommended step
+- Orchestrator decision on S34-A commit + opening an S34-B remediation row (suggest `TSP-162`).
+- TSP-092 → flip to **Done** only after the M0 browser smoke (admin → `/admin/questions/flags` → filter → resolve-all → confirm flags close, count recomputes, question stays quarantined). Its non-DB gates are green now.
+
