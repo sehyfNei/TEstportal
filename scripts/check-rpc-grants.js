@@ -35,25 +35,26 @@ async function main() {
         and p.proname in (
           'assert_question_topic_scope',
           'create_admin_question',
+          'resolve_flags_for_question',
+          'resolve_question_flag',
+          'retry_job',
+          'get_my_job_status',
           'search_admin_questions',
           'set_question_exposure_policy',
           'set_question_quality_tier',
           'set_question_status',
           'start_test_session',
+          'submit_question_flag',
           'submit_test_session',
           'update_admin_question',
-          'retire_admin_question',
-          'retry_job',
-          'get_my_job_status',
-          'submit_question_flag',
-          'resolve_question_flag'
+          'retire_admin_question'
         )
       order by p.proname
     `);
 
     console.log(JSON.stringify(rows));
 
-    if (rows.length !== 14 || rows.some((row) => !row.can_execute)) {
+    if (rows.length !== 15 || rows.some((row) => !row.can_execute)) {
       throw new Error("One or more authenticated RPC grants are missing.");
     }
   } finally {
