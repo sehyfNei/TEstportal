@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdminForAction } from "@/lib/auth/require-admin";
+import { getErrorMessage } from "@/lib/errors";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -33,7 +34,7 @@ export async function retryJobAction(jobId: string) {
 
     revalidatePath("/admin/jobs");
     return { ok: true };
-  } catch (error: any) {
-    return { ok: false, message: error?.message || "An unexpected error occurred." };
+  } catch (error: unknown) {
+    return { ok: false, message: getErrorMessage(error) || "An unexpected error occurred." };
   }
 }

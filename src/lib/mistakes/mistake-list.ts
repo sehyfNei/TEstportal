@@ -11,6 +11,7 @@ export const MISTAKE_TYPE_LABELS: Record<string, string> = {
 };
 
 export const MISTAKE_STATUSES = ["unresolved", "reviewed", "resolved", "ignored"] as const;
+export type MistakeStatus = (typeof MISTAKE_STATUSES)[number];
 
 export type MistakeListItem = {
   id: string;
@@ -46,7 +47,7 @@ export async function fetchMistakeItems(
     .order("created_at", { ascending: false })
     .limit(200);
 
-  if (filters.status && MISTAKE_STATUSES.includes(filters.status as any)) {
+  if (filters.status && MISTAKE_STATUSES.includes(filters.status as MistakeStatus)) {
     query = query.eq("status", filters.status);
   }
   if (filters.mistakeType && filters.mistakeType in MISTAKE_TYPE_LABELS) {
@@ -121,7 +122,19 @@ export async function fetchMistakeItems(
     }
   }
 
-  return data.map((item: any): MistakeListItem => {
+  type RawMistakeRow = {
+    id: string;
+    question_id: string;
+    session_id: string;
+    topic_id: string | null;
+    concept_id: string | null;
+    mistake_type: string;
+    confidence: string | null;
+    status: string;
+    created_at: string;
+  };
+
+  return (data as RawMistakeRow[]).map((item): MistakeListItem => {
     const key = `${item.session_id}:${item.question_id}`;
     return {
       id: item.id,

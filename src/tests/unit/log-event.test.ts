@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logEvent } from "@/lib/analytics/log-event";
+import type { EventType } from "@/lib/analytics/event-types";
 
 function mockSupabase(resolvedValue: { error: unknown }): SupabaseClient {
   return {
@@ -40,7 +41,7 @@ describe("logEvent", () => {
 
     const result = await logEvent(supabase, {
       userId: "user-123",
-      eventType: "invalid_event" as any
+      eventType: "invalid_event" as EventType
     });
 
     expect(result.ok).toBe(false);

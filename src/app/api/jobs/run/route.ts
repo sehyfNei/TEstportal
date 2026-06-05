@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { createAdminClient, hasAdminConfig } from "@/lib/supabase/admin";
+import { getErrorMessage } from "@/lib/errors";
 import { runPendingJobs } from "@/lib/jobs/runner";
 
 export async function GET(request: NextRequest) {
@@ -31,10 +32,10 @@ export async function GET(request: NextRequest) {
     const adminClient = createAdminClient();
     const result = await runPendingJobs(adminClient, workerId, limit);
     return Response.json({ ok: true, result });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[api/jobs/run] execution failed:", error);
     return Response.json(
-      { error: "Internal Server Error", message: error.message },
+      { error: "Internal Server Error", message: getErrorMessage(error) },
       { status: 500 }
     );
   }

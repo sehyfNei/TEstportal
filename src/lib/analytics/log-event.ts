@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getErrorMessage } from "@/lib/errors";
 import { isValidEventType, type EventType } from "@/lib/analytics/event-types";
 
 export type LogEventParams = {
@@ -32,7 +33,7 @@ export async function logEvent(
       return { ok: false, error: error.message };
     }
     return { ok: true };
-  } catch (err: any) {
-    return { ok: false, error: err?.message ?? "unknown error" };
+  } catch (err: unknown) {
+    return { ok: false, error: getErrorMessage(err) || "unknown error" };
   }
 }

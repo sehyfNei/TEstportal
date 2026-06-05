@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { getErrorMessage } from "@/lib/errors";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 import { retryJobAction } from "./actions";
@@ -13,7 +14,7 @@ type JobRow = {
   type: string;
   status: string;
   idempotency_key: string;
-  payload: any;
+  payload: unknown;
   attempts: number;
   max_attempts: number;
   next_run_at: string;
@@ -68,8 +69,8 @@ export default async function AdminJobsPage({ searchParams }: PageProps) {
       } else {
         jobs = (data || []) as JobRow[];
       }
-    } catch (err: any) {
-      loadError = err?.message || "An unexpected error occurred.";
+    } catch (err: unknown) {
+      loadError = getErrorMessage(err) || "An unexpected error occurred.";
     }
   }
 

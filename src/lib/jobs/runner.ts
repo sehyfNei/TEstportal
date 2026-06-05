@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateAnalysisJob } from "@/lib/ai/jobs/generate-analysis";
 import { generatePlanJob } from "@/lib/ai/jobs/generate-plan";
+import { getErrorMessage } from "@/lib/errors";
 import type { JobRow, JobStatus } from "./types";
 
 export interface RunnerStore {
@@ -53,19 +54,21 @@ export function computeBackoffMs(attempts: number): number {
 
 export const HANDLERS: Record<
   string,
-  (payload: any, supabase: SupabaseClient) => Promise<void>
+  (payload: unknown, supabase: SupabaseClient) => Promise<void>
 > = {
-  generate_analysis: async (payload: any, supabase: SupabaseClient) => {
-    if (!payload?.result_id || !payload?.user_id) {
+  generate_analysis: async (payload: unknown, supabase: SupabaseClient) => {
+    const p = payload as { result_id?: string; user_id?: string };
+    if (!p?.result_id || !p?.user_id) {
       throw new Error("Invalid payload: missing result_id or user_id");
     }
-    await generateAnalysisJob(payload.result_id, payload.user_id, supabase);
+    await generateAnalysisJob(p.result_id, p.user_id, supabase);
   },
-  generate_improvement_plan: async (payload: any, supabase: SupabaseClient) => {
-    if (!payload?.result_id || !payload?.user_id || !payload?.exam_id) {
+  generate_improvement_plan: async (payload: unknown, supabase: SupabaseClient) => {
+    const p = payload as { result_id?: string; user_id?: string; exam_id?: string };
+    if (!p?.result_id || !p?.user_id || !p?.exam_id) {
       throw new Error("Invalid payload: missing result_id, user_id, or exam_id");
     }
-    await generatePlanJob(payload.result_id, payload.user_id, payload.exam_id, supabase);
+    await generatePlanJob(p.result_id, p.user_id, p.exam_id, supabase);
   }
 };
 
@@ -93,7 +96,7 @@ export async function runPendingJobs(
   let jobs: JobRow[];
   try {
     jobs = await runnerStore.claimPendingJobs(workerId, limit);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[job_runner] failed to claim pending jobs", error);
     throw error;
   }
@@ -111,8 +114,8 @@ export async function runPendingJobs(
 
       await runnerStore.finalizeJob(job.id, "completed", new Date().toISOString(), null);
       result.completed.push(job.id);
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
+    } catch (err: unknown) {
+      const errMsg = getErrorMessage(err);
       const attempts = job.attempts;
       const maxAttempts = job.max_attempts;
 

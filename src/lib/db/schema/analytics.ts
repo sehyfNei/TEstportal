@@ -9,7 +9,7 @@ export const userEvents = pgTable(
     eventType: text("event_type").notNull(),
     entityType: text("entity_type"),
     entityId: uuid("entity_id"),
-    properties: jsonb("properties").$type<Record<string, any>>(),
+    properties: jsonb("properties").$type<Record<string, unknown>>(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull()
   },
   (table) => [

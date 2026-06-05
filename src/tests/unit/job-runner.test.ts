@@ -6,7 +6,7 @@ import {
   HANDLERS,
   type RunnerStore
 } from "@/lib/jobs/runner";
-import type { JobRow } from "@/lib/jobs/types";
+import type { JobRow, JobType } from "@/lib/jobs/types";
 
 describe("computeBackoffMs", () => {
   it("returns 0 for non-positive attempts", () => {
@@ -66,7 +66,7 @@ describe("runPendingJobs", () => {
   it("claims and executes jobs successfully, updating status to completed", async () => {
     const job: JobRow = {
       id: "job-1",
-      type: "test_success" as any,
+      type: "test_success" as JobType,
       status: "pending",
       idempotency_key: "key-1",
       payload: { param: "value" },
@@ -105,7 +105,7 @@ describe("runPendingJobs", () => {
   it("finalizes a job with no handler as failed", async () => {
     const job: JobRow = {
       id: "job-2",
-      type: "unknown_job_type" as any,
+      type: "unknown_job_type" as JobType,
       status: "pending",
       idempotency_key: "key-2",
       payload: {},
@@ -143,7 +143,7 @@ describe("runPendingJobs", () => {
   it("handles handler execution failure and schedules a retry with backoff", async () => {
     const job: JobRow = {
       id: "job-3",
-      type: "test_failure" as any,
+      type: "test_failure" as JobType,
       status: "pending",
       idempotency_key: "key-3",
       payload: {},
@@ -178,7 +178,8 @@ describe("runPendingJobs", () => {
       "Transient execution error"
     );
 
-    const [[, , nextRunAt]] = (store.finalizeJob as any).mock.calls;
+    const finalizeJobMock = store.finalizeJob as ReturnType<typeof vi.fn>;
+    const [[, , nextRunAt]] = finalizeJobMock.mock.calls as [[string, string, string, string | null]];
     const scheduledTime = new Date(nextRunAt).getTime();
     expect(scheduledTime - startTime).toBeGreaterThanOrEqual(55 * 1000);
     expect(scheduledTime - startTime).toBeLessThanOrEqual(65 * 1000);
@@ -187,7 +188,7 @@ describe("runPendingJobs", () => {
   it("transitions job to dead when max attempts are reached", async () => {
     const job: JobRow = {
       id: "job-4",
-      type: "test_failure" as any,
+      type: "test_failure" as JobType,
       status: "pending",
       idempotency_key: "key-4",
       payload: {},
