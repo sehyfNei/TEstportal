@@ -161,6 +161,14 @@ export function scoreSession(
 
   summary.accuracy = summary.attempted ? summary.correct / summary.attempted : 0;
 
+  // Round accumulated float sums to 2 dp so display-facing scores are clean
+  // (e.g. 2 + −0.66 accumulates as 1.3399999999999999 without rounding).
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  summary.score = round2(summary.score);
+  for (const topic of Object.values(summary.topicScores)) {
+    topic.score = round2(topic.score);
+  }
+
   return summary;
 }
 

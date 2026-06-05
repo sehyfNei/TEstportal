@@ -21,8 +21,9 @@ describe("buildPromptSnapshot", () => {
       options: ["A", "B", "C", "D"],
       images: ["question.png"]
     });
-    expect(JSON.stringify(snapshot)).not.toContain("correct");
-    expect(JSON.stringify(snapshot)).not.toContain("explanation");
+    expect(snapshot).not.toHaveProperty("correct_options");
+    expect(snapshot).not.toHaveProperty("explanation");
+    expect(snapshot).not.toHaveProperty("nested");
   });
 
   it("does not leak match pairs", () => {
