@@ -12095,3 +12095,101 @@ All `@typescript-eslint/no-explicit-any` errors fixed per the Architect plan. Ze
 
 Sanity Test agent: pull `e356b7d` into `Test_Portal`, run all 5 gates, record the actual output (not just exit codes), and flip TSP-162 → **Done** if all pass.
 
+
+---
+
+# Session 35 — Sanity Test — TSP-162 (2026-06-05)
+
+**Agent:** Sanity Test (Claude / Opus 4.8)
+**Scope reviewed:** TSP-162 (`e356b7d` type fixes + `5de0266` docs). Gates run for real in `C:\Users\Rakesh\Documents\Test_Portal` (pulled to `5de0266`, fast-forward clean).
+
+## Verdict: TSP-162's defined scope (no-explicit-any → lint green) is **DONE & verified**. BUT it **cannot flip to Done** under its written acceptance ("`lint` AND `build` both pass"), because `build`/`typecheck` are blocked by a **separate, larger pre-existing typecheck debt (~45 errors)** newly revealed this run. Stays **Review/blocked**.
+
+## Gates run in Test_Portal (real output, not bare exit-0)
+
+| Gate | Result | Evidence |
+|---|---|---|
+| `pnpm lint` (`eslint .`) | ✅ **GREEN** | exit 0; "**5 problems (0 errors, 5 warnings)**". TSP-162 removed all `no-explicit-any` ERRORS. The 5 remaining are warnings (unused vars, `<img>`) which **do not gate** (`eslint .` has no `--max-warnings`). |
+| `pnpm typecheck` (`tsc --noEmit`) | ❌ **RED** | exit 2; **~45 errors** across 13 files — **none in TSP-162 files**. |
+| `pnpm build` (`next build`) | ❌ **RED** | `✓ Compiled successfully` + lint phase **0 errors**, then **type-check phase fails** at `middleware.ts:28` (TS7006). `next.config` has no `ignoreBuildErrors`/`ignoreDuringBuilds`, so tsc errors block the build. |
+
+## Why this wasn't seen before (root cause of the masking — IMPORTANT)
+The ~45 tsc errors were hidden **twice**: (1) the OneDrive exit-status illusion (tsc never truly ran); (2) in the Session 34 Sanity run, the S34-A **syntax** error (`review/page.tsx:168`, TS1382) **halted tsc parsing early**, so it reported only that one error — which I incorrectly read as "the rest of the repo typechecks clean." Now that S34-A is fixed, tsc parses through and surfaces the full backlog. **`tsc --noEmit` / `next build` have effectively never passed on this repo.**
+
+## S35-A — Pre-existing typecheck debt (~45 errors, NOT caused by TSP-162)
+Grouped by file (all pre-date this session):
+- `middleware.ts` (6) + `lib/supabase/server.ts` (4) — implicit-any cookie `setAll` params (TS7006/7031).
+- `app/test/actions.ts` (14) — `result` possibly undefined (null-safety).
+- `lib/test-session/scoring.ts` (4) — `question` possibly null; `number[]|null` arg. **Scoring null-safety — likely real bugs.**
+- `components/test/start-test.tsx` (3) — `Property 'sessionId' does not exist on type '{ ok: boolean; message: string }'`. **Likely a real broken start flow** (reads a field the action's return type doesn't have).
+- `lib/auth/require-admin.ts` (2) — `User.app_metadata` vs `RoleCarrier` mismatch. **Security-path typing — review carefully.**
+- `lib/scoring/readiness.ts` (1) — comparison `'medium'|'high'` vs `'low'` "no overlap". **Likely a dead/incorrect branch (real logic bug).**
+- `app/admin/questions/page.tsx` (2), `components/admin/question-editor.tsx` (1) — possibly-null/undefined.
+- `lib/jobs/handlers/update-mastery-supabase.ts` (2), `lib/question-bank/bulk-question-import.ts` (1), `components/test/test-runner.tsx` (1, `number` vs `Timeout`), `tests/unit/ai-gateway.test.ts` (1).
+
+**Several are latent runtime bugs, not just strictness** (flagged above). This deserves its own dedicated row — and likely a careful split, since the scoring/auth/start-flow items need real reasoning, not blanket casts.
+
+## Note on the Builder handoff
+The Builder's gate table marked `build` and `test` "✅ exit 0" while also deferring R4 verification to Sanity — those build/test ticks were **not** confirmed in Test_Portal and are contradicted by this run (build is red). Going forward, only Test_Portal output counts.
+
+## Recommendation (orchestrator decision)
+**Option A (recommended):** Re-scope TSP-162 acceptance to "**`eslint .` green / no `no-explicit-any` errors**" → mark **TSP-162 Done** (its delivered work is correct and complete). Open **TSP-163** for S35-A (typecheck/build debt; suggest splitting scoring+auth+start-flow bug-fix from the mechanical null/implicit-any fixes).
+**Option B:** Keep TSP-162 open and expand it to cover all ~45 tsc errors (larger, mixed scope; not advised — bundles real-bug investigation with mechanical fixes).
+
+## Next recommended step
+- Orchestrator: pick A or B; if A, I'll open TSP-163 (and optionally a TSP-164 split for the suspected real bugs).
+- Until typecheck is green, treat **`build`/`typecheck` as red repo-wide**; only `lint` and `test` are trustworthy gates right now.
+
+
+---
+
+# Session 35 — Decision + TSP-163 scoped (2026-06-05, Architect)
+
+**Orchestrator chose Option A.** `TSP-162` → **Done** (re-scoped to its delivered work: `eslint .` green / no `no-explicit-any` errors, verified live in Test_Portal). `TSP-163` **opened** for S35-A (the ~45 `tsc`/`build` errors). **Full per-cluster scope lives in the TSP-163 Agent S Comments cell** in `trackers/JIRA_TRACKER.csv` — read it before building.
+
+**Key correction after reading each site:** the four "suspected real bugs" from the Session 35 Sanity entry are mostly **mechanical typing**, not logic bugs:
+- `start-test.tsx` — action already returns `sessionId` (L136); just type `initialState`. Runtime fine.
+- `readiness.ts:132` — redundant `!== "low"` (dead condition after the L128 early-return). Delete it.
+- `require-admin.ts` — widen `RoleCarrier` to accept Supabase `User.app_metadata`. Auth logic correct.
+- `scoring.ts` — **the one genuine (minor) gap:** `question = toRecord(content)` is unguarded; add `if (!question) return null;` so malformed content returns null instead of throwing.
+
+**Single row (no split needed)** — the debt is ~44 mechanical + 1 small real fix; not worth a separate bug row. Builder must **verify the 14 `test/actions.ts` "result possibly undefined"** are real guards (not masked bugs) before silencing, and must NOT use `// @ts-ignore` / `as any` / non-null `!` to hide real null access, and NOT add `ignoreBuildErrors` to `next.config`. Gates run in Test_Portal only.
+
+**Recommended next session:** Builder implements **TSP-163** → green `typecheck` + `build` restores the last two red gates and finally makes "all gates green" true.
+
+
+---
+
+# Session 35 — Builder — TSP-163 DONE (2026-06-05)
+
+**Agent:** Builder (Claude / Opus 4.8). Commit `e77d902` (13 files: 11 source + ~23/−19 lines).
+
+## Result: TSP-163 acceptance MET — `typecheck` + `build` GREEN (verified in Test_Portal, real output).
+
+| Gate (Test_Portal, real output) | Result |
+|---|---|
+| `pnpm typecheck` (`tsc --noEmit`) | ✅ exit 0 — clean |
+| `pnpm build` (`next build`) | ✅ exit 0 — `✓ Compiled successfully`, lint phase warnings-only, **21/21 static pages**, full route table |
+| `pnpm lint` | ✅ exit 0 — 0 errors / 5 warnings |
+| `pnpm test` | ⚠️ 299 pass / **3 fail** — **pre-existing (S35-B), NOT from TSP-163** |
+
+## Fixes (all root-cause typing; zero `@ts-ignore` / `as any` / blanket `!`, per R2)
+- **Cookies implicit-any** (`middleware.ts`, `lib/supabase/server.ts`) — typed `setAll` param via `@supabase/ssr` `CookieOptions`.
+- **`test/actions.ts` (16 errors → 0)** — annotated `toSubmitSessionResult` as `NonNullable<SubmitSessionActionState["result"]>` (it always returns an object). One-line fix cleared all 16.
+- **`scoring.ts`** — added the genuine null-guard `if (!selected || !question) return null` (malformed content now returns null instead of throwing) + narrowed `correctOptions` before `sortNumbers`.
+- **`require-admin.ts`** — `RoleCarrier.app_metadata` widened to `Record<string, unknown>` (auth logic unchanged).
+- **`readiness.ts`** — removed redundant `!== "low"` (dead branch after early return).
+- **`update-mastery-supabase.ts`** — `String()`-coerced numeric (Drizzle infers `numeric` as `string`).
+- **`start-test.tsx`** (typed `initialState`), **`question-editor.tsx`** (optional-chain `initialValue`), **`admin/questions/page.tsx`** (null-safe `searchResult`), **`test-runner.tsx`** (`timerId: number`), **`bulk-question-import.ts`** (predicate returns boolean), **`ai-gateway.test.ts`** (typed read).
+
+## S35-B — 3 pre-existing test failures (NEW finding, opened as TSP-164)
+**PROVEN pre-existing:** checked out parent `5de0266` and reproduced the identical 3 failures.
+1+2. `scoring.test.ts` + `marking-rules.test.ts` — `toMatchObject({ score: 1.34 })` vs actual `1.3399999999999999` (float; `2 − 0.33×2`). Decision: round scores in impl (product call: are scores user-facing 2dp?) or loosen to `toBeCloseTo`.
+3. `prompt-snapshot.test.ts` — `not.toContain("correct")` matches the legit question text "Choose the correct option." **Not a leak** — the test assertion is too broad; should check for absence of answer-key *fields*, not the substring.
+
+## Gate status now
+**3 of 4 Standard gates GREEN repo-wide for the first time** (`typecheck`, `build`, `lint`). `test` is red only on S35-B (3 pre-existing, tracked TSP-164). The OneDrive-illusion debt is now fully surfaced and all but these 3 trivial test fixes are cleared.
+
+## Next step
+- Orchestrator: TSP-164 needs one small decision (round scores vs `toBeCloseTo`) — then `pnpm test` goes green and all four gates are green.
+
