@@ -433,13 +433,13 @@ export async function submitSessionAction(
       const retestQueueId = readRetestQueueId(sessionRow?.metadata);
       if (retestQueueId && isUuid(retestQueueId)) {
         sideEffects.push(
-          supabase
-            .from("retest_queue")
-            .update({ status: "completed" })
-            .eq("id", retestQueueId)
-            .eq("user_id", userId)
-            .then(() => {})
-            .catch((e) => console.error("[retest] failed to mark queue completed", e))
+          Promise.resolve(
+            supabase
+              .from("retest_queue")
+              .update({ status: "completed" })
+              .eq("id", retestQueueId)
+              .eq("user_id", userId)
+          ).then(() => {}).catch((e) => console.error("[retest] failed to mark queue completed", e))
         );
       }
     }

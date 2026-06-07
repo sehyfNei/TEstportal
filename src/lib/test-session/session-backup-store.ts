@@ -24,7 +24,7 @@ export const useSessionBackupStore = create<SessionBackupStore>()(
       backups: {},
       clearBackup: (sessionId) =>
         set((state) => {
-          const { [sessionId]: _removed, ...backups } = state.backups;
+          const { [sessionId]: _removed, ...backups } = state.backups; // eslint-disable-line @typescript-eslint/no-unused-vars
           return { backups };
         }),
       getBackup: (sessionId) => get().backups[sessionId] ?? null,
