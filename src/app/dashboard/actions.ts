@@ -15,7 +15,6 @@ export type StartRetestState = {
   sessionId?: string;
 };
 
-export const initialStartRetestState: StartRetestState = { ok: false, message: "" };
 
 export async function getDashboardOverviewAction(
   examId: string

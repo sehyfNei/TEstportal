@@ -3,10 +3,11 @@
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
-  initialStartRetestState,
   startRetestAction,
   type StartRetestState
 } from "@/app/dashboard/actions";
+
+const initialStartRetestState: StartRetestState = { ok: false, message: "" };
 import type { DueRetest } from "@/lib/dashboard/overview";
 
 type Props = {
