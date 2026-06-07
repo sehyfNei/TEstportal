@@ -112,6 +112,15 @@ type DashboardData =
     };
 
 async function loadDashboardData(examParam: string | undefined): Promise<DashboardData> {
+  try {
+    return await loadDashboardDataInner(examParam);
+  } catch (err) {
+    console.error("[dashboard] unhandled error:", err);
+    return { configured: true, authed: true, examId: null, exams: [] };
+  }
+}
+
+async function loadDashboardDataInner(examParam: string | undefined): Promise<DashboardData> {
   if (!hasSupabaseConfig()) {
     return { configured: false };
   }

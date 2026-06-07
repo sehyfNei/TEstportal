@@ -119,6 +119,26 @@ function StatusPanel({ message }: { message: string }) {
 }
 
 async function loadTestSessionData(sessionId: string) {
+  try {
+    return await loadTestSessionDataInner(sessionId);
+  } catch (err) {
+    console.error("[session-page] unhandled error:", err);
+    return {
+      configured: true,
+      loadError: "An unexpected error occurred. Please try again.",
+      session: null,
+      questions: [],
+      initialQuestionStates: {},
+      result: null,
+      resultId: null,
+      analysis: null,
+      plan: null,
+      isDiagnostic: false
+    };
+  }
+}
+
+async function loadTestSessionDataInner(sessionId: string) {
   if (!hasSupabaseConfig()) {
     return {
       configured: false,
@@ -135,6 +155,7 @@ async function loadTestSessionData(sessionId: string) {
   }
 
   const supabase = await createClient();
+
   const {
     data: { user },
     error: userError
