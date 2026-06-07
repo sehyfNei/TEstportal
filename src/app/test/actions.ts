@@ -379,84 +379,73 @@ export async function submitSessionAction(
   }
 
   const result = toSubmitSessionResult(data);
+
+  // Fire all post-score side-effects in parallel without blocking the response.
+  // The user sees their score immediately; mastery/mistakes/AI jobs settle async.
   if (result.resultId && !wasAlreadyScored) {
-    try {
-      const { logEvent } = await import("@/lib/analytics/log-event");
-      await logEvent(supabase, {
-        userId: auth.userId,
-        eventType: "test_submit",
-        entityType: "session",
-        entityId: sessionId,
-        properties: { type: sessionType, score: result.score, maxScore: result.maxScore, accuracy: result.accuracy }
-      });
-    } catch (logError) {
-      console.error("[analytics] failed to log test_submit event", logError);
-    }
+    const resultId = result.resultId;
+    const userId = auth.userId;
 
-    try {
-      await updateMasteryJob(result.resultId, createSupabaseMasteryRepository(supabase));
-    } catch (masteryError) {
-      console.error("[mastery] update failed for result", result.resultId, masteryError);
-    }
+    const sideEffects: Promise<void>[] = [
+      import("@/lib/analytics/log-event").then(({ logEvent }) =>
+        logEvent(supabase, {
+          userId,
+          eventType: "test_submit",
+          entityType: "session",
+          entityId: sessionId,
+          properties: { type: sessionType, score: result.score, maxScore: result.maxScore, accuracy: result.accuracy }
+        })
+      ).catch((e) => console.error("[analytics] test_submit failed", e)),
 
-    try {
-      await createMistakeItemsJob(result.resultId, supabase);
-    } catch (mistakeError) {
-      console.error("[mistake] create failed for result", result.resultId, mistakeError);
-    }
+      updateMasteryJob(resultId, createSupabaseMasteryRepository(supabase))
+        .catch((e) => console.error("[mastery] update failed for result", resultId, e)),
 
-    try {
-      await updateRetestQueueJob(result.resultId, supabase);
-    } catch (retestError) {
-      console.error("[retest] update failed for result", result.resultId, retestError);
-    }
+      createMistakeItemsJob(resultId, supabase)
+        .catch((e) => console.error("[mistake] create failed for result", resultId, e)),
 
-    try {
-      const { enqueueJob, generateIdempotencyKey } = await import("@/lib/jobs/enqueue");
-      const enqueueRes = await enqueueJob(
-        supabase,
-        "generate_analysis",
-        { result_id: result.resultId, user_id: auth.userId },
-        generateIdempotencyKey("generate_analysis", result.resultId)
-      );
-      if (!enqueueRes.ok) {
-        console.error("[analysis] enqueue failed:", enqueueRes.error);
-      }
-    } catch (analysisError) {
-      console.error("[analysis] enqueue failed for result", result.resultId, analysisError);
-    }
+      updateRetestQueueJob(resultId, supabase)
+        .catch((e) => console.error("[retest] update failed for result", resultId, e)),
+
+      import("@/lib/jobs/enqueue").then(({ enqueueJob, generateIdempotencyKey }) =>
+        enqueueJob(
+          supabase,
+          "generate_analysis",
+          { result_id: resultId, user_id: userId },
+          generateIdempotencyKey("generate_analysis", resultId)
+        ).then((res) => { if (!res.ok) console.error("[analysis] enqueue failed:", res.error); })
+      ).catch((e) => console.error("[analysis] enqueue failed for result", resultId, e)),
+    ];
 
     if (sessionType === "diagnostic" && isUuid(sessionExamId)) {
-      try {
-        const { enqueueJob, generateIdempotencyKey } = await import("@/lib/jobs/enqueue");
-        const enqueueRes = await enqueueJob(
-          supabase,
-          "generate_improvement_plan",
-          { result_id: result.resultId, user_id: auth.userId, exam_id: sessionExamId },
-          generateIdempotencyKey("generate_improvement_plan", result.resultId)
-        );
-        if (!enqueueRes.ok) {
-          console.error("[plan] enqueue failed:", enqueueRes.error);
-        }
-      } catch (planError) {
-        console.error("[plan] enqueue failed for result", result.resultId, planError);
-      }
+      sideEffects.push(
+        import("@/lib/jobs/enqueue").then(({ enqueueJob, generateIdempotencyKey }) =>
+          enqueueJob(
+            supabase,
+            "generate_improvement_plan",
+            { result_id: resultId, user_id: userId, exam_id: sessionExamId },
+            generateIdempotencyKey("generate_improvement_plan", resultId)
+          ).then((res) => { if (!res.ok) console.error("[plan] enqueue failed:", res.error); })
+        ).catch((e) => console.error("[plan] enqueue failed for result", resultId, e))
+      );
     }
 
     if (sessionType === "concept_retest") {
-      try {
-        const retestQueueId = readRetestQueueId(sessionRow?.metadata);
-        if (retestQueueId && isUuid(retestQueueId)) {
-          await supabase
+      const retestQueueId = readRetestQueueId(sessionRow?.metadata);
+      if (retestQueueId && isUuid(retestQueueId)) {
+        sideEffects.push(
+          supabase
             .from("retest_queue")
             .update({ status: "completed" })
             .eq("id", retestQueueId)
-            .eq("user_id", auth.userId);
-        }
-      } catch (e) {
-        console.error("[retest] failed to mark queue completed", e);
+            .eq("user_id", userId)
+            .then(() => {})
+            .catch((e) => console.error("[retest] failed to mark queue completed", e))
+        );
       }
     }
+
+    // Don't await — let side-effects run after response is sent
+    void Promise.all(sideEffects);
   }
 
   revalidatePath("/dashboard");
