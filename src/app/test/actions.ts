@@ -386,7 +386,7 @@ export async function submitSessionAction(
     const resultId = result.resultId;
     const userId = auth.userId;
 
-    const sideEffects: Promise<void>[] = [
+    const sideEffects: Promise<unknown>[] = [
       import("@/lib/analytics/log-event").then(({ logEvent }) =>
         logEvent(supabase, {
           userId,
