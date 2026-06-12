@@ -48,7 +48,7 @@ export function AdminQuestionFilters({
   ].some((key) => Boolean(searchParams.get(key)));
 
   return (
-    <form className="grid gap-4 rounded-lg border border-border bg-card p-4" method="GET">
+    <form className="grid gap-4 rounded-xl border border-border bg-card shadow-card p-4" method="GET">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold">Search and filters</h2>
         <span className="text-sm text-muted-foreground">{total} questions</span>

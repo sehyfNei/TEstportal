@@ -96,7 +96,7 @@ export default function AdminPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((section) => (
-          <div className="rounded-lg border border-border bg-card p-5" key={section.title}>
+          <div className="rounded-xl border border-border bg-card shadow-card p-5" key={section.title}>
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-sm font-semibold leading-5">{section.title}</h2>
               <span

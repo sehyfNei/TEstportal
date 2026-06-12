@@ -33,7 +33,7 @@ export default async function TestsPage() {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <StartTest exams={data.exams} />
 
-          <aside className="rounded-lg border border-border bg-card p-5">
+          <aside className="rounded-xl border border-border bg-card shadow-card p-5">
             <h2 className="text-lg font-semibold">Available exams</h2>
             {data.exams.length ? (
               <div className="mt-4 grid gap-3">
@@ -59,7 +59,7 @@ export default async function TestsPage() {
 
 function StatusPanel({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
       {message}
     </div>
   );

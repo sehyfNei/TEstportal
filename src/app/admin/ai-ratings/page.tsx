@@ -44,7 +44,7 @@ export default async function AdminAiRatingsPage() {
 
       {data.configured && !data.loadError ? (
         data.rows.length ? (
-          <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-card">
             <table className="w-full text-sm">
               <thead className="border-b border-border text-left text-xs uppercase text-muted-foreground">
                 <tr>
@@ -89,7 +89,7 @@ export default async function AdminAiRatingsPage() {
 
 function Panel({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
       {message}
     </div>
   );

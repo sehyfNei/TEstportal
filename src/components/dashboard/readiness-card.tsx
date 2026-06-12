@@ -9,7 +9,7 @@ export function ReadinessCard({ readiness }: Props) {
   const coverage = Math.round(readiness.coveragePercent * 100);
 
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5">
       <h2 className="text-lg font-semibold">Readiness score</h2>
 
       <div className="mt-4 flex flex-wrap items-end gap-3">

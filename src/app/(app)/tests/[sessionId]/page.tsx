@@ -112,7 +112,7 @@ function Header() {
 
 function StatusPanel({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
       {message}
     </div>
   );

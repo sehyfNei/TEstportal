@@ -27,7 +27,7 @@ export function StartTest({ exams }: { exams: ExamOption[] }) {
   }, [router, state.ok, state.sessionId]);
 
   return (
-    <form action={formAction} className="grid gap-5 rounded-lg border border-border bg-card p-5">
+    <form action={formAction} className="grid gap-5 rounded-xl border border-border bg-card shadow-card p-5">
       <div>
         <h2 className="text-xl font-semibold">Start a test</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">

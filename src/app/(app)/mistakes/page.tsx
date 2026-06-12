@@ -83,7 +83,7 @@ export default async function MistakesPage({
       </div>
 
       {/* Filter controls */}
-      <div className="rounded-lg border border-border bg-card p-5 grid gap-4">
+      <div className="rounded-xl border border-border bg-card shadow-card p-5 grid gap-4">
         <div>
           <h3 className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">Status</h3>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -153,7 +153,7 @@ export default async function MistakesPage({
       ) : (
         <div className="grid gap-6">
           {Array.from(groupedMistakes.entries()).map(([topicName, items]) => (
-            <div key={topicName} className="rounded-lg border border-border bg-card p-5">
+            <div key={topicName} className="rounded-xl border border-border bg-card shadow-card p-5">
               <h2 className="text-lg font-semibold text-foreground border-b border-border pb-2 mb-4">
                 {topicName}
               </h2>
@@ -252,7 +252,7 @@ function PageHeader({ title }: { title: string }) {
 
 function Notice({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
       {message}
     </div>
   );

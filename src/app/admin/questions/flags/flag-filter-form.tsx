@@ -39,7 +39,7 @@ export function FlagFilterForm({
 
   return (
     <form
-      className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4"
+      className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card shadow-card p-4"
       onSubmit={handleSubmit}
     >
       {/* Reason filter */}

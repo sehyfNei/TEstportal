@@ -50,13 +50,13 @@ export default async function AdminQuestionsPage({ searchParams }: AdminQuestion
       </div>
 
       {!data.configured ? (
-        <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+        <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
           Supabase is not configured yet. Add Supabase URL and anon key before managing questions.
         </div>
       ) : null}
 
       {data.configured && data.loadError ? (
-        <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+        <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
           {data.loadError}
         </div>
       ) : null}
@@ -98,7 +98,7 @@ export default async function AdminQuestionsPage({ searchParams }: AdminQuestion
               ))}
             </div>
           ) : (
-            <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+            <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
               No questions found.
             </div>
           )}
@@ -106,7 +106,7 @@ export default async function AdminQuestionsPage({ searchParams }: AdminQuestion
           <PaginationControls filters={filters} page={filters.page} total={data.total} />
         </div>
 
-        <aside className="rounded-lg border border-border bg-card p-5">
+        <aside className="rounded-xl border border-border bg-card shadow-card p-5">
           <h2 className="text-xl font-semibold">Create question</h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             Saving creates the question metadata and version 1 content together.
@@ -124,7 +124,7 @@ function QuestionListItem({ question }: { question: AdminQuestionRow }) {
   const text = question.question_text ?? question.current_version?.content?.text ?? "Untitled question";
 
   return (
-    <article className="rounded-lg border border-border bg-card p-4">
+    <article className="rounded-xl border border-border bg-card shadow-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold">{text}</p>
@@ -178,7 +178,7 @@ function PaginationControls({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-4 text-sm">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card shadow-card p-4 text-sm">
       <span className="text-muted-foreground">
         Page {page} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
       </span>

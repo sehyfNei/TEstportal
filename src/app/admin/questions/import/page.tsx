@@ -19,11 +19,11 @@ export default function AdminQuestionImportPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="rounded-lg border border-border bg-card p-5">
+        <div className="rounded-xl border border-border bg-card shadow-card p-5">
           <QuestionImporter />
         </div>
 
-        <aside className="rounded-lg border border-border bg-card p-5">
+        <aside className="rounded-xl border border-border bg-card shadow-card p-5">
           <h2 className="text-lg font-semibold">Accepted fields</h2>
           <div className="mt-4 grid gap-3 text-sm leading-6 text-muted-foreground">
             <p>

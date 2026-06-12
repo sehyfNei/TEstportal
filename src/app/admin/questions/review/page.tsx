@@ -59,13 +59,13 @@ export default async function AdminQuestionReviewPage() {
       </div>
 
       {!data.configured ? (
-        <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+        <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
           Supabase is not configured yet. Add Supabase URL and anon key before reviewing questions.
         </div>
       ) : null}
 
       {data.configured && data.loadError ? (
-        <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+        <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
           {data.loadError}
         </div>
       ) : null}
@@ -92,7 +92,7 @@ export default async function AdminQuestionReviewPage() {
               ))}
             </div>
           ) : (
-            <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+            <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
               No questions are waiting for review.
             </div>
           )}
@@ -113,7 +113,7 @@ function ReviewQuestionCard({
   const commands = getReviewCommands(question.status);
 
   return (
-    <article className="rounded-lg border border-border bg-card p-5">
+    <article className="rounded-xl border border-border bg-card shadow-card p-5">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div>
           <div className="flex flex-wrap items-start justify-between gap-3">

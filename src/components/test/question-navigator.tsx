@@ -18,7 +18,7 @@ export function QuestionNavigator({
   states
 }: QuestionNavigatorProps) {
   return (
-    <div className="grid gap-3 rounded-lg border border-border bg-card p-4">
+    <div className="grid gap-3 rounded-xl border border-border bg-card shadow-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Question navigator</h2>
         <Legend />

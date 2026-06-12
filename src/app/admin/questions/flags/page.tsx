@@ -87,7 +87,7 @@ export default async function AdminQuestionFlagsPage(props: { searchParams: Sear
 
       {/* ── Analytics summary ── */}
       {summary.totalOpenFlags > 0 && (
-        <div className="grid gap-4 rounded-lg border border-border bg-card p-5">
+        <div className="grid gap-4 rounded-xl border border-border bg-card shadow-card p-5">
           <h2 className="text-sm font-semibold text-foreground">Queue overview</h2>
           <div className="flex flex-wrap gap-6">
             <Stat label="Open flags" value={String(summary.totalOpenFlags)} />
@@ -136,7 +136,7 @@ export default async function AdminQuestionFlagsPage(props: { searchParams: Sear
         <div className="grid gap-4">
           {filteredGroups.map((group) => (
             <div
-              className="rounded-lg border border-border bg-card"
+              className="rounded-xl border border-border bg-card shadow-card"
               key={group.questionId}
             >
               {/* Card header */}
@@ -263,7 +263,7 @@ function PageHeader() {
 
 function Panel({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
       {message}
     </div>
   );

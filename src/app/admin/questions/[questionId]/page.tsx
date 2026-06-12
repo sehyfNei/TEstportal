@@ -51,7 +51,7 @@ export default async function AdminQuestionDetailPage({
     return (
       <section className="grid gap-6">
         <Header />
-        <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+        <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
           Supabase is not configured yet. Add Supabase URL and anon key before managing questions.
         </div>
       </section>
@@ -62,7 +62,7 @@ export default async function AdminQuestionDetailPage({
     return (
       <section className="grid gap-6">
         <Header />
-        <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+        <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
           {data.loadError}
         </div>
       </section>
@@ -79,7 +79,7 @@ export default async function AdminQuestionDetailPage({
     <section className="grid gap-8">
       <Header />
 
-      <div className="rounded-lg border border-border bg-card p-5">
+      <div className="rounded-xl border border-border bg-card shadow-card p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-primary">
@@ -105,7 +105,7 @@ export default async function AdminQuestionDetailPage({
         </dl>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-5">
+      <div className="rounded-xl border border-border bg-card shadow-card p-5">
         <h2 className="text-xl font-semibold">Edit question</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           Saving creates a new immutable version and points the question at that version.

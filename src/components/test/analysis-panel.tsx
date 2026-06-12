@@ -106,7 +106,7 @@ function PendingPanel({
   status: AnalysisStatus;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-primary">AI analysis</p>
@@ -149,7 +149,7 @@ function AnalysisReport({
   resultId: string | null;
 }) {
   return (
-    <div className="grid gap-5 rounded-lg border border-border bg-card p-5">
+    <div className="grid gap-5 rounded-xl border border-border bg-card shadow-card p-5">
       <div>
         <p className="text-sm font-medium text-primary">AI analysis</p>
         <p className="mt-2 text-sm leading-7">{output.overallSummary}</p>

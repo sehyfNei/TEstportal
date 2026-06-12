@@ -421,7 +421,7 @@ export function TestRunner({
 
   if (!questions.length) {
     return (
-      <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+      <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
         No questions are attached to this session.
       </div>
     );
@@ -429,7 +429,7 @@ export function TestRunner({
 
   return (
     <section className="grid gap-6">
-      <div className="rounded-lg border border-border bg-card p-5">
+      <div className="rounded-xl border border-border bg-card shadow-card p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-primary">Question {currentQuestion.sequence}</p>
@@ -501,7 +501,7 @@ export function TestRunner({
         <PlanPanel initialPlan={initialPlan ?? null} sessionId={sessionId} />
       ) : null}
 
-      <div className="grid gap-5 rounded-lg border border-border bg-card p-5">
+      <div className="grid gap-5 rounded-xl border border-border bg-card shadow-card p-5">
         <QuestionRenderer
           disabled={locked || isPending}
           onChange={handleAnswerChange}

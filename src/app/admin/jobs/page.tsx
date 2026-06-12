@@ -126,7 +126,7 @@ export default async function AdminJobsPage({ searchParams }: PageProps) {
         jobs.length === 0 ? (
           <Panel message={`No jobs found with status "${statusFilter}".`} />
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-card">
             <table className="w-full text-sm">
               <thead className="border-b border-border bg-muted/30 text-left text-xs uppercase text-muted-foreground">
                 <tr>
@@ -217,7 +217,7 @@ export default async function AdminJobsPage({ searchParams }: PageProps) {
 
 function Panel({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5 text-sm leading-6 text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
       {message}
     </div>
   );

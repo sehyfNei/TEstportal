@@ -67,7 +67,7 @@ export function ManifestValidator() {
         />
       </label>
 
-      <aside className="rounded-lg border border-border bg-card p-5">
+      <aside className="rounded-xl border border-border bg-card shadow-card p-5">
         <h2 className="text-lg font-semibold">Validation result</h2>
         {validation.ok ? (
           <div className="mt-4 grid gap-3 text-sm">

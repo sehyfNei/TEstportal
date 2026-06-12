@@ -39,7 +39,7 @@ export function MistakeItemRow({ mistake }: Props) {
   const isPending = isPendingReviewed || isPendingResolved || isPendingIgnored || isPendingReopen;
 
   return (
-    <li className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between transition hover:border-foreground/20">
+    <li className="flex flex-col gap-4 rounded-xl border border-border bg-card shadow-card p-4 sm:flex-row sm:items-center sm:justify-between transition hover:border-foreground/20">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center rounded-full bg-red-100 dark:bg-red-950 px-2.5 py-0.5 text-xs font-semibold text-red-800 dark:text-red-300">

@@ -95,7 +95,7 @@ export function QuestionImporter() {
       </div>
 
       {state.errors.length ? (
-        <div className="rounded-lg border border-border bg-card p-4">
+        <div className="rounded-xl border border-border bg-card shadow-card p-4">
           <h2 className="text-sm font-semibold">Validation errors</h2>
           <div className="mt-3 grid gap-2">
             {state.errors.slice(0, 25).map((error) => (

@@ -6,7 +6,7 @@ type Props = {
 
 export function StrategyMetricsCard({ metrics }: Props) {
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
+    <div className="rounded-xl border border-border bg-card shadow-card p-5">
       <h2 className="text-lg font-semibold">Strategy signals</h2>
       <p className="mt-1 text-xs text-muted-foreground">From your most recent session</p>
 

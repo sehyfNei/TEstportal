@@ -22,7 +22,7 @@ export default async function ProfilePage() {
           and AI consent.
         </p>
       </div>
-      <div className="rounded-lg border border-border bg-card p-5">
+      <div className="rounded-xl border border-border bg-card shadow-card p-5">
         <h2 className="text-lg font-semibold">Current auth context</h2>
         <p className="mt-2 text-sm text-muted-foreground">{email}</p>
       </div>

@@ -20,9 +20,9 @@ export function AuthCard({
   children
 }: AuthCardProps) {
   return (
-    <div className="rounded-lg border border-border bg-card p-6 text-card-foreground shadow-sm">
+    <div className="rounded-xl border border-border bg-card p-7 text-card-foreground shadow-card">
       <div className="mb-6">
-        <h2 className="text-2xl font-semibold">{title}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
       </div>
 
@@ -36,7 +36,7 @@ export function AuthCard({
 
       <p className="mt-6 text-sm text-muted-foreground">
         {footerText}{" "}
-        <Link className="font-medium text-primary" href={footerHref}>
+        <Link className="font-medium text-primary hover:underline" href={footerHref}>
           {footerLabel}
         </Link>
       </p>
