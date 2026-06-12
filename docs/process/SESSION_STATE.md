@@ -1,7 +1,19 @@
 # Session State
 
-**Last updated:** 2026-06-05 (late) — M0 unblock session
-**Updated by:** Claude (Architect) — M0 backend unblocked; TSP-028 sanity; demo content seeded
+**Last updated:** 2026-06-12 — Session 36: audit + frontend design pass (TSP-165)
+**Updated by:** Claude (Architect)
+
+---
+
+## Session 36 (2026-06-12) — Architect audit + frontend design pass
+
+**Audit findings:**
+- Gates re-verified GREEN at HEAD in Test_Portal after the undocumented 2026-06-07 fix burst (5 commits, `29efe69`…`10099b7`, 21:56–23:17 — looks like a live browser-smoke/debug session: 500s on session page + dashboard, broken question content repair script, `mastery_records` constraint fix, parallel post-submit side-effects). **No HANDOFF entry covers 06-07 — whoever ran it should backfill.**
+- `202606070001_mastery_records_unique_constraints.sql` exists; no record found that it was applied live. Verify with `node run-migrations.js` before next smoke.
+- Tracker CSV repaired: TSP-162 had 17 cells (missing `Built By` shifted Milestone into Rollback Notes); TSP-163 had 21 cells (Agent S scope list split, fragments spilled into Rollback Notes/Milestone). Both now well-formed 18-column rows; full-file re-quote via csv module.
+- Still pending: M0 manual browser smoke (20 Review rows — checklist below), key rotation (`SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`), founder AI guardrails/cost-cap decision, `RESEND_API_KEY`.
+
+**TSP-165 (new, founder request):** styling-only frontend design pass — design tokens (accent/success/warning/destructive/ring), layered radial background, font stack, sticky translucent app/admin headers with brand marks, active-state `NavLink` client component, redesigned landing hero + auth layout, card containers → `rounded-xl shadow-card` across 29 files. Commit `d4da0c0` (37 files, +290/−120). No logic touched. Gates in Test_Portal: typecheck ✅ lint ✅ (0 err/7 warn) test ✅ 302/302 build ✅ (exit 0, full route table). **TSP-165 Done.**
 **Project:** Modular AI-Powered Test Series And Self-Study Portal
 
 ---
