@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { requireAdminForAction } from "@/lib/auth/require-admin";
 import {
   type AdminQuestionActionState,
@@ -83,7 +82,6 @@ export async function createQuestionAction(
   }
 
   const rpcResult = toQuestionRpcResult(data);
-  revalidatePath("/admin/questions");
 
   return {
     ok: true,
@@ -157,8 +155,6 @@ export async function updateQuestionAction(
   }
 
   const rpcResult = toQuestionRpcResult(data);
-  revalidatePath("/admin/questions");
-  revalidatePath(`/admin/questions/${input.questionId}`);
 
   return {
     ok: true,
@@ -277,9 +273,6 @@ export async function setQualityTierAction(
   }
 
   const rpcResult = toQuestionRpcResult(data);
-  revalidatePath("/admin/questions");
-  revalidatePath("/admin/questions/review");
-  revalidatePath(`/admin/questions/${questionId}`);
 
   const newTier = rpcResult.new_tier ?? tier;
 
@@ -340,9 +333,6 @@ export async function setExposurePolicyAction(
   }
 
   const rpcResult = toQuestionRpcResult(data);
-  revalidatePath("/admin/questions");
-  revalidatePath("/admin/questions/review");
-  revalidatePath(`/admin/questions/${questionId}`);
 
   const newPolicy = rpcResult.new_policy ?? policy;
 
@@ -382,9 +372,6 @@ async function setQuestionStatus(
   }
 
   const rpcResult = toQuestionRpcResult(data);
-  revalidatePath("/admin/questions");
-  revalidatePath("/admin/questions/review");
-  revalidatePath(`/admin/questions/${questionId}`);
 
   const status = rpcResult.status ?? rpcResult.to_status ?? toStatus;
 

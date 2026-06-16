@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { resolveFlagAction } from "@/app/admin/questions/flag-actions";
 
 type ResolveFlagFormProps = {
@@ -10,7 +11,12 @@ type ResolveFlagFormProps = {
 const initialState = { ok: false, message: "" };
 
 export function ResolveFlagForm({ flagId }: ResolveFlagFormProps) {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState(resolveFlagAction, initialState);
+
+  useEffect(() => {
+    if (state.ok) router.refresh();
+  }, [state.ok, router]);
 
   if (state.ok) {
     return (

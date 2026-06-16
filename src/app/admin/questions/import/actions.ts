@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { requireAdminForAction } from "@/lib/auth/require-admin";
 import {
   type BulkQuestionImportError,
@@ -123,8 +122,6 @@ export async function importQuestionsAction(
 
     importedRows += 1;
   }
-
-  revalidatePath("/admin/questions");
 
   return {
     ok: true,

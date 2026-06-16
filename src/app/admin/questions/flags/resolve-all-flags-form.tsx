@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { resolveQuestionFlagsAction } from "@/app/admin/questions/flag-actions";
 
 type Props = {
@@ -10,10 +11,15 @@ type Props = {
 const initialState = { ok: false, message: "" };
 
 export function ResolveAllFlagsForm({ questionId }: Props) {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState(
     resolveQuestionFlagsAction,
     initialState
   );
+
+  useEffect(() => {
+    if (state.ok) router.refresh();
+  }, [state.ok, router]);
 
   if (state.ok) {
     return <p className="text-xs text-emerald-700">{state.message}</p>;

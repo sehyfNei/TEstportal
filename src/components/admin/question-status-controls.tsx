@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { setQuestionStatusAction } from "@/app/admin/questions/actions";
 import { initialAdminQuestionActionState } from "@/lib/question-bank/admin-question-schema";
 import type { QuestionStatus } from "@/lib/question-bank/question-lifecycle";
@@ -18,10 +19,15 @@ type QuestionStatusControlsProps = {
 };
 
 export function QuestionStatusControls({ commands, questionId }: QuestionStatusControlsProps) {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState(
     setQuestionStatusAction,
     initialAdminQuestionActionState
   );
+
+  useEffect(() => {
+    if (state.ok) router.refresh();
+  }, [state.ok, router]);
 
   return (
     <div className="grid gap-3">

@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { requireAdminForAction } from "@/lib/auth/require-admin";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
@@ -49,7 +48,6 @@ export async function resolveFlagAction(
     return { ok: false, message: error.message };
   }
 
-  revalidatePath("/admin/questions/flags");
   return { ok: true, message: `Flag ${resolution}.` };
 }
 
@@ -100,8 +98,6 @@ export async function resolveQuestionFlagsAction(
       ? "No open flags to close."
       : `${closed} flag${closed === 1 ? "" : "s"} ${resolution}. Question stays quarantined until restored via the editor.`;
 
-  revalidatePath("/admin/questions/flags");
-  revalidatePath("/admin/questions");
   return { ok: true, message: msg };
 }
 

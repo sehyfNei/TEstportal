@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { fetchDashboardOverview, type DashboardOverview } from "@/lib/dashboard/overview";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
@@ -154,7 +153,6 @@ export async function startRetestAction(
     console.error("[retest] failed to write metadata.retestQueueId", metadataError);
   }
 
-  revalidatePath("/dashboard");
   return { ok: true, message: "Retest started.", sessionId };
 }
 

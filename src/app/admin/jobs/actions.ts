@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { requireAdminForAction } from "@/lib/auth/require-admin";
 import { getErrorMessage } from "@/lib/errors";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
@@ -32,7 +31,6 @@ export async function retryJobAction(jobId: string) {
       return { ok: false, message: `Failed to retry job: ${error.message}` };
     }
 
-    revalidatePath("/admin/jobs");
     return { ok: true };
   } catch (error: unknown) {
     return { ok: false, message: getErrorMessage(error) || "An unexpected error occurred." };

@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { createMistakeItemsJob } from "@/lib/jobs/handlers/create-mistake-items";
 import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
@@ -127,8 +126,6 @@ export async function startSessionAction(
   } catch (logError) {
     console.error("[analytics] failed to log test_start event", logError);
   }
-
-  revalidatePath("/dashboard");
 
   return {
     ok: true,
@@ -446,8 +443,6 @@ export async function submitSessionAction(
     // Don't await — let side-effects run after response is sent
     void Promise.all(sideEffects);
   }
-
-  revalidatePath("/dashboard");
 
   return {
     ok: true,
