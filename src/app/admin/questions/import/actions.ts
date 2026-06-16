@@ -133,6 +133,26 @@ export async function importQuestionsAction(
   };
 }
 
+export type TopicOption = { id: string; name: string };
+
+export async function fetchExamTopicsAction(examId: string): Promise<TopicOption[]> {
+  if (!hasSupabaseConfig()) return [];
+
+  const adminCheck = await requireAdminForAction();
+
+  if (!adminCheck.ok) return [];
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("topics")
+    .select("id,name")
+    .eq("exam_id", examId)
+    .is("parent_id", null)
+    .order("name");
+
+  return data ?? [];
+}
+
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value : "";

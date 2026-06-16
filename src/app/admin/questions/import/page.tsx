@@ -1,7 +1,16 @@
 import Link from "next/link";
-import { QuestionImporter } from "@/components/admin/question-importer";
+import { QuestionImportWizard } from "@/components/admin/question-import-wizard";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { createClient } from "@/lib/supabase/server";
 
-export default function AdminQuestionImportPage() {
+type ExamOption = {
+  id: string;
+  name: string;
+};
+
+export default async function AdminQuestionImportPage() {
+  const exams = await loadExams();
+
   return (
     <section className="grid gap-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -18,30 +27,16 @@ export default function AdminQuestionImportPage() {
         </Link>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="rounded-xl border border-border bg-card shadow-card p-5">
-          <QuestionImporter />
-        </div>
-
-        <aside className="rounded-xl border border-border bg-card shadow-card p-5">
-          <h2 className="text-lg font-semibold">Accepted fields</h2>
-          <div className="mt-4 grid gap-3 text-sm leading-6 text-muted-foreground">
-            <p>
-              Required: `examId`, `topicId`, and either `content` in JSON rows or `content_json` in
-              CSV rows.
-            </p>
-            <p>
-              Optional: `subtopicId`, `type`, `difficulty`, `source`, `sourceYear`,
-              `sourceReference`, `isContested`, `language`, `status`, `exposurePolicy`,
-              `qualityTier`, `explanation`, `explanationDetail`, and `reviewerNotes`.
-            </p>
-            <p>
-              CSV also accepts snake_case aliases such as `exam_id`, `topic_id`, `content_json`,
-              and `quality_tier`.
-            </p>
-          </div>
-        </aside>
-      </div>
+      <QuestionImportWizard exams={exams} />
     </section>
   );
+}
+
+async function loadExams(): Promise<ExamOption[]> {
+  if (!hasSupabaseConfig()) return [];
+
+  const supabase = await createClient();
+  const { data } = await supabase.from("exams").select("id,name").order("name");
+
+  return data ?? [];
 }
