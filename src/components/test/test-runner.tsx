@@ -306,9 +306,7 @@ export function TestRunner({
     }
 
     clearDebouncedSave(question.questionId);
-    startTransition(async () => {
-      await saveQuestionAnswer(question, state);
-    });
+    void saveQuestionAnswer(question, state);
   }
 
   function handleAnswerChange(answer: SelectedAnswer) {
@@ -364,21 +362,23 @@ export function TestRunner({
     const nextIndex = clamp(index, 0, questions.length - 1);
     const nextQuestion = questions[nextIndex];
 
-    startTransition(async () => {
+    // Switch immediately — don't wait for the save network call
+    if (nextQuestion && nextIndex !== currentIndex) {
+      pendingVisitRef.current[nextQuestion.questionId] =
+        (pendingVisitRef.current[nextQuestion.questionId] ?? 0) + 1;
+    }
+    setCurrentIndex(nextIndex);
+    entryStartedAtRef.current = performance.now();
+
+    // Capture before the async boundary; save fire-and-forget in background
+    const leaving = currentQuestion;
+    void (async () => {
       await flushDebouncedSave();
       await saveQuestionAnswer(
-        currentQuestion,
-        getQuestionState(questionStatesRef.current, currentQuestion.questionId)
+        leaving,
+        getQuestionState(questionStatesRef.current, leaving.questionId)
       );
-
-      if (nextQuestion && nextIndex !== currentIndex) {
-        pendingVisitRef.current[nextQuestion.questionId] =
-          (pendingVisitRef.current[nextQuestion.questionId] ?? 0) + 1;
-      }
-
-      setCurrentIndex(nextIndex);
-      entryStartedAtRef.current = performance.now();
-    });
+    })();
   }
 
   function move(delta: number) {
@@ -398,12 +398,10 @@ export function TestRunner({
         }
 
         debouncedSaveRef.current = null;
-        startTransition(async () => {
-          await saveQuestionAnswer(
-            pending.question,
-            getQuestionState(questionStatesRef.current, pending.question.questionId)
-          );
-        });
+        void saveQuestionAnswer(
+          pending.question,
+          getQuestionState(questionStatesRef.current, pending.question.questionId)
+        );
       }, INTEGER_SAVE_DEBOUNCE_MS)
     };
   }
@@ -445,7 +443,7 @@ export function TestRunner({
                   ? "border-amber-300 text-amber-700 hover:border-amber-500"
                   : "border-border text-muted-foreground hover:border-primary hover:text-foreground"
               )}
-              disabled={locked || isPending}
+              disabled={locked}
               onClick={toggleMarkedReview}
               type="button"
             >
@@ -480,7 +478,7 @@ export function TestRunner({
 
       <QuestionNavigator
         currentIndex={currentIndex}
-        disabled={locked || isPending}
+        disabled={locked}
         onJump={jumpTo}
         questions={questions}
         states={navigatorStates}
@@ -503,13 +501,13 @@ export function TestRunner({
 
       <div className="grid gap-5 rounded-xl border border-border bg-card shadow-card p-5">
         <QuestionRenderer
-          disabled={locked || isPending}
+          disabled={locked}
           onChange={handleAnswerChange}
           promptSnapshot={currentQuestion.promptSnapshot}
           value={currentQuestionState.answer}
         />
         <ConfidenceControl
-          disabled={locked || isPending}
+          disabled={locked}
           onChange={handleConfidenceChange}
           value={currentQuestionState.confidence}
         />
@@ -527,7 +525,7 @@ export function TestRunner({
         <div className="flex gap-3">
           <button
             className="h-10 rounded-md border border-border px-4 text-sm font-semibold transition hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={locked || currentIndex === 0 || isPending}
+            disabled={locked || currentIndex === 0}
             onClick={() => move(-1)}
             type="button"
           >
@@ -535,7 +533,7 @@ export function TestRunner({
           </button>
           <button
             className="h-10 rounded-md border border-border px-4 text-sm font-semibold transition hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={locked || currentIndex === questions.length - 1 || isPending}
+            disabled={locked || currentIndex === questions.length - 1}
             onClick={() => move(1)}
             type="button"
           >
