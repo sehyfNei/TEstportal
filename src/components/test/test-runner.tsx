@@ -249,8 +249,13 @@ export function TestRunner({
       setMessage(mode === "auto" ? "Time expired. Submitting..." : "Submitting...");
 
       startTransition(async () => {
-        await flushDebouncedSave();
+        // Cancel any pending integer debounce — state is already in questionStatesRef
+        if (debouncedSaveRef.current) {
+          window.clearTimeout(debouncedSaveRef.current.timerId);
+          debouncedSaveRef.current = null;
+        }
 
+        // Single save for the current question (covers both flush + current save)
         if (currentQuestion) {
           await saveQuestionAnswer(
             currentQuestion,

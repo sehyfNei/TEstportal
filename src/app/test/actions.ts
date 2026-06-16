@@ -170,11 +170,27 @@ export async function saveAnswerAction(
   }
 
   const supabase = await createClient();
-  const sessionResult = await supabase
-    .from("test_sessions")
-    .select("id,user_id,status,expires_at")
-    .eq("id", sessionId)
-    .maybeSingle();
+
+  // Fetch all three in parallel — they are independent reads
+  const [sessionResult, sessionQuestionResult, existingResult] = await Promise.all([
+    supabase
+      .from("test_sessions")
+      .select("id,user_id,status,expires_at")
+      .eq("id", sessionId)
+      .maybeSingle(),
+    supabase
+      .from("session_questions")
+      .select("question_id")
+      .eq("session_id", sessionId)
+      .eq("question_id", questionId)
+      .maybeSingle(),
+    supabase
+      .from("session_answers")
+      .select("time_spent_sec,revisit_count,time_to_first_answer_ms")
+      .eq("session_id", sessionId)
+      .eq("question_id", questionId)
+      .maybeSingle()
+  ]);
 
   if (sessionResult.error) {
     return { ok: false, message: sessionResult.error.message };
@@ -196,13 +212,6 @@ export async function saveAnswerAction(
     return { ok: false, message: "This session has expired." };
   }
 
-  const sessionQuestionResult = await supabase
-    .from("session_questions")
-    .select("question_id")
-    .eq("session_id", sessionId)
-    .eq("question_id", questionId)
-    .maybeSingle();
-
   if (sessionQuestionResult.error) {
     return { ok: false, message: sessionQuestionResult.error.message };
   }
@@ -210,13 +219,6 @@ export async function saveAnswerAction(
   if (!sessionQuestionResult.data) {
     return { ok: false, message: "Question does not belong to this session." };
   }
-
-  const existingResult = await supabase
-    .from("session_answers")
-    .select("time_spent_sec,revisit_count,time_to_first_answer_ms")
-    .eq("session_id", sessionId)
-    .eq("question_id", questionId)
-    .maybeSingle();
 
   if (existingResult.error) {
     return { ok: false, message: existingResult.error.message };
@@ -254,20 +256,17 @@ export async function saveAnswerAction(
     return { ok: false, message: error.message };
   }
 
-  // Log answer_save event non-fatally
-  try {
-    const { logEvent } = await import("@/lib/analytics/log-event");
-    const hasAnswer = selectedAnswerResult.selectedAnswer !== null;
-    await logEvent(supabase, {
+  // Fire-and-forget — don't block the save response with analytics
+  const hasAnswer = selectedAnswerResult.selectedAnswer !== null;
+  void import("@/lib/analytics/log-event").then(({ logEvent }) =>
+    logEvent(supabase, {
       userId: auth.userId,
       eventType: "answer_save",
       entityType: "question",
       entityId: questionId,
       properties: { hasAnswer, confidence, markedReview, revisited: revisitIncrement > 0 }
-    });
-  } catch (logError) {
-    console.error("[analytics] failed to log answer_save event", logError);
-  }
+    })
+  ).catch((logError) => console.error("[analytics] failed to log answer_save event", logError));
 
   return {
     ok: true,
