@@ -19,10 +19,6 @@ type TopicRow = {
   weight_percent: number | string | null;
 };
 
-type BenchmarkRow = {
-  id: string;
-};
-
 export async function fetchReadinessScore(
   supabase: SupabaseClient,
   userId: string,

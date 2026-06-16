@@ -282,7 +282,7 @@ export function TestRunner({
         setMessage("Session scored.");
       });
     },
-    [clearBackup, currentQuestion, flushDebouncedSave, saveQuestionAnswer, sessionId]
+    [clearBackup, currentQuestion, saveQuestionAnswer, sessionId]
   );
 
   useEffect(() => {

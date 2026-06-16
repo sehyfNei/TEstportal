@@ -112,7 +112,7 @@ export async function fetchMistakeItems(
             if (stem) {
               stemMap.set(`${sq.session_id}:${sq.question_id}`, stem);
             }
-          } catch (e) {
+          } catch {
             // ignore individual conversion failures
           }
         });

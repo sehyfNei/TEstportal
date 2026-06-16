@@ -1,7 +1,35 @@
 # Session State
 
-**Last updated:** 2026-06-12 — Session 36: audit + frontend design pass (TSP-165)
+**Last updated:** 2026-06-16 — Session 37: perf fixes + revalidatePath purge + feature expansion planning (TSP-166–TSP-176)
 **Updated by:** Claude (Architect)
+
+---
+
+## Session 37 (2026-06-16) — Perf fixes, revalidatePath purge, and feature expansion
+
+**Performance fixes (shipped to Vercel):**
+- **Navigation speed:** `jumpTo` in `test-runner.tsx` now switches `currentIndex` immediately and saves fire-and-forget — decoupled UI from network round-trips.
+- **Submit speed:** `saveAnswerAction` 3 serial Supabase reads parallelised with `Promise.all`; analytics made fire-and-forget; flush+save collapsed to single save by cancelling debounce inline.
+- **revalidatePath purge:** All `revalidatePath` calls removed from server actions (test/actions.ts, dashboard/actions.ts, mistakes/actions.ts, admin/questions/actions.ts, admin/questions/flag-actions.ts, admin/questions/import/actions.ts, admin/jobs/actions.ts). Root cause: Next.js 15 `revalidatePath` in a server action triggers an inline re-render as part of the action flight response; since all pages are fully dynamic (use `cookies()`), this provides zero cache benefit and crashed Vercel serverless on re-render failure. Fix: remove all `revalidatePath`, add `router.refresh()` in `useEffect` in client components that need list updates (mistake-item-row.tsx, resolve-flag-form.tsx, resolve-all-flags-form.tsx, question-status-controls.tsx).
+- Pushed to GitHub → Vercel auto-deployed.
+
+**Feature expansion decisions (Architect, 2026-06-16):**
+11 new tickets across 3 phases added to tracker and roadmap:
+
+- **Phase A — Content Pipeline (M2):** TSP-166 (guided upload wizard), TSP-167 (AI-assisted enrichment on import). Addresses admin pain uploading question banks per topic.
+- **Phase B — AI Study Companion (M5):** TSP-168 (chat schema), TSP-169 (chat server action + streaming), TSP-170 (chat UI), TSP-171 (context injector). Delivers a personalised chatbot grounded in each student's mastery/mistake/plan data. Requires founder per-user cost cap decision before TSP-169 goes live.
+- **Phase C — Learning Paths (M7):** TSP-172 (schema), TSP-173 (path generator job), TSP-174 (progress tracker), TSP-175 (path UI), TSP-176 (goal-setting wizard). Full syllabus-aware personalised study roadmap with weekly milestones, mastery targets, and auto-completion. Requires founder definition of "cracking an exam" for TSP-176.
+
+**What's already built that these phases leverage:**
+- Groq gateway (TSP-066) + cost ledger: reused for Phase A enrichment and Phase B chat.
+- mastery_records (TSP-055) + improvement_plans (TSP-071): context injector (TSP-171) reads these directly.
+- Job runner + backoff (TSP-117): Phase C path generator job (TSP-173) registers as a new job type.
+- Exam manifest topic hierarchy: already in DB — TSP-173 reads it for syllabus coverage.
+
+**Open founder decisions surfaced this session:**
+1. Per-user/day AI chat cost cap and behavior when cap is hit (TSP-169 pre-launch).
+2. Definition of "cracking an exam" (TSP-176 wizard framing).
+3. Content ownership model for uploaded questions.
 
 ---
 

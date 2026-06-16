@@ -225,7 +225,7 @@ describe("fetchReadinessScore", () => {
               mastery_score: "75.5",
               confidence_level: "medium",
               questions_attempted: "4",
-              last_tested_at: new Date(NOW - DAY_MS).toISOString()
+              last_tested_at: new Date(Date.now() - DAY_MS).toISOString()
             }
           ],
           error: null

@@ -12193,3 +12193,159 @@ The Builder's gate table marked `build` and `test` "✅ exit 0" while also defer
 ## Next step
 - Orchestrator: TSP-164 needs one small decision (round scores vs `toBeCloseTo`) — then `pnpm test` goes green and all four gates are green.
 
+
+---
+
+# Session 38 — Architect Plan — TSP-166 (2026-06-16)
+
+**Milestone:** M2 Quality & Selection / Phase A Content Pipeline  
+**Scope:** TSP-166 only — guided bulk-upload wizard. TSP-167 (AI enrichment) is next session.  
+**Row status on completion:** TSP-166 → Review (pending browser smoke in Test_Portal)
+
+## Why this slice
+
+The existing import page (`/admin/questions/import`) requires the admin to know exam/topic UUIDs and hand-craft the full JSON or CSV payload blind. TSP-166 wraps the existing `importQuestionsAction` in a 3-step wizard: select exam+topic from dropdowns → receive a UUID-pre-filled template → validate (dry run) and commit. No new DB schema, no migration. Pure UX scaffolding over the existing import pipeline.
+
+## Architectural decisions
+
+**A. Wizard at same URL, no new routes.**  
+`/admin/questions/import` stays. Wizard step is local `useState` ("select" | "compose" | "preview"). Existing `QuestionImporter` component is retired.
+
+**B. Cascading topics via `fetchExamTopicsAction`.**  
+New `"use server"` action added to `src/app/admin/questions/import/actions.ts`. Queries `topics` by `exam_id` with `parent_id IS NULL` (top-level topics only). Called client-side with `useTransition` on exam selection. Returns `TopicOption[]` (`{ id, name }`).
+
+**C. Template generation is pure client-side string.**  
+`buildTemplate(format, examId, topicId)` runs in-browser, no round-trip. Returns JSON array or CSV header+row with UUIDs already filled in.
+
+**D. `parseBulkQuestionImportPayload` imported client-side for live error count.**  
+The function is client-safe (only Zod + shared schema, no server-only modules). Runs on textarea `onChange` (300 ms debounce) and shows inline "✓ N rows valid" or "⚠ N rows have errors" before the admin triggers the dry-run.
+
+**E. Two-phase submit: dry-run then commit.**  
+Step 3 has "Validate" (`dryRun=true`) then "Import N questions" (`dryRun=false`, enabled only after a clean dry run). Both calls use `useActionState(importQuestionsAction, ...)`. The action and its type are unchanged.
+
+**F. Exams server-side, topics lazy client-side.**  
+Page (server component) preloads exams at render time via `supabase.from("exams").select("id,name").order("name")` and passes them as a prop. Topics are fetched on demand via server action when the admin selects an exam.
+
+## Files to create / modify
+
+| Action | Path |
+|---|---|
+| Edit | `src/app/admin/questions/import/page.tsx` |
+| Edit | `src/app/admin/questions/import/actions.ts` |
+| Create | `src/components/admin/question-import-wizard.tsx` |
+
+No migration. No new routes. No changes outside these 3 files.
+
+## Implementation notes
+
+### `actions.ts` — addition only
+
+Add after the existing `importQuestionsAction` (do not touch it):
+
+```ts
+export type TopicOption = { id: string; name: string };
+
+export async function fetchExamTopicsAction(examId: string): Promise<TopicOption[]> {
+  if (!hasSupabaseConfig()) return [];
+  const adminCheck = await requireAdminForAction();
+  if (!adminCheck.ok) return [];
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("topics")
+    .select("id,name")
+    .eq("exam_id", examId)
+    .is("parent_id", null)   // top-level topics only
+    .order("name");
+  return data ?? [];
+}
+```
+
+### `page.tsx` — rewrite as server component
+
+```tsx
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { QuestionImportWizard } from "@/components/admin/question-import-wizard";
+
+export default async function ImportQuestionsPage() {
+  let exams: { id: string; name: string }[] = [];
+  if (hasSupabaseConfig()) {
+    const supabase = await createClient();
+    const { data } = await supabase.from("exams").select("id,name").order("name");
+    exams = data ?? [];
+  }
+  return (
+    <main className="mx-auto max-w-3xl px-4 py-8">
+      <h1 className="mb-6 text-2xl font-bold">Import Questions</h1>
+      <QuestionImportWizard exams={exams} />
+    </main>
+  );
+}
+```
+
+Remove old `QuestionImporter` import and JSX entirely.
+
+### `question-import-wizard.tsx` — new `"use client"` component
+
+State: `step` ("select"|"compose"|"preview"), `examId`, `topicId`, `topics: TopicOption[]`, `format` ("json"|"csv"), `payload: string`, `clientErrors: number`. Two `useActionState` calls (dry-run + commit — separate so results coexist on screen).
+
+**Step 1 — Select:**
+- `<select>` for exam (from `exams` prop)
+- On exam change: `startTopicTransition(() => fetchExamTopicsAction(id).then(setTopics))`
+- `<select>` for topic (disabled while `loadingTopics`, populated after exam chosen)
+- "Continue →" enabled only when both selected
+
+**Step 2 — Compose:**
+- Format toggle (JSON / CSV buttons)
+- Collapsible template block (`buildTemplate(format, examId, topicId)`) — read-only, shows pre-filled UUIDs
+- Main `<textarea>` for admin payload
+- Client-side parse on `onChange` (300 ms debounce via `useRef` timer): `parseBulkQuestionImportPayload(value, format)` → `setClientErrors(plan.errors.length)` and show inline count
+- "← Back" + "Preview →" buttons
+
+**Step 3 — Preview & Import:**
+- Hidden dry-run `<form action={dryRunAction}>` with `format`, `payload`, `dryRun=on` inputs — auto-submits on mount via `useEffect` (or admin clicks "Run validation")
+- Shows dry-run result: valid row count + errors table (max 25 rows)
+- Second `<form action={importAction}>` with same `format`, `payload` (no dryRun) — "Import N questions" button enabled only when `dryRunState.ok && dryRunState.validRows > 0`
+- Import result shown inline after commit
+
+**`buildTemplate(format, examId, topicId): string`** — pure helper in same file:
+- JSON: returns `JSON.stringify([{ examId, topicId, type:"mcq", difficulty:"medium", source:"manual", status:"draft", exposurePolicy:"practice", qualityTier:"bronze", content:{ text:"...", options:["A","B","C","D"], correct_options:[0] }, explanation:"" }], null, 2)`
+- CSV: returns two lines — header row + one sample data row with UUIDs filled in
+
+## Reuse (do not duplicate)
+
+| What | File |
+|---|---|
+| `importQuestionsAction` | `src/app/admin/questions/import/actions.ts` (call unchanged) |
+| `parseBulkQuestionImportPayload` | `src/lib/question-bank/bulk-question-import.ts` (safe to import client-side) |
+| `BulkQuestionImportActionState` | same file (reuse type; `initialState = { ok:false, message:"", totalRows:0, validRows:0, importedRows:0, errors:[] }`) |
+| `hasSupabaseConfig` | `src/lib/supabase/env.ts` |
+| `requireAdminForAction` | `src/lib/auth/require-admin.ts` |
+| Tailwind button / card classes | Match existing admin patterns (`h-10 rounded-md px-3 text-sm font-semibold`, `rounded-xl border border-border bg-card shadow-card`) |
+
+## Out of scope
+
+- TSP-167 (AI enrichment) — separate session
+- Subtopic (child topic) selection
+- Any changes to `importQuestionsAction` internals
+- Any migration or new DB table
+- Any file outside the 3 listed above
+
+## Verification
+
+**Standard gate** (run in `C:\Users\Rakesh\Documents\Test_Portal`):
+```powershell
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test       # expect 302/302 pass — wizard is UI-only, no new unit tests required
+corepack pnpm build
+```
+
+**Manual smoke** (dev server in Test_Portal):
+1. `/admin/questions/import` → confirms wizard renders (not the old textarea page)
+2. Step 1: select an exam → topics load → select a topic → click Continue
+3. Step 2: template shows correct exam/topic UUIDs → paste questions → confirm live error count updates
+4. Step 3: click Validate → dry-run summary shows valid row count → click Import → rows appear in admin question list
+
+**Acceptance (TSP-166):** Admin can complete a 3-step wizard with live error preview before committing the import.
+
