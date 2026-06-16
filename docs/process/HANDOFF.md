@@ -12349,3 +12349,45 @@ corepack pnpm build
 
 **Acceptance (TSP-166):** Admin can complete a 3-step wizard with live error preview before committing the import.
 
+---
+
+## Session 39 — Builder Notes — TSP-166 (2026-06-16)
+
+**Status:** Review — all 4 gates green; manual browser smoke pending.
+
+**Implementation summary:**
+
+3 files changed; no migration; `importQuestionsAction` left untouched as specified.
+
+**`src/app/admin/questions/import/actions.ts`** (edit)
+- Added `export type TopicOption = { id: string; name: string }` and `fetchExamTopicsAction(examId: string): Promise<TopicOption[]>`.
+- Action queries `topics` with `eq("exam_id", examId).is("parent_id", null).order("name")`.
+- Guarded by `requireAdminForAction()` and `hasSupabaseConfig()` early returns.
+
+**`src/app/admin/questions/import/page.tsx`** (rewrite)
+- Now a server component (`async function`). Extracts exam load into `async function loadExams()` — clean separation.
+- Kept the existing page header/breadcrumb markup; only the body content was replaced.
+- Renders `<QuestionImportWizard exams={exams} />`.
+
+**`src/components/admin/question-import-wizard.tsx`** (new, 549 lines)
+- `"use client"` component. State: `step`, `examId`, `topicId`, `topics`, `topicLoadError`, `format`, `payload`, `clientValidation`.
+- Topic load uses `topicRequestId` ref for race-condition safety (rapid exam switching can't resolve out-of-order).
+- Format toggle: `handleFormatChange` checks if the textarea is empty or still holds the old template before replacing, preserving user-entered content on format switch.
+- Client validation: `useEffect` on `[format, payload]` with 300ms debounce; calls `parseBulkQuestionImportPayload` synchronously (client-safe). Stores `{ totalRows, validRows, errors, message }` in state.
+- `PreviewStep` is a separate sub-component keyed on `${format}:${payload}` — forces remount when payload changes, re-triggering the auto dry-run `useEffect`.
+- Auto dry run: `useEffect(() => { dryRunFormRef.current?.requestSubmit(); }, [])` fires on mount.
+- `buildTemplate(format, examId, topicId)` generates pre-filled JSON array or CSV header+row including `correct_integer`, `pairs`, `images` fields.
+- Error list capped at 25 rows with overflow count.
+
+**Deviation from plan:** Plan spec'd `StepHeader` as a simple list; implemented as styled `<ol>` with active-step highlight (`border-primary/40 bg-primary/10`). Functionally equivalent, visually cleaner.
+
+**Gates (Test_Portal, 2026-06-16):**
+- `corepack pnpm typecheck` ✅ 0 errors
+- `corepack pnpm lint` ✅ 0 errors (5 pre-existing warnings, none from new code)
+- `corepack pnpm test` ✅ 302/302
+- `corepack pnpm build` ✅ clean, `/admin/questions/import` listed as dynamic route
+
+**Commit:** `f723757`
+
+**Next:** Manual smoke then mark TSP-166 Done. TSP-167 (AI enrichment on import) is the natural follow-on.
+

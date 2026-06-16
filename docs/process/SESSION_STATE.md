@@ -1,7 +1,50 @@
 # Session State
 
-**Last updated:** 2026-06-16 — Session 37: perf fixes + revalidatePath purge + feature expansion planning (TSP-166–TSP-176)
-**Updated by:** Claude (Architect)
+**Last updated:** 2026-06-16 — Session 39: TSP-166 guided upload wizard built; all 4 gates green
+**Updated by:** Claude (Architect/Builder)
+
+---
+
+## Session 39 (2026-06-16) — TSP-166: Guided Bulk-Upload Wizard (Built)
+
+**Status:** Review — pending manual browser smoke at `/admin/questions/import`
+
+**What was built (TSP-166):**
+
+3-file change; no migration; `importQuestionsAction` untouched.
+
+- **`src/app/admin/questions/import/page.tsx`** — converted to server component; preloads all exams at render via `supabase.from("exams").select("id,name").order("name")`; renders `<QuestionImportWizard exams={exams} />`. Old raw-textarea `QuestionImporter` retired.
+- **`src/app/admin/questions/import/actions.ts`** — added `TopicOption` type + `fetchExamTopicsAction(examId)` server action: queries `topics` by `exam_id` with `parent_id IS NULL` (top-level only), guarded by `requireAdminForAction`.
+- **`src/components/admin/question-import-wizard.tsx`** (new) — 3-step wizard:
+  - **Step 1 (Select):** cascading exam/topic dropdowns. Topics fetched via `startTransition → fetchExamTopicsAction` with `topicRequestId` race-condition guard. Continue gated on both selections.
+  - **Step 2 (Compose):** JSON/CSV format toggle (smart — preserves user-edited payload); collapsible UUID-pre-filled template (`buildTemplate` pure fn); main textarea + 300ms debounced client-side `parseBulkQuestionImportPayload` → live row count / error count inline.
+  - **Step 3 (Preview):** `PreviewStep` isolated component; auto-fires dry run via `requestSubmit()` on mount; dry-run result panel; Import button gated on `dryRunState.ok && dryRunState.validRows > 0`; error list capped at 25 rows with overflow note.
+
+**Verification gates (Test_Portal, 2026-06-16):**
+- typecheck ✅ (0 errors)
+- lint ✅ (0 errors, 5 pre-existing warnings — none from wizard)
+- test ✅ 302/302
+- build ✅ clean
+
+**Commit:** `f723757` — pushed to GitHub; Vercel auto-deploy triggered.
+
+**Manual smoke still pending:**
+1. `/admin/questions/import` renders wizard (not old textarea)
+2. Step 1: exam select → topics load → topic select → Continue
+3. Step 2: template shows UUIDs; paste → live error count updates
+4. Step 3: Validate → row count shows → Import → rows in question list
+
+---
+
+## Session 38 (2026-06-16) — CI fix + Architect plan for TSP-166
+
+**CI fixes shipped (commit `c3365df`):**
+- `readiness.test.ts:228` — `last_tested_at` anchored to `Date.now() - DAY_MS` (was hardcoded `NOW - DAY_MS` where `NOW = June 2`; 15 days later stale threshold hit, `score = 73.99` not `75.5`).
+- `readiness-query.ts` — removed unused `BenchmarkRow` type.
+- `mistake-list.ts:115` — `catch (e)` → bare `catch`.
+- `test-runner.tsx:285` — removed `flushDebouncedSave` from `submit` useCallback deps.
+
+**Architect plan (Session 38):** TSP-166 guidance written to HANDOFF.md — 6 architectural decisions, 3-file scope, per-file implementation notes, verification gates.
 
 ---
 
