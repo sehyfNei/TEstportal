@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   initialResolveMistakeState,
   resolveMistakeAction
@@ -12,6 +13,7 @@ type Props = {
 };
 
 export function MistakeItemRow({ mistake }: Props) {
+  const router = useRouter();
   const [stateReviewed, formActionReviewed, isPendingReviewed] = useActionState(
     resolveMistakeAction,
     initialResolveMistakeState
@@ -37,6 +39,13 @@ export function MistakeItemRow({ mistake }: Props) {
     (stateReopen.message && !stateReopen.ok ? stateReopen : { ok: true, message: "" });
 
   const isPending = isPendingReviewed || isPendingResolved || isPendingIgnored || isPendingReopen;
+  const anySucceeded = stateReviewed.ok || stateResolved.ok || stateIgnored.ok || stateReopen.ok;
+
+  useEffect(() => {
+    if (anySucceeded) {
+      router.refresh();
+    }
+  }, [anySucceeded, router]);
 
   return (
     <li className="flex flex-col gap-4 rounded-xl border border-border bg-card shadow-card p-4 sm:flex-row sm:items-center sm:justify-between transition hover:border-foreground/20">

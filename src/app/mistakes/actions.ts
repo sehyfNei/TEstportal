@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { MISTAKE_STATUSES } from "@/lib/mistakes/mistake-list";
@@ -47,7 +46,6 @@ export async function resolveMistakeAction(
     return { ok: false, message: error.message };
   }
 
-  revalidatePath("/mistakes");
   return { ok: true, message: "Updated." };
 }
 
