@@ -12391,3 +12391,159 @@ corepack pnpm build
 
 **Next:** Manual smoke then mark TSP-166 Done. TSP-167 (AI enrichment on import) is the natural follow-on.
 
+---
+
+# Session 40 — Architect Plan — TSP-167 (2026-06-17)
+
+**Milestone:** M2 Quality & Selection / Phase A Content Pipeline  
+**Scope:** TSP-167 only — AI-assisted enrichment panel in the upload wizard. TSP-032 (semantic dedup) is a separate session.  
+**Row status on completion:** TSP-167 → Review (pending manual browser smoke)
+
+## Why this slice
+
+The upload wizard (TSP-166) imports questions with whatever `difficulty` and `explanation` the admin supplied — or schema defaults (`medium` / blank). Admins uploading large batches can't review every field. TSP-167 adds an optional AI enrichment pass: after the dry-run validates the batch, a single Groq call assesses each question's difficulty and generates a brief explanation for any row where the admin left it blank. The admin sees per-row suggestions with accept/dismiss toggles. `importQuestionsAction` is called unchanged with the admin's final choices as JSON.
+
+## Architectural decisions
+
+**A. Enrichment is an optional panel inside existing Step 3 — not a new wizard step.**  
+Step 3 gains an "Enrich with AI" button that appears after a clean dry run. Admin can ignore it and import immediately. No new route or wizard step.
+
+**B. One Groq call for the whole batch; cap at 30 rows.**  
+A batched prompt is cheaper and simpler (~$0.004 for 30 questions). Batches >30 show an inline note. This edge case can be revisited in TSP-170+.
+
+**C. `enrichQuestionsAction` takes typed `BulkQuestionImportInput[]`, not FormData.**  
+Follows the same pattern as `fetchExamTopicsAction(examId)` — plain server action with structured args. No re-parsing raw strings on the server.
+
+**D. Parsed questions re-derived inside `PreviewStep` via `useMemo`.**  
+`parseBulkQuestionImportPayload(payload, format)` is pure and synchronous. Call inside `PreviewStep` with `useMemo([payload, format])` — same result as dry-run validation, no extra prop needed.
+
+**E. Accepted overrides merged client-side; `effectivePayload` replaces the hidden import form input.**  
+`applyOverrides(questions, overrides)` is a pure client function producing updated `BulkQuestionImportInput[]`. Serialised to JSON → `effectivePayload` state → used in the import form's hidden `payload` input. `importQuestionsAction` receives the modified JSON unchanged.
+
+**F. `"question_enrichment"` added to `AiFeature` union.**  
+Keeps cost ledger breakdowns accurate. Cost logged automatically by the gateway with `relatedEntityType: "bulk_import"`.
+
+**G. AI disabled / failure → graceful degradation.**  
+`enrichQuestionsAction` returns `{ ok: false, message }`. Import button is never blocked.
+
+## Files to create / modify
+
+| Action | Path |
+|---|---|
+| Edit (1 line) | `src/lib/ai/types.ts` |
+| Create | `src/lib/ai/schemas/question-enrichment.ts` |
+| Edit | `src/app/admin/questions/import/actions.ts` |
+| Edit | `src/components/admin/question-import-wizard.tsx` |
+
+No migration. No new routes. `importQuestionsAction` untouched.
+
+## Implementation notes
+
+### `src/lib/ai/types.ts`
+Add `| "question_enrichment"` to the `AiFeature` union. One line.
+
+### `src/lib/ai/schemas/question-enrichment.ts` (new)
+Mirror the structure of `src/lib/ai/schemas/analysis.ts` exactly:
+- Version constants: `ENRICHMENT_SCHEMA_VERSION = "1.0.0"`, `ENRICHMENT_PROMPT_VERSION = "question_enrichment@1.0.0"`
+- `enrichmentQuestionInputSchema`: `{ rowIndex, stem, options, correctOptionIndex, currentDifficulty, hasExplanation }`
+- `enrichmentInputSchema`: `{ questions: array (min 1, max 30) }`
+- `enrichmentQuestionOutputSchema`: `{ rowIndex, suggestedDifficulty: enum(easy|medium|hard), suggestedExplanation: string|null, reasoning: string }`
+- `enrichmentOutputSchema`: `{ questions: array }`
+- Export: `EnrichmentInput`, `EnrichmentOutput`, `EnrichmentQuestionOutput` types
+- `buildEnrichmentMessages(input): AiMessage[]` — system prompt instructs Groq to rate difficulty by cognitive load and generate brief explanation (<80 words) only when `hasExplanation=false`; user prompt is `JSON.stringify({ schemaVersion, task: "enrich_questions", questions })`
+- `validateEnrichmentOutput(raw)` → `{ ok: true; data } | { ok: false; errors }` — same Zod safeParse pattern
+
+### `src/app/admin/questions/import/actions.ts` — add at bottom
+New exports:
+- `type EnrichmentQuestionOutput` (re-export from schema)
+- `type EnrichQuestionsResult = { ok: boolean; message: string; suggestions: EnrichmentQuestionOutput[] }`
+- `async function enrichQuestionsAction(questions: BulkQuestionImportInput[]): Promise<EnrichQuestionsResult>`
+
+Action body:
+1. `requireAdminForAction()` guard — early return on fail
+2. `questions.slice(0, 30)` cap
+3. Build `enrichmentInputSchema.safeParse(...)` — map each question to `{ rowIndex, stem: q.content.text, options: q.content.options, correctOptionIndex: q.content.correct_options?.[0] ?? null, currentDifficulty: q.difficulty, hasExplanation: (q.explanation ?? "").trim().split(/\s+/).length >= 30 }`
+4. `callAi({ feature: "question_enrichment", messages: buildEnrichmentMessages(parsed.data), promptVersion, outputSchemaVersion, jsonMode: true, relatedEntityType: "bulk_import" })`
+5. Handle `ok: false` → return `{ ok: false, message }` (check `aiResult.error === "ai_disabled"` for the missing-key case)
+6. `JSON.parse(aiResult.content)` + `validateEnrichmentOutput(...)` + return result
+
+### `src/components/admin/question-import-wizard.tsx` — inside `PreviewStep`
+New state (add inside `PreviewStep`):
+- `enrichResult: EnrichQuestionsResult | null` — result of the last enrichment call
+- `overrides: Map<number, Partial<EnrichmentQuestionOutput>>` — accepted suggestions per row index
+- `effectivePayload: string` — initialised to `payload`; updated when overrides accepted
+- `isEnriching / startEnrichTransition` — `useTransition` for the enrichment call
+- `parsedPlan = useMemo(() => parseBulkQuestionImportPayload(payload, format), [payload, format])`
+- `validQuestions = parsedPlan.questions`
+
+Render (after the dry-run form, before the import form):
+- If `dryRunState.ok && validRows > 0 && validQuestions.length > 30` → show "batch too large" note
+- If `dryRunState.ok && validRows > 0 && validQuestions.length <= 30` → show "✨ Enrich with AI" button; disabled when `isEnriching || enrichResult?.ok`; onClick calls `startEnrichTransition(() => void enrichQuestionsAction(validQuestions).then(setEnrichResult))`
+- If `!enrichResult.ok` → show `enrichResult.message` inline (muted text)
+- If `enrichResult.ok` → render `<EnrichmentPanel>` (sub-component below)
+
+Import form: change `<input name="payload" value={payload} />` to `value={effectivePayload}`.
+
+`applyOverrides(questions, overrides)` — pure helper same file:
+```ts
+function applyOverrides(questions, overrides) {
+  return questions.map((q, i) => {
+    const o = overrides.get(i);
+    if (!o) return q;
+    return {
+      ...q,
+      ...(o.suggestedDifficulty ? { difficulty: o.suggestedDifficulty } : {}),
+      ...(o.suggestedExplanation ? { explanation: o.suggestedExplanation } : {})
+    };
+  });
+}
+```
+
+`EnrichmentPanel` sub-component — props: `{ validQuestions, suggestions, overrides, onAccept, onDismiss }`. Renders a collapsible list of per-row cards styled with `rounded-xl border border-border bg-background p-4`. Each card:
+- Header: "Row {n+1}" + first 80 chars of stem
+- Difficulty row: current → suggested with "Accept" / "Dismiss" buttons
+- Explanation row (only when `suggestedExplanation !== null`): suggestion text + "Accept" / "Dismiss"
+- Reasoning: `text-xs text-muted-foreground`
+
+On "Accept difficulty" → `onAccept(rowIndex, "suggestedDifficulty", value)` which updates overrides + rebuilds `effectivePayload`.  
+On "Dismiss" → `onDismiss(rowIndex, field)` which removes the override entry.
+
+## Reuse (do not duplicate)
+
+- `callAi` — `src/lib/ai/gateway.ts`
+- `AiMessage` type — `src/lib/ai/types.ts`
+- `requireAdminForAction` — `src/lib/auth/require-admin.ts`
+- `parseBulkQuestionImportPayload`, `BulkQuestionImportInput` — `src/lib/question-bank/bulk-question-import.ts`
+- `buttonBase` / Tailwind card classes — already defined at top of wizard file
+- Schema file pattern — mirror `src/lib/ai/schemas/analysis.ts` exactly
+
+## Out of scope
+
+- TSP-032 (semantic dedup) — separate session
+- `importQuestionsAction` internals
+- Subtopic or `qualityTier` suggestions
+- Any migration or new DB table
+- Any file outside the 4 listed above
+
+## Verification
+
+**Standard gate** (run in `C:\Users\Rakesh\Documents\Test_Portal`):
+```powershell
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test       # expect 302/302 — enrichment is UI + server IO, no new unit tests needed
+corepack pnpm build
+```
+
+**Manual smoke (GROQ_API_KEY set):**
+1. `/admin/questions/import` → Step 1 → Step 2 → paste 3–5 questions with blank explanations
+2. Step 3: dry-run passes → "✨ Enrich with AI" button appears
+3. Click Enrich → spinner → suggestions panel shows per-row difficulty + explanation
+4. Accept 2 suggestions, dismiss 1
+5. Click "Import N questions" → rows created → open question detail → confirm accepted difficulty/explanation landed
+
+**Manual smoke (no GROQ_API_KEY):**
+1. Same path → click Enrich → inline error, Import still enabled → import proceeds normally
+
+**Acceptance (TSP-167):** Wizard shows per-question AI suggestions for difficulty/explanation; admin can accept or dismiss each; final import uses admin-confirmed values.
+

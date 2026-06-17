@@ -1,7 +1,27 @@
 # Session State
 
-**Last updated:** 2026-06-16 — Session 39: TSP-166 guided upload wizard built; all 4 gates green
-**Updated by:** Claude (Architect/Builder)
+**Last updated:** 2026-06-17 — Session 40: TSP-167 Architect plan complete; ready for Builder
+**Updated by:** Claude (Architect)
+
+---
+
+## Session 40 (2026-06-17) — TSP-167: AI Enrichment on Import (Architect plan)
+
+**Status:** Architect plan complete — ready for Builder
+
+**What's planned (TSP-167):**
+
+Optional AI enrichment panel added to Step 3 of the upload wizard. After a clean dry run, admin can click "Enrich with AI" to send the batch to Groq for per-question `difficulty` rating and `explanation` generation (blank rows only). Admin gets per-row accept/dismiss toggles. Accepted suggestions are merged client-side into the effective payload before the final import call. `importQuestionsAction` unchanged.
+
+**4-file scope:**
+- `src/lib/ai/types.ts` — add `"question_enrichment"` to `AiFeature` (1 line)
+- `src/lib/ai/schemas/question-enrichment.ts` — new prompt schema (mirrors `analysis.ts`)
+- `src/app/admin/questions/import/actions.ts` — add `enrichQuestionsAction` + result types
+- `src/components/admin/question-import-wizard.tsx` — add enrichment panel + `applyOverrides` + `EnrichmentPanel` sub-component inside `PreviewStep`
+
+**Key constraints:** 1 Groq call/batch, cap 30 rows, fully advisory, no migration, no route change, graceful degradation when GROQ_API_KEY absent.
+
+**HANDOFF.md:** Session 40 Architect entry appended.
 
 ---
 
