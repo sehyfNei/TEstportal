@@ -12547,3 +12547,67 @@ corepack pnpm build
 
 **Acceptance (TSP-167):** Wizard shows per-question AI suggestions for difficulty/explanation; admin can accept or dismiss each; final import uses admin-confirmed values.
 
+
+---
+
+## Session 41 Builder Notes (2026-06-17) — TSP-167: AI Enrichment on Import
+
+**Role:** Builder (Claude) + Architect cleanup pass
+**Commit:** `281bebd` — feat: TSP-167 AI-assisted question enrichment on bulk import
+
+### Per-file implementation
+
+**`src/lib/ai/types.ts`**
+Added `"question_enrichment"` to the `AiFeature` union. Single line change at line 6.
+
+**`src/lib/ai/schemas/question-enrichment.ts`** (new file)
+Follows `analysis.ts` pattern exactly:
+- `ENRICHMENT_SCHEMA_VERSION = "1.0.0"`, `ENRICHMENT_PROMPT_VERSION = "question_enrichment@1.0.0"`
+- `enrichmentQuestionInputSchema` — rowIndex, stem, options[], correctOptionIndex, currentDifficulty, hasExplanation
+- `enrichmentInputSchema` — wraps array, min(1).max(30)
+- `enrichmentQuestionOutputSchema` — rowIndex, suggestedDifficulty (enum easy/medium/hard), suggestedExplanation (string|null), reasoning
+- `enrichmentOutputSchema` — wraps array
+- `buildEnrichmentMessages(input)` — system prompt sets UPSC reviewer persona; user prompt is JSON-stringified input
+- `validateEnrichmentOutput(raw)` — safeParse, returns `{ok,data}` or `{ok:false,errors[]}`
+
+**`src/app/admin/questions/import/actions.ts`**
+Added at bottom (after `fetchExamTopicsAction`):
+- `export type { EnrichmentQuestionOutput }` re-export for wizard consumption
+- `export type EnrichQuestionsResult = { ok, message, suggestions[] }`
+- `enrichQuestionsAction(questions)` — requireAdminForAction guard; slice to 30; map to enrichmentInput; callAi with feature=question_enrichment; JSON.parse response; validateEnrichmentOutput; return suggestions
+
+**`src/components/admin/question-import-wizard.tsx`**
+Changes inside `PreviewStep`:
+- New state: `enrichResult`, `overrides` (Map), `effectivePayload`, `isEnriching` transition
+- `parsedPlan` via `useMemo` — re-derives valid questions from payload without extra round-trip
+- `handleEnrich()` — fires `enrichQuestionsAction(validQuestions)` in transition, sets result
+- `handleAccept(rowIndex, field, value)` — updates overrides map, calls `updateOverrides`
+- `handleDismiss(rowIndex, field)` — removes field from overrides row, calls `updateOverrides`
+- `updateOverrides(next)` — sets overrides state + rebuilds `effectivePayload` via `applyOverrides`
+- Import form hidden input now uses `effectivePayload` instead of raw `payload`
+- "✨ Enrich with AI" button appears after clean dry-run (batches >30 rows show note instead)
+- `EnrichmentPanel` sub-component: per-row cards showing stem snippet, difficulty suggestion with Accept/Dismiss, explanation suggestion with Accept/Dismiss, reasoning text
+- `applyOverrides(questions, overrides)` pure function at bottom of file
+
+### Deviation from plan
+None. Plan followed exactly. TS2322 fix (`as never`) was anticipated in plan's type notes.
+
+### Verification gates (Test_Portal, 2026-06-17)
+- typecheck ✅ 0 errors
+- lint ✅ 0 errors / 5 pre-existing warnings (unchanged)
+- test ✅ 302/302
+- build ✅ clean
+
+### M0/M1 tracker cleanup (same session)
+Confirmed by founder:
+- M0 complete — credentials, migrations, admin+test users, smoke all done
+- M1 complete — test shell through tab-switch logging all smoke-tested
+- Closed to Done: TSP-019, 024, 026, 040, 090, 043, 044, 045, 046, 047, 048, 049, 166
+- ROADMAP.md updated to mark M0 + M1 complete; stale credential blockers removed
+
+### Next step
+Manual browser smoke for TSP-167 (GROQ_API_KEY must be set in .env for dev server):
+1. `/admin/questions/import` → paste 3–5 questions with blank explanations → Step 3 dry-run passes
+2. "✨ Enrich with AI" → EnrichmentPanel renders with per-row difficulty + explanation
+3. Accept some, dismiss some → Import → verify accepted values in question detail
+4. With GROQ_API_KEY absent → inline error, Import still works

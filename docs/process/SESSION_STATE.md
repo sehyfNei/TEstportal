@@ -1,7 +1,42 @@
 # Session State
 
-**Last updated:** 2026-06-17 — Session 40: TSP-167 Architect plan complete; ready for Builder
-**Updated by:** Claude (Architect)
+**Last updated:** 2026-06-17 — Session 41: TSP-167 built; M0/M1 closed; doc cleanup
+**Updated by:** Claude (Architect/Sanity)
+
+---
+
+## Session 41 (2026-06-17) — TSP-167: AI Enrichment on Import (Built) + M0/M1 Cleanup
+
+**Status:** Review — pending manual browser smoke at `/admin/questions/import` with GROQ_API_KEY set
+
+**What was built (TSP-167):**
+
+4-file change; no migration; `importQuestionsAction` untouched.
+
+- **`src/lib/ai/types.ts`** — added `"question_enrichment"` to `AiFeature` union (1 line)
+- **`src/lib/ai/schemas/question-enrichment.ts`** (new) — `enrichmentInputSchema`, `enrichmentOutputSchema`, `buildEnrichmentMessages()`, `validateEnrichmentOutput()` following `analysis.ts` pattern
+- **`src/app/admin/questions/import/actions.ts`** — `enrichQuestionsAction(questions)` server action; 30-row batch cap; graceful degradation on AI-disabled or call failure; cost logged to `llm_cost_ledger` via gateway
+- **`src/components/admin/question-import-wizard.tsx`** — `EnrichmentPanel` sub-component; `handleAccept`/`handleDismiss`/`updateOverrides`; `applyOverrides()` pure fn; `effectivePayload` state replaces raw `payload` in import form hidden input. Fixed TS2322 (`nextRow[field] = value as never`).
+
+**Verification gates (Test_Portal, 2026-06-17):**
+- typecheck ✅ (0 errors — including fix for TS2322 in wizard)
+- lint ✅ (0 errors, 5 pre-existing warnings — none from new code)
+- test ✅ 302/302
+- build ✅ clean
+
+**Commit:** `281bebd`
+
+**Manual smoke pending:**
+1. `/admin/questions/import` → paste 3–5 questions with blank explanations → Step 3 dry-run passes
+2. Click "✨ Enrich with AI" → spinner → `EnrichmentPanel` shows per-row difficulty + explanation suggestions
+3. Accept 2 suggestions, dismiss 1 → Import → open question detail → confirm accepted values landed
+4. Repeat with `GROQ_API_KEY` unset → inline error message, Import still enabled
+
+**M0/M1 cleanup (this session):**
+- M0 confirmed complete by founder (credentials, migrations, admin+test users, smoke all done)
+- Closed to Done: TSP-019, 024, 026, 040, 090 (M0), TSP-043, 044, 045, 046, 047, 048, 049 (M1), TSP-166 (smoke confirmed)
+- ROADMAP.md stale M0 items removed
+- TSP-167 tracker → Review
 
 ---
 

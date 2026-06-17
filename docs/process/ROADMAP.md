@@ -26,17 +26,11 @@ M5 (AI) and M6 (hardening) can run in parallel once M4 lands. Parts of M6 (accou
 
 ## Milestones
 
-### M0 — Unblock & Verify *(founder action; gates everything)*
-Nothing built is *confirmed real* until the live database is verified. One credential fix unblocks 11 already-built rows.
-- Fix `DATABASE_URL`, apply migrations, create an admin user + a test student.
-- Smoke-test and close the in-Review rows: **TSP-019, 024, 025, 026, 027, 035, 039, 040, 041, 090, 159**.
-- **Exit criteria:** those rows reach `Done`; start→save→submit and the admin review queue verified against a live DB.
+### M0 — Unblock & Verify ✅ COMPLETE (2026-06-17)
+Live DB verified. Credentials set (`DATABASE_URL` correct; `SUPABASE_SERVICE_ROLE_KEY` + `GROQ_API_KEY` in Vercel). Migrations applied. Admin + test student created. All in-Review rows smoke-tested and closed to Done. GitHub PAT rotation deferred to production move.
 
-### M1 — Playable Test *(the demo: login → take test → see score)*
-Put a face on the test engine finished in Session 3.
-- **TSP-043** shell+timer, **TSP-044** renderer, **TSP-045** navigator, **TSP-046** confidence, **TSP-047** mark-for-review, **TSP-048** autosave recovery, **TSP-049** tab-switch logging. (Epics: TSP-042, TSP-034.)
-- **Architect decisions to lock:** server-authoritative timer (`expires_at` is the source of truth; client clock advisory); autosave-recovery conflict rule (server wins); fix revisit_count semantics (Sanity note N5).
-- **Exit criteria:** a real user can take and submit a test on screen and see a score.
+### M1 — Playable Test ✅ COMPLETE (2026-06-17)
+Test shell, renderer, navigator, confidence, mark-for-review, autosave recovery, and tab-switch logging all built and smoke-tested against live DB. TSP-043–049 closed to Done.
 
 ### M2 — Quality & Selection *(make tests meaningful)*
 Selection currently grabs any live question. Make it quality-filtered and targeted.
@@ -87,6 +81,6 @@ Build the worker layer first — AI runs in the background.
 5. **M7 Phase C** — definition of "cracking an exam" for the goal-setting wizard (TSP-176); per-path AI generation cost model.
 
 ## Credential/infra blockers by milestone
-- **M0:** correct `DATABASE_URL` (transaction pooler); admin + test users.
-- **M4 (reminders) / M5:** `RESEND_API_KEY`, `GROQ_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-- **M6:** Vercel + Supabase staging/prod projects.
+- **M0:** ✅ DONE — `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY` all set; admin + test users created.
+- **M4 (reminders):** `RESEND_API_KEY` still needed for email scheduling features.
+- **M6:** Vercel + Supabase staging/prod projects; GitHub PAT rotation (deferred to production move).
