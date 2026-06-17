@@ -1,5 +1,9 @@
 export type AiProvider = "groq";
-export type AiFeature = "post_test_analysis" | "improvement_plan" | "question_generation";
+export type AiFeature =
+  | "post_test_analysis"
+  | "improvement_plan"
+  | "question_generation"
+  | "question_enrichment";
 
 export type AiMessage = {
   role: "system" | "user" | "assistant";

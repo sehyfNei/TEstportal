@@ -1,9 +1,19 @@
 "use server";
 
 import { requireAdminForAction } from "@/lib/auth/require-admin";
+import { callAi } from "@/lib/ai/gateway";
+import {
+  buildEnrichmentMessages,
+  ENRICHMENT_PROMPT_VERSION,
+  ENRICHMENT_SCHEMA_VERSION,
+  enrichmentInputSchema,
+  type EnrichmentQuestionOutput,
+  validateEnrichmentOutput
+} from "@/lib/ai/schemas/question-enrichment";
 import {
   type BulkQuestionImportError,
   type BulkQuestionImportFormat,
+  type BulkQuestionImportInput,
   parseBulkQuestionImportPayload
 } from "@/lib/question-bank/bulk-question-import";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
@@ -153,7 +163,103 @@ export async function fetchExamTopicsAction(examId: string): Promise<TopicOption
   return data ?? [];
 }
 
+export type { EnrichmentQuestionOutput };
+
+export type EnrichQuestionsResult = {
+  ok: boolean;
+  message: string;
+  suggestions: EnrichmentQuestionOutput[];
+};
+
+export async function enrichQuestionsAction(
+  questions: BulkQuestionImportInput[]
+): Promise<EnrichQuestionsResult> {
+  const adminCheck = await requireAdminForAction();
+
+  if (!adminCheck.ok) {
+    return {
+      ok: false,
+      message: adminCheck.message,
+      suggestions: []
+    };
+  }
+
+  const limitedQuestions = questions.slice(0, 30);
+  const inputResult = enrichmentInputSchema.safeParse({
+    questions: limitedQuestions.map((question, index) => ({
+      rowIndex: index,
+      stem: question.content.text,
+      options: question.content.options ?? [],
+      correctOptionIndex: question.content.correct_options?.[0] ?? null,
+      currentDifficulty: question.difficulty,
+      hasExplanation: wordCount(question.explanation ?? "") >= 30
+    }))
+  });
+
+  if (!inputResult.success) {
+    return {
+      ok: false,
+      message: inputResult.error.issues[0]?.message ?? "Question enrichment input is invalid.",
+      suggestions: []
+    };
+  }
+
+  const aiResult = await callAi({
+    feature: "question_enrichment",
+    messages: buildEnrichmentMessages(inputResult.data),
+    promptVersion: ENRICHMENT_PROMPT_VERSION,
+    outputSchemaVersion: ENRICHMENT_SCHEMA_VERSION,
+    jsonMode: true,
+    relatedEntityType: "bulk_import"
+  });
+
+  if (!aiResult.ok) {
+    return {
+      ok: false,
+      message:
+        aiResult.error === "ai_disabled"
+          ? "AI enrichment is not configured. You can still import without suggestions."
+          : "AI enrichment failed. You can still import without suggestions.",
+      suggestions: []
+    };
+  }
+
+  let rawOutput: unknown;
+
+  try {
+    rawOutput = JSON.parse(aiResult.content);
+  } catch {
+    return {
+      ok: false,
+      message: "AI enrichment returned invalid JSON. You can still import without suggestions.",
+      suggestions: []
+    };
+  }
+
+  const outputResult = validateEnrichmentOutput(rawOutput);
+
+  if (!outputResult.ok) {
+    return {
+      ok: false,
+      message: `AI enrichment output did not match the expected schema: ${outputResult.errors[0]}`,
+      suggestions: []
+    };
+  }
+
+  return {
+    ok: true,
+    message: `AI enrichment suggested updates for ${outputResult.data.questions.length} row${
+      outputResult.data.questions.length === 1 ? "" : "s"
+    }.`,
+    suggestions: outputResult.data.questions
+  };
+}
+
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value : "";
+}
+
+function wordCount(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
 }

@@ -3,12 +3,16 @@
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   type BulkQuestionImportActionState,
+  enrichQuestionsAction,
+  type EnrichQuestionsResult,
+  type EnrichmentQuestionOutput,
   fetchExamTopicsAction,
   importQuestionsAction,
   type TopicOption
 } from "@/app/admin/questions/import/actions";
 import {
   type BulkQuestionImportFormat,
+  type BulkQuestionImportInput,
   parseBulkQuestionImportPayload
 } from "@/lib/question-bank/bulk-question-import";
 
@@ -29,6 +33,8 @@ type ClientValidation = {
   errors: number;
   message: string;
 };
+
+type EnrichmentOverrideField = "suggestedDifficulty" | "suggestedExplanation";
 
 const initialImportState: BulkQuestionImportActionState = {
   ok: false,
@@ -390,11 +396,68 @@ function PreviewStep({
     importQuestionsAction,
     initialImportState
   );
+  const [enrichResult, setEnrichResult] = useState<EnrichQuestionsResult | null>(null);
+  const [overrides, setOverrides] = useState<Map<number, Partial<EnrichmentQuestionOutput>>>(
+    () => new Map()
+  );
+  const [effectivePayload, setEffectivePayload] = useState(payload);
+  const [isEnriching, startEnrichTransition] = useTransition();
+  const parsedPlan = useMemo(
+    () => parseBulkQuestionImportPayload(payload, format),
+    [format, payload]
+  );
+  const validQuestions = parsedPlan.questions;
   const canImport = dryRunState.ok && dryRunState.validRows > 0 && !isDryRunPending;
+  const canRequestEnrichment =
+    dryRunState.ok && dryRunState.validRows > 0 && validQuestions.length > 0;
+  const isBatchTooLarge = canRequestEnrichment && validQuestions.length > 30;
+  const importFormat = effectivePayload === payload ? format : "json";
 
   useEffect(() => {
     dryRunFormRef.current?.requestSubmit();
   }, []);
+
+  function handleEnrich() {
+    startEnrichTransition(() => {
+      setEnrichResult(null);
+      void enrichQuestionsAction(validQuestions).then(setEnrichResult);
+    });
+  }
+
+  function handleAccept(
+    rowIndex: number,
+    field: EnrichmentOverrideField,
+    value: EnrichmentQuestionOutput[EnrichmentOverrideField]
+  ) {
+    const nextOverrides = new Map(overrides);
+    const nextRow = { ...(nextOverrides.get(rowIndex) ?? {}) };
+
+    nextRow[field] = value as never;
+    nextOverrides.set(rowIndex, nextRow);
+    updateOverrides(nextOverrides);
+  }
+
+  function handleDismiss(rowIndex: number, field: EnrichmentOverrideField) {
+    const nextOverrides = new Map(overrides);
+    const nextRow = { ...(nextOverrides.get(rowIndex) ?? {}) };
+
+    delete nextRow[field];
+
+    if (nextRow.suggestedDifficulty || nextRow.suggestedExplanation) {
+      nextOverrides.set(rowIndex, nextRow);
+    } else {
+      nextOverrides.delete(rowIndex);
+    }
+
+    updateOverrides(nextOverrides);
+  }
+
+  function updateOverrides(nextOverrides: Map<number, Partial<EnrichmentQuestionOutput>>) {
+    setOverrides(nextOverrides);
+    setEffectivePayload(
+      nextOverrides.size ? JSON.stringify(applyOverrides(validQuestions, nextOverrides), null, 2) : payload
+    );
+  }
 
   return (
     <section className="rounded-xl border border-border bg-card shadow-card p-5">
@@ -423,9 +486,54 @@ function PreviewStep({
 
       {dryRunState.errors.length ? <ErrorList errors={dryRunState.errors} /> : null}
 
+      {canRequestEnrichment ? (
+        <div className="mt-5 grid gap-3 rounded-md border border-border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">AI enrichment</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Optional difficulty and explanation suggestions for this validated batch.
+              </p>
+            </div>
+            {isBatchTooLarge ? null : (
+              <button
+                className={`${buttonBase} bg-primary px-4 text-primary-foreground hover:opacity-90`}
+                disabled={isEnriching || Boolean(enrichResult?.ok)}
+                type="button"
+                onClick={handleEnrich}
+              >
+                {isEnriching ? "Enriching..." : "✨ Enrich with AI"}
+              </button>
+            )}
+          </div>
+
+          {isBatchTooLarge ? (
+            <p className="text-sm text-muted-foreground">
+              AI enrichment is capped at 30 rows per batch. Import is still available.
+            </p>
+          ) : null}
+
+          {enrichResult && !enrichResult.ok ? (
+            <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+              {enrichResult.message}
+            </p>
+          ) : null}
+
+          {enrichResult?.ok ? (
+            <EnrichmentPanel
+              overrides={overrides}
+              suggestions={enrichResult.suggestions}
+              validQuestions={validQuestions}
+              onAccept={handleAccept}
+              onDismiss={handleDismiss}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
       <form action={importAction} className="mt-5 flex flex-wrap items-center gap-3">
-        <input name="format" type="hidden" value={format} />
-        <input name="payload" type="hidden" value={payload} />
+        <input name="format" type="hidden" value={importFormat} />
+        <input name="payload" type="hidden" value={effectivePayload} />
         <button
           className={`${buttonBase} bg-primary px-4 text-primary-foreground hover:opacity-90`}
           disabled={!canImport || isImportPending}
@@ -444,6 +552,131 @@ function PreviewStep({
         {importState.message ? <ImportSummary state={importState} /> : null}
       </form>
     </section>
+  );
+}
+
+function EnrichmentPanel({
+  onAccept,
+  onDismiss,
+  overrides,
+  suggestions,
+  validQuestions
+}: {
+  onAccept: (
+    rowIndex: number,
+    field: EnrichmentOverrideField,
+    value: EnrichmentQuestionOutput[EnrichmentOverrideField]
+  ) => void;
+  onDismiss: (rowIndex: number, field: EnrichmentOverrideField) => void;
+  overrides: Map<number, Partial<EnrichmentQuestionOutput>>;
+  suggestions: EnrichmentQuestionOutput[];
+  validQuestions: BulkQuestionImportInput[];
+}) {
+  return (
+    <details className="rounded-md border border-border bg-muted/40 p-4" open>
+      <summary className="cursor-pointer text-sm font-semibold">
+        Review {suggestions.length} suggestion{suggestions.length === 1 ? "" : "s"}
+      </summary>
+      <div className="mt-4 grid gap-3">
+        {suggestions.map((suggestion) => {
+          const question = validQuestions[suggestion.rowIndex];
+          const stem = question?.content.text ?? "Untitled question";
+          const rowOverrides = overrides.get(suggestion.rowIndex);
+          const difficultyAccepted =
+            rowOverrides?.suggestedDifficulty === suggestion.suggestedDifficulty;
+          const explanationAccepted =
+            Boolean(suggestion.suggestedExplanation) &&
+            rowOverrides?.suggestedExplanation === suggestion.suggestedExplanation;
+
+          return (
+            <article
+              className="rounded-xl border border-border bg-background p-4"
+              key={`${suggestion.rowIndex}-${suggestion.suggestedDifficulty}`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">Row {suggestion.rowIndex + 1}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{truncateStem(stem)}</p>
+                </div>
+                <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+                  {question?.type ?? "question"}
+                </span>
+              </div>
+
+              <div className="mt-4 grid gap-4">
+                <div className="grid gap-2 rounded-md border border-border bg-card p-3">
+                  <p className="text-sm font-medium">
+                    Difficulty: {question?.difficulty ?? "medium"} →{" "}
+                    {suggestion.suggestedDifficulty}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className={`${buttonBase} border border-border text-foreground hover:border-primary`}
+                      disabled={difficultyAccepted}
+                      type="button"
+                      onClick={() =>
+                        onAccept(
+                          suggestion.rowIndex,
+                          "suggestedDifficulty",
+                          suggestion.suggestedDifficulty
+                        )
+                      }
+                    >
+                      {difficultyAccepted ? "Accepted" : "Accept"}
+                    </button>
+                    <button
+                      className={`${buttonBase} border border-border text-muted-foreground hover:border-primary hover:text-foreground`}
+                      disabled={!difficultyAccepted}
+                      type="button"
+                      onClick={() => onDismiss(suggestion.rowIndex, "suggestedDifficulty")}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+
+                {suggestion.suggestedExplanation !== null ? (
+                  <div className="grid gap-2 rounded-md border border-border bg-card p-3">
+                    <p className="text-sm font-medium">Explanation suggestion</p>
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      {suggestion.suggestedExplanation}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className={`${buttonBase} border border-border text-foreground hover:border-primary`}
+                        disabled={explanationAccepted}
+                        type="button"
+                        onClick={() =>
+                          onAccept(
+                            suggestion.rowIndex,
+                            "suggestedExplanation",
+                            suggestion.suggestedExplanation
+                          )
+                        }
+                      >
+                        {explanationAccepted ? "Accepted" : "Accept"}
+                      </button>
+                      <button
+                        className={`${buttonBase} border border-border text-muted-foreground hover:border-primary hover:text-foreground`}
+                        disabled={!explanationAccepted}
+                        type="button"
+                        onClick={() => onDismiss(suggestion.rowIndex, "suggestedExplanation")}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Reasoning: {suggestion.reasoning}
+                </p>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
@@ -541,6 +774,33 @@ function buildTemplate(format: BulkQuestionImportFormat, examId: string, topicId
   ];
 
   return `${headers.join(",")}\n${values.map(csvCell).join(",")}`;
+}
+
+function applyOverrides(
+  questions: BulkQuestionImportInput[],
+  overrides: Map<number, Partial<EnrichmentQuestionOutput>>
+): BulkQuestionImportInput[] {
+  return questions.map((question, index) => {
+    const override = overrides.get(index);
+
+    if (!override) {
+      return question;
+    }
+
+    return {
+      ...question,
+      ...(override.suggestedDifficulty
+        ? { difficulty: override.suggestedDifficulty }
+        : {}),
+      ...(override.suggestedExplanation
+        ? { explanation: override.suggestedExplanation }
+        : {})
+    };
+  });
+}
+
+function truncateStem(value: string) {
+  return value.length > 80 ? `${value.slice(0, 80)}...` : value;
 }
 
 function csvCell(value: string) {
