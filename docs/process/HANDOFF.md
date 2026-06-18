@@ -12884,3 +12884,37 @@ node scripts/check-rpc-grants.js   # count must match current baseline
 - Rebuilding manifest from live tables (live reconstruction) — TSP-020 v1 uses stored JSONB only
 - Chat server actions or UI (TSP-169, 170, 171)
 - Any other M5/M6 work
+
+---
+
+## Session 42 Builder Notes (2026-06-18) — TSP-020 + TSP-168
+
+**Builder:** Claude
+
+### TSP-020 — Files changed
+
+- **`src/app/api/admin/manifest/route.ts`** (new) — GET `?manifestId={uuid}`; checks `is_admin()` via RPC; queries `exam_manifests` by id where `is_active = true`; returns stored manifest JSONB with `Content-Disposition: attachment; filename="manifest-{slug}-v{n}.json"`.
+- **`src/app/admin/manifests/page.tsx`** (edit) — converted to async server component; fetches active exam manifests server-side with `exams(name)` join; renders "Existing manifests" card with per-row Download `<a>` link below the existing ManifestValidator import form.
+
+**TS2352 fix:** Supabase returns the `exams(name)` join as `{ name: any }[]` (array), not a single object. Changed `ActiveManifest.exams` type to `{ name: string | null }[] | { name: string | null } | null` and used `Array.isArray(m.exams) ? m.exams[0]?.name : m.exams?.name` in the template.
+
+### TSP-168 — Files created
+
+- **`supabase/migrations/202606180001_chat_schema.sql`** — `chat_sessions` + `chat_messages` tables; owner-only RLS on both; `set_updated_at()` trigger on `chat_sessions`; indexes on `(user_id, created_at desc)` and `(chat_session_id, created_at)`. No RPCs.
+- **`src/lib/chat/types.ts`** — `ChatRole`, `ChatSession`, `ChatMessage` TypeScript types.
+
+### Verification gates (Test_Portal, 2026-06-18)
+
+- typecheck ✅ 0 errors
+- lint ✅ 0 errors / 5 pre-existing warnings (unchanged)
+- test ✅ 302/302
+- build ✅ clean — `/api/admin/manifest` in route list
+
+**Commit:** `5122e05`
+
+### Next steps
+
+1. **Migration (founder):** `node run-migrations.js` in Test_Portal to apply `202606180001_chat_schema.sql` on live DB. Verify with `node scripts/check-rpc-grants.js` — count unchanged (no new RPCs).
+2. **TSP-020 browser smoke:** `/admin/manifests` → "Existing manifests" card → Download → paste JSON into import textarea → Import → verify succeeds (round-trip).
+3. **TSP-167 browser smoke (still pending):** enrichment panel at `/admin/questions/import` with GROQ_API_KEY set.
+4. **Next build session:** TSP-169 — AI chat server action with Groq streaming. Requires founder decision on per-user/day cost cap before shipping (ROADMAP Standing Decision #4).

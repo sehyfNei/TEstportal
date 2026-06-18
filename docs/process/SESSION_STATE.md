@@ -1,7 +1,7 @@
 # Session State
 
-**Last updated:** 2026-06-18 — Session 42: Architect plan for TSP-020 + TSP-168
-**Updated by:** Claude (Architect)
+**Last updated:** 2026-06-18 — Session 42: TSP-020 + TSP-168 built; all 4 gates green
+**Updated by:** Claude (Architect/Builder)
 
 ---
 
@@ -19,7 +19,18 @@
 - New `src/lib/chat/types.ts` — `ChatSession`, `ChatMessage`, `ChatRole` types
 - No RPCs; no grant-checker change
 
-**Verification gates expected:** 302/302 tests, typecheck clean, build clean, migration applies clean
+**Verification gates (Test_Portal, 2026-06-18):**
+- typecheck ✅ 0 errors (fixed TS2352: `exams` join returns array, not single object)
+- lint ✅ 0 errors / 5 pre-existing warnings unchanged
+- test ✅ 302/302
+- build ✅ clean — `/api/admin/manifest` appears in route list
+
+**Commit:** `5122e05`
+
+**Pending (founder action):**
+- `node run-migrations.js` in Test_Portal — applies `202606180001_chat_schema.sql` to live DB
+- Browser smoke for TSP-020: visit `/admin/manifests` → Download manifest → paste into import form → verify round-trip
+- Browser smoke for TSP-167: enrichment panel with GROQ_API_KEY set (deferred from Session 41)
 
 ---
 
