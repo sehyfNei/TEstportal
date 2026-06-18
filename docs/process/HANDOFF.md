@@ -12611,3 +12611,276 @@ Manual browser smoke for TSP-167 (GROQ_API_KEY must be set in .env for dev serve
 2. "✨ Enrich with AI" → EnrichmentPanel renders with per-row difficulty + explanation
 3. Accept some, dismiss some → Import → verify accepted values in question detail
 4. With GROQ_API_KEY absent → inline error, Import still works
+
+---
+
+# Session 42 — Architect Plan — TSP-020 + TSP-168 (2026-06-18)
+
+**Architect:** Claude
+
+## Milestone
+
+- **TSP-020** → M2 Quality & Selection (final unbuilt M2 ticket)
+- **TSP-168** → M5 Phase B — AI Study Companion (schema foundation)
+
+## State at session start
+
+| Area | Status |
+|---|---|
+| M0, M1 | ✅ Complete |
+| M2 quality/selection build (TSP-028–031, 036–038) | In Review — browser smoke pending (founder) |
+| TSP-166 | Done |
+| TSP-167 | Review — browser smoke pending |
+| M3 core (TSP-051–057, 128) | ✅ Done |
+| M4 core (TSP-059–063, 076–081, 096–097) | ✅ Done |
+| M5 Phase A AI analysis (TSP-066–071, 093, 116–118) | ✅ Done |
+| M5 Phase B chat (TSP-168–171) | Backlog |
+
+TSP-020 is the last unbuilt M2 item (TSP-032/033 are Phase 1.5 — deferred). After this session M2's build work is complete and the backlog of Review items can be smoke-tested to close the milestone.
+
+## TSP-020 — Exam Manifest Export
+
+### What it does
+
+Admin can download any active exam manifest as a `.json` file directly from `/admin/manifests`. The downloaded JSON matches the format that the existing import form (`ManifestValidator`) accepts, so it can be used to seed another environment.
+
+### Why stored JSONB — not live reconstruction
+
+The `exam_manifests` table stores the full manifest blob on every import. Returning it is instant, accurate, and re-importable without needing to rebuild the topic tree or reassemble marking rules. Live reconstruction is a future enhancement.
+
+### Files to change
+
+| Action | Path |
+|---|---|
+| Create | `src/app/api/admin/manifest/route.ts` |
+| Edit | `src/app/admin/manifests/page.tsx` |
+
+No migration. No new components. No grant-checker change.
+
+### Route Handler — `src/app/api/admin/manifest/route.ts`
+
+```ts
+import { NextRequest } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+
+export async function GET(request: NextRequest) {
+  if (!hasSupabaseConfig()) {
+    return Response.json({ error: "Supabase not configured." }, { status: 500 });
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: isAdmin } = await supabase.rpc("is_admin");
+  if (!isAdmin) return Response.json({ error: "Admin role required." }, { status: 403 });
+
+  const manifestId = request.nextUrl.searchParams.get("manifestId");
+  if (!manifestId) return Response.json({ error: "manifestId required." }, { status: 400 });
+
+  const { data, error } = await supabase
+    .from("exam_manifests")
+    .select("manifest, slug, version")
+    .eq("id", manifestId)
+    .eq("is_active", true)
+    .single();
+
+  if (error || !data) return Response.json({ error: "Manifest not found." }, { status: 404 });
+
+  const filename = `manifest-${data.slug}-v${data.version}.json`;
+  const body = JSON.stringify(data.manifest, null, 2);
+
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Disposition": `attachment; filename="${filename}"`
+    }
+  });
+}
+```
+
+### Admin Manifests Page — server-side export section
+
+Add to the server component (after the existing import form):
+
+1. Fetch active manifests server-side:
+```ts
+const { data: manifests } = await supabase
+  .from("exam_manifests")
+  .select("id, slug, version, created_at, exams(name)")
+  .eq("is_active", true)
+  .order("created_at", { ascending: false });
+```
+
+2. Render a card below the import section:
+```tsx
+{manifests?.length ? (
+  <section className="grid gap-4">
+    <h2 className="text-xl font-semibold">Existing manifests</h2>
+    <p className="text-sm text-muted-foreground">
+      Download a manifest to back it up or re-import it into another environment.
+    </p>
+    <div className="grid gap-3">
+      {manifests.map((m) => (
+        <div key={m.id} className="flex items-center justify-between rounded-xl border border-border bg-card shadow-card p-4">
+          <div>
+            <p className="text-sm font-semibold">{m.exams?.name ?? m.slug}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              v{m.version} · {new Date(m.created_at).toLocaleDateString()}
+            </p>
+          </div>
+          <a
+            className="rounded-md border border-border px-3 py-2 text-sm font-medium text-primary"
+            href={`/api/admin/manifest?manifestId=${m.id}`}
+            download={`manifest-${m.slug}-v${m.version}.json`}
+          >
+            Download
+          </a>
+        </div>
+      ))}
+    </div>
+  </section>
+) : null}
+```
+
+---
+
+## TSP-168 — Chat Schema (AI Study Companion Foundation)
+
+### What it does
+
+Creates `chat_sessions` and `chat_messages` tables with owner-only RLS. No server action yet — TSP-169 adds the Groq server action. This ticket is schema only.
+
+### Files to change
+
+| Action | Path |
+|---|---|
+| Create | `supabase/migrations/202606180001_chat_schema.sql` |
+| Create | `src/lib/chat/types.ts` |
+
+### Migration
+
+```sql
+-- AI Study Companion chat schema.
+
+create table if not exists public.chat_sessions (
+  id         uuid        primary key default gen_random_uuid(),
+  user_id    uuid        not null references auth.users(id) on delete cascade,
+  exam_id    uuid        references public.exams(id) on delete set null,
+  title      text,
+  context    jsonb       not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.chat_messages (
+  id              uuid        primary key default gen_random_uuid(),
+  chat_session_id uuid        not null references public.chat_sessions(id) on delete cascade,
+  role            text        not null check (role in ('user', 'assistant', 'system')),
+  content         text        not null,
+  token_count     int,
+  metadata        jsonb       not null default '{}',
+  created_at      timestamptz not null default now()
+);
+
+drop trigger if exists chat_sessions_set_updated_at on public.chat_sessions;
+create trigger chat_sessions_set_updated_at
+  before update on public.chat_sessions
+  for each row execute function public.set_updated_at();
+
+alter table public.chat_sessions enable row level security;
+alter table public.chat_messages enable row level security;
+
+-- chat_sessions: owner-only
+drop policy if exists chat_sessions_owner on public.chat_sessions;
+create policy chat_sessions_owner
+  on public.chat_sessions for all
+  to authenticated
+  using  (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- chat_messages: owner via session FK
+drop policy if exists chat_messages_owner on public.chat_messages;
+create policy chat_messages_owner
+  on public.chat_messages for all
+  to authenticated
+  using (
+    exists (
+      select 1 from public.chat_sessions cs
+      where cs.id = chat_session_id
+        and cs.user_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.chat_sessions cs
+      where cs.id = chat_session_id
+        and cs.user_id = auth.uid()
+    )
+  );
+
+create index if not exists chat_sessions_user_created_idx
+  on public.chat_sessions (user_id, created_at desc);
+
+create index if not exists chat_messages_session_created_idx
+  on public.chat_messages (chat_session_id, created_at);
+```
+
+### TypeScript types — `src/lib/chat/types.ts`
+
+```ts
+export type ChatRole = "user" | "assistant" | "system";
+
+export type ChatSession = {
+  id: string;
+  user_id: string;
+  exam_id: string | null;
+  title: string | null;
+  context: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  chat_session_id: string;
+  role: ChatRole;
+  content: string;
+  token_count: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+```
+
+No RPCs → `check-rpc-grants.js` count unchanged.
+
+---
+
+## Verification Gates
+
+**Standard 4-gate (Test_Portal):**
+```powershell
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test       # expect 302/302 — no new test files required
+corepack pnpm build
+```
+
+**TSP-168 migration (Test_Portal):**
+```powershell
+node run-migrations.js
+node scripts/check-rpc-grants.js   # count must match current baseline
+```
+
+**TSP-020 manual smoke:**
+1. `/admin/manifests` → "Existing manifests" card appears listing active manifests
+2. Click Download → browser saves `manifest-{slug}-v{n}.json`
+3. Open file — valid JSON with `schemaVersion`, `exam`, `marking`, `topics`, `conceptClusters`, `concepts`, `historicalCutoffs`
+4. Paste into import textarea → "Import manifest" → should succeed (round-trip)
+
+## Out of Scope
+
+- Rebuilding manifest from live tables (live reconstruction) — TSP-020 v1 uses stored JSONB only
+- Chat server actions or UI (TSP-169, 170, 171)
+- Any other M5/M6 work

@@ -1,7 +1,25 @@
 # Session State
 
-**Last updated:** 2026-06-17 — Session 41: TSP-167 built; M0/M1 closed; doc cleanup
-**Updated by:** Claude (Architect/Sanity)
+**Last updated:** 2026-06-18 — Session 42: Architect plan for TSP-020 + TSP-168
+**Updated by:** Claude (Architect)
+
+---
+
+## Session 42 (2026-06-18) — TSP-020 (Manifest Export) + TSP-168 (Chat Schema)
+
+**Status:** Architect plan written — ready for Builder
+
+**TSP-020 (M2 — last unbuilt M2 ticket):**
+- Route Handler `src/app/api/admin/manifest/route.ts` — GET `?manifestId={uuid}`, returns stored manifest JSONB as file download
+- Edit `src/app/admin/manifests/page.tsx` — add "Existing manifests" card with Download link per active manifest
+- No migration; no new components; no grant-checker change
+
+**TSP-168 (M5 Phase B — chat schema foundation):**
+- New migration `supabase/migrations/202606180001_chat_schema.sql` — `chat_sessions` + `chat_messages` tables, owner-only RLS, updated_at trigger, indexes
+- New `src/lib/chat/types.ts` — `ChatSession`, `ChatMessage`, `ChatRole` types
+- No RPCs; no grant-checker change
+
+**Verification gates expected:** 302/302 tests, typecheck clean, build clean, migration applies clean
 
 ---
 
