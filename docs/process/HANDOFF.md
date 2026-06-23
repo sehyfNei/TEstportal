@@ -12917,4 +12917,200 @@ node scripts/check-rpc-grants.js   # count must match current baseline
 1. **Migration (founder):** `node run-migrations.js` in Test_Portal to apply `202606180001_chat_schema.sql` on live DB. Verify with `node scripts/check-rpc-grants.js` — count unchanged (no new RPCs).
 2. **TSP-020 browser smoke:** `/admin/manifests` → "Existing manifests" card → Download → paste JSON into import textarea → Import → verify succeeds (round-trip).
 3. **TSP-167 browser smoke (still pending):** enrichment panel at `/admin/questions/import` with GROQ_API_KEY set.
+
+---
+
+## Session 43 Architect Plan (2026-06-23) — TSP-171
+
+**Architect:** Claude Sonnet 4.6
+
+### Milestone
+
+**M5 — AI & Workers (Phase B).** Critical path: TSP-168 ✅ Review → **TSP-171** (this session) → TSP-169 (blocked on founder cost-cap decision) → TSP-170 (chat UI).
+
+### Scope
+
+**In:** TSP-171 — Context injector. Server-side module that assembles a typed `ContextPayload` from existing student data tables. Used by TSP-169 as the system message grounding the AI chat in the student's real performance.
+
+**Out:** TSP-169 (chat server action — blocked on Standing Founder Decision #4: per-user/day cost cap + cap-hit behavior). TSP-170 (chat UI). No migration, no RPCs, no existing file edits.
+
+### Dependencies verified
+
+| Dependency | Status | What we use |
+|---|---|---|
+| TSP-168 chat schema | Review | `chat_sessions.exam_id` contextualizes the query scope |
+| TSP-071 improvement_plans table | Done | `improvement_plans.output->>'overallStrategy'` for plan headline |
+| TSP-076 / overview.ts | Done | Reuse `buildWeakTopics` + `computeWeakTopicPriority` pure functions |
+| TSP-066 / readiness-query.ts | Done | Reuse `fetchReadinessScore` |
+| TSP-060 / mastery_records | Done | Weak topic data source |
+| TSP-060 / mistake_items | Done | Recent unresolved mistakes source |
+
+### Design decisions
+
+**A. ContextPayload is lean and AI-prompt-friendly**
+The payload must serialize into a system message for Groq without leaking internal IDs or scores that mean nothing to the model. We expose: exam name, readiness score+confidence, top 5 weak topics (name, mastery, weight), top 5 recent unresolved mistakes (topic name, mistake type), and the improvement plan's strategy headline. No session IDs, no concept IDs, no raw JSONB blobs.
+
+**B. All 4 queries run in parallel via `Promise.allSettled`**
+Same pattern as `fetchDashboardOverview` in `overview.ts`. Each failed query degrades gracefully to a null/empty default — a DB hiccup on one table never crashes context assembly. `hasData: false` signals to TSP-169 that this is a new user with nothing to ground chat on yet.
+
+**C. Reuse `buildWeakTopics` + `computeWeakTopicPriority` from `overview.ts` — don't duplicate**
+These are already exported pure functions. The context injector runs its own 2-query load (topics + mastery records) and passes results to `buildWeakTopics`. This gives the same priority ordering the dashboard uses (high weight × low mastery = most urgent).
+
+**D. Mistakes via direct Supabase query, not `fetchMistakeItems`**
+`fetchMistakeItems` joins `session_questions.prompt_snapshot` to extract stems — heavyweight for our purpose. The context injector only needs `mistake_type` and `topic name`. A targeted 2-table query (mistake_items + topics FK join) is faster and simpler. Stems omitted from V1 context payload (AI can ask follow-ups).
+
+**E. Improvement plan: filter by `exam_id` + `status = completed`, latest only**
+`improvement_plans` has `(user_id, exam_id, created_at desc)` index — ideal for this query. We extract `output.overallStrategy` (a string) as the headline. `output` is JSONB; cast via `(data.output as Record<string,unknown>)?.overallStrategy`.
+
+**F. `assembleContext` accepts a Supabase client — injectable for unit tests**
+Same pattern as `fetchReadinessScore`, `fetchDashboardOverview`, etc. Tests mock the client with `vi.fn()` returning shaped data. `fetchReadinessScore` is mocked at the module level via `vi.mock`.
+
+### ContextPayload type
+
+```ts
+export type WeakTopicContext = {
+  topicName: string;
+  masteryScore: number;
+  weightPercent: number;
+};
+
+export type MistakeContext = {
+  topicName: string | null;
+  mistakeType: string;
+};
+
+export type ContextPayload = {
+  examName: string | null;
+  readinessScore: number;                  // 0–100
+  readinessConfidence: "low" | "medium" | "high";
+  weakTopics: WeakTopicContext[];          // top 5 by priority (high weight × low mastery)
+  recentMistakes: MistakeContext[];        // top 5 unresolved, newest first
+  improvementPlanHeadline: string | null; // output.overallStrategy from latest completed plan
+  hasData: boolean;                        // false = new user, no mastery records
+};
+```
+
+### Files to create
+
+| Action | Path |
+|---|---|
+| Create | `src/lib/chat/context-injector.ts` |
+| Create | `src/tests/unit/chat-context-injector.test.ts` |
+
+No existing files modified. `src/lib/chat/types.ts` (TSP-168) is already there — no edits needed.
+
+### Per-file implementation notes
+
+#### `src/lib/chat/context-injector.ts`
+
+```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchReadinessScore } from "@/lib/scoring/readiness-query";
+import { buildWeakTopics, computeWeakTopicPriority } from "@/lib/dashboard/overview";
+
+// ... types above ...
+
+export async function assembleContext(
+  supabase: SupabaseClient,
+  userId: string,
+  examId: string
+): Promise<ContextPayload> {
+  const [examResult, readinessResult, weakTopicsResult, mistakesResult, planResult] =
+    await Promise.allSettled([
+      loadExamName(supabase, examId),
+      fetchReadinessScore(supabase, userId, examId),
+      loadWeakTopicData(supabase, userId, examId),
+      loadRecentMistakes(supabase, userId, examId),
+      loadPlanHeadline(supabase, userId, examId)
+    ]);
+
+  const readiness = readinessResult.status === "fulfilled" ? readinessResult.value : null;
+  const weakTopicData = weakTopicsResult.status === "fulfilled" ? weakTopicsResult.value : { topics: [], masteryByTopicId: new Map() };
+  const weakTopics = buildWeakTopics(weakTopicData.topics, weakTopicData.masteryByTopicId)
+    .map(t => ({ topicName: t.topicName, masteryScore: t.masteryScore, weightPercent: t.weightPercent }));
+
+  return {
+    examName: examResult.status === "fulfilled" ? examResult.value : null,
+    readinessScore: readiness?.score ?? 0,
+    readinessConfidence: readiness?.confidenceLevel ?? "low",
+    weakTopics,
+    recentMistakes: mistakesResult.status === "fulfilled" ? mistakesResult.value : [],
+    improvementPlanHeadline: planResult.status === "fulfilled" ? planResult.value : null,
+    hasData: (readiness?.coveragePercent ?? 0) > 0
+  };
+}
+```
+
+**`loadExamName`:** `supabase.from("exams").select("name").eq("id", examId).single()` → returns `data?.name ?? null`.
+
+**`loadWeakTopicData`:** Two parallel queries — topics (id, name, weight_percent where exam_id=examId and weight_percent not null) + mastery_records (topic_id, mastery_score where user_id=userId and exam_id=examId and topic_id is not null). Build `masteryByTopicId: Map<string,number>` then pass both to `buildWeakTopics`. Returns `{ topics: TopicRow[], masteryByTopicId }`.
+
+**`loadRecentMistakes`:** 
+```ts
+supabase
+  .from("mistake_items")
+  .select("mistake_type, topics(name)")
+  .eq("user_id", userId)
+  .eq("exam_id", examId)
+  .eq("status", "unresolved")
+  .order("created_at", { ascending: false })
+  .limit(5)
+```
+Map each row to `{ topicName: (row.topics as {name:string|null}|null)?.name ?? null, mistakeType: row.mistake_type }`.
+
+**`loadPlanHeadline`:**
+```ts
+supabase
+  .from("improvement_plans")
+  .select("output")
+  .eq("user_id", userId)
+  .eq("exam_id", examId)
+  .eq("status", "completed")
+  .order("created_at", { ascending: false })
+  .limit(1)
+  .single()
+```
+Extract `(data?.output as Record<string,unknown>)?.overallStrategy as string | null`.
+
+#### `src/tests/unit/chat-context-injector.test.ts`
+
+**Mock strategy:** `vi.mock("@/lib/scoring/readiness-query")` at top level. Mock the Supabase client as an object with a chainable `.from()→.select()→...` fluent interface using `vi.fn()`. Since the fluent chain is complex to mock fully, use a helper that returns a mockable `{ data, error }` at the terminal call.
+
+**4 test cases:**
+1. **Empty user** — all queries return `{ data: null/[], error: null }`, readiness returns zero. Expect: `hasData: false`, `weakTopics: []`, `recentMistakes: []`, `improvementPlanHeadline: null`, `readinessScore: 0`.
+2. **Partial data** — readiness returns `coveragePercent: 50, score: 40, confidenceLevel: "medium"`, topics + mastery return 3 records, no mistakes, no plan. Expect: `hasData: true`, `weakTopics.length ≤ 3`, `recentMistakes: []`, `improvementPlanHeadline: null`.
+3. **Full data with cap** — 7 mastery records (only top 5 by priority selected), 7 mistakes (only top 5 returned), plan with `overallStrategy: "Focus on Polity"`. Expect: `weakTopics.length === 5`, `recentMistakes.length === 5`, `improvementPlanHeadline === "Focus on Polity"`.
+4. **One query failure resilience** — plan query rejects, rest succeed. Expect: `improvementPlanHeadline: null`, other fields populated normally.
+
+**Expected test count:** 302 → ~307 (5 assertions across 4 tests with `it.each` or individual `it` blocks).
+
+### What Builder must NOT touch
+
+- `src/lib/chat/types.ts` — already correct from TSP-168, no edits
+- Any existing action files, RPCs, migrations, or overview.ts internals
+- TSP-169, TSP-170 scope — out of this session
+
+### Verification gates
+
+Run in `C:\Users\Rakesh\Documents\Test_Portal` after syncing:
+
+```powershell
+corepack pnpm typecheck   # 0 errors
+corepack pnpm lint        # 0 errors / 5 pre-existing warnings
+corepack pnpm test        # 302 → ~307 pass
+corepack pnpm build       # clean
+```
+
+No migration to run. No RPC grant checker update needed (no new RPCs).
+
+### Risks / Sanity flags
+
+1. **`buildWeakTopics` import** — it's exported from `overview.ts`; confirm the import doesn't pull in unwanted server-only side effects. If `overview.ts` has `"use server"` or imports from a server-only path, extract the pure functions to a separate file instead.
+2. **Supabase topics FK join for mistakes** — `mistake_items.topic_id` references `topics.id`. If PostgREST can't resolve the FK name automatically, use `topics!mistake_items_topic_id_fkey(name)` in the select string. Builder should verify this resolves (typecheck alone won't catch a bad FK name — it's a runtime string).
+3. **`improvement_plans.output` shape** — stored as JSONB; cast is `as Record<string,unknown>`. If output is `null` (pending/failed plan), the cast is safe (`null?.overallStrategy` → undefined → null). Builder must guard this.
+4. **Unit test mocking complexity** — the Supabase fluent chain is tricky to mock inline. If the mock becomes unwieldy, use `vi.spyOn` on the specific private loader functions instead of mocking the client at the supabase level. Keep tests readable over clever.
+
+### Next session after TSP-171
+
+TSP-169 (AI chat server action + Groq streaming) — requires **founder Standing Decision #4** first: per-user/day AI chat cost cap and cap-hit behavior (pause vs notify vs throttle). Architect should bring a focused options doc when the founder is ready.
 4. **Next build session:** TSP-169 — AI chat server action with Groq streaming. Requires founder decision on per-user/day cost cap before shipping (ROADMAP Standing Decision #4).
