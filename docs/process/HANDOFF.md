@@ -14817,3 +14817,517 @@ corepack pnpm build       # /profile in build output
 ### Next session after TSP-012/013
 
 TSP-014 — Account export and deletion (`/profile/export`, `/profile/delete-account`). Or TSP-094 (audit log viewer, admin-only, Medium priority M5). Architect will decide based on milestone priority at the time.
+
+---
+
+## 2026-07-05 - Process Update - Off-OneDrive Smoke Clone Workflow
+
+**Agent:** Codex
+**Scope:** Process documentation only, after Session 46 smoke testing.
+
+Updated `docs/process/AGENT_WORKFLOW.md` and `docs/process/SESSION_STATE.md` to document the reusable off-OneDrive smoke workflow:
+
+- Commit canonical work in `C:\Users\Rakesh\OneDrive\Documents\Business\TEST` first.
+- Pull only into clean helper clones.
+- Do not stash, reset, force, or overwrite dirty helper clones unless the user explicitly asks.
+- Create a fresh local smoke clone such as `C:\Users\Rakesh\Documents\Test_Portal_Smoke` when existing helpers are dirty.
+- Install offline with `corepack pnpm install --offline --frozen-lockfile` when the local pnpm store is sufficient.
+- Run real gates and browser/render probes there, recording command output and route status.
+- Use `http://127.0.0.1:<port>` when `localhost` is unreliable, and use `node_modules\.bin\next.CMD start -p <port>` after a direct build if `next dev` is unreliable.
+
+Evidence from the triggering run:
+
+- OneDrive commit SHAs were `3eb1a51` and `e2c2ebe`.
+- Dirty `C:\Users\Rakesh\Documents\Test_Portal` pull was correctly aborted instead of overwritten.
+- `C:\Users\Rakesh\Videos\TEST` was not a safe gate clone because it was dirty, lacked a normal upstream on `master`, and pointed at a HuggingFace Space remote.
+- Fresh smoke clone `C:\Users\Rakesh\Documents\Test_Portal_Smoke` installed offline, typechecked, built, and served `/profile` plus `/study/chat` at `http://127.0.0.1:3000`.
+
+No product code changes in this process update.
+
+---
+
+# Session 47 — Architect Plan: TSP-014 Account Export and Deletion
+
+## Context
+
+TSP-012 (profile page) and TSP-013 (AI consent) landed in Session 46. The TSP-008 Auth & Profiles epic now has only two tasks outstanding: TSP-010 (Google OAuth, gated on founder Supabase config) and TSP-014 (account export/delete, buildable now). This session closes TSP-014 and brings the auth epic to within one founder action of complete.
+
+GDPR-style data portability and right-to-erasure are pre-launch requirements. No real user should be onboarded until both exist.
+
+---
+
+## Milestone
+
+**M6 — Hardening & Launch**
+
+---
+
+## Scope
+
+**In:** TSP-014 — user can download their data as JSON and permanently delete their account.  
+**Out:** TSP-010 (Google OAuth), any infra hardening (TSP-102+), any testing rows (TSP-130+).
+
+---
+
+## Architectural Decisions
+
+### A. Export via GET API route, not server action
+
+Server actions are designed for mutations; returning a file download from one requires the client to receive data in action state and trigger a Blob URL download manually — awkward and fragile. A `GET /api/user/export` route lets the browser handle the download natively via an `<a href="/api/user/export" download>` link. This is the idiomatic Next.js pattern for file downloads.
+
+### B. Deletion via admin client `auth.admin.deleteUser`
+
+Supabase's admin API is the only way to delete a user from `auth.users` server-side. All user-data tables use `ON DELETE CASCADE` on their `user_id` FK to `auth.users`, so the single admin call cascades to:
+- `user_profiles`, `user_consents`
+- `test_sessions` → `session_answers`, `session_questions`, `session_results`
+- `mastery_records`, `mistake_items`, `retest_queue`
+- `chat_sessions` → `chat_messages`
+- `ai_analyses`, `improvement_plans`
+- `user_events`, `llm_cost_ledger`
+
+No migration needed — cascades are already in place. The `explanation_ratings` table FK references `test_sessions` (not the user directly), so those cascade via test_sessions.
+
+### C. `SUPABASE_SERVICE_ROLE_KEY` absent → degrade gracefully
+
+The admin client throws on construction if `SERVICE_ROLE_KEY` is absent. `deleteAccountAction` checks `hasAdminConfig()` first and returns a user-facing message ("Contact support to delete your account") rather than throwing. The download export uses the regular user client (RLS) and degrades with a 503 if Supabase is unconfigured.
+
+### D. Server-side confirmation guard, not just client-side disable
+
+The `<input name="confirmation">` value is sent in `formData`. `deleteAccountAction` checks `formData.get("confirmation") === "DELETE"` on the server. The client-side `disabled` state is a UX convenience only — the server guard is the authoritative check.
+
+### E. Pure `assembleExportResult` extracted for testability
+
+`exportUserData` does 6 parallel Supabase queries then assembles the result. The assembly step is extracted into `assembleExportResult(profile, consents, ...)` — a pure function that can be unit-tested without mocking Supabase. The 2 unit tests cover this function's output shape and null-safe defaults.
+
+### F. No soft-delete or deferred deletion
+
+A deletion_requested_at pattern adds operational complexity (a cron to process it, a way to cancel, admin tooling). At this scale, immediate hard delete is safer and simpler. The `user_consents` table is append-only and provides an audit trail of what the user agreed to before deletion — that audit history is the only data retained, as part of the normal DB backup (not associated with the user's active account).
+
+---
+
+## Files to Create / Modify
+
+| Action | Path |
+|---|---|
+| Create | `src/lib/profile/export-service.ts` |
+| Create | `src/app/api/user/export/route.ts` |
+| Create | `src/components/profile/delete-account-form.tsx` |
+| Create | `src/tests/unit/export-service.test.ts` |
+| Edit | `src/app/(app)/profile/actions.ts` |
+| Edit | `src/components/profile/profile-form.tsx` |
+
+No migration. No new DB tables.
+
+---
+
+## Per-File Implementation Notes
+
+### `src/lib/profile/export-service.ts` (new)
+
+```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type UserExport = {
+  exportedAt: string;
+  profile: Record<string, unknown> | null;
+  consents: Record<string, unknown>[];
+  testSessions: Record<string, unknown>[];
+  masteryRecords: Record<string, unknown>[];
+  mistakeItems: Record<string, unknown>[];
+  chatSessions: Record<string, unknown>[];
+};
+
+export function assembleExportResult(
+  profile: unknown,
+  consents: unknown[],
+  testSessions: unknown[],
+  masteryRecords: unknown[],
+  mistakeItems: unknown[],
+  chatSessions: unknown[]
+): UserExport {
+  return {
+    exportedAt: new Date().toISOString(),
+    profile: profile as Record<string, unknown> | null,
+    consents: (consents ?? []) as Record<string, unknown>[],
+    testSessions: (testSessions ?? []) as Record<string, unknown>[],
+    masteryRecords: (masteryRecords ?? []) as Record<string, unknown>[],
+    mistakeItems: (mistakeItems ?? []) as Record<string, unknown>[],
+    chatSessions: (chatSessions ?? []) as Record<string, unknown>[],
+  };
+}
+
+export async function exportUserData(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<UserExport> {
+  const [profile, consents, testSessions, masteryRecords, mistakeItems, chatSessions] =
+    await Promise.all([
+      supabase
+        .from("user_profiles")
+        .select(
+          "name,avatar_url,target_exams,prep_start_date,daily_study_minutes,preferred_test_days,current_streak,longest_streak,created_at,updated_at"
+        )
+        .eq("id", userId)
+        .maybeSingle()
+        .then(({ data }) => data),
+      supabase
+        .from("user_consents")
+        .select("consent_type,granted,version,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true })
+        .then(({ data }) => data ?? []),
+      supabase
+        .from("test_sessions")
+        .select("id,type,status,exam_id,started_at,submitted_at,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true })
+        .then(({ data }) => data ?? []),
+      supabase
+        .from("mastery_records")
+        .select(
+          "exam_id,topic_id,concept_id,mastery_score,confidence_level,questions_attempted,questions_correct,last_tested_at,updated_at"
+        )
+        .eq("user_id", userId)
+        .then(({ data }) => data ?? []),
+      supabase
+        .from("mistake_items")
+        .select("question_id,session_id,mistake_type,confidence,status,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true })
+        .then(({ data }) => data ?? []),
+      supabase
+        .from("chat_sessions")
+        .select("id,exam_id,title,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true })
+        .then(({ data }) => data ?? []),
+    ]);
+
+  return assembleExportResult(
+    profile,
+    consents,
+    testSessions,
+    masteryRecords,
+    mistakeItems,
+    chatSessions
+  );
+}
+```
+
+---
+
+### `src/app/api/user/export/route.ts` (new)
+
+```ts
+import type { NextRequest } from "next/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { createClient } from "@/lib/supabase/server";
+import { exportUserData } from "@/lib/profile/export-service";
+
+export const runtime = "nodejs";
+
+export async function GET(_request: NextRequest): Promise<Response> {
+  if (!hasSupabaseConfig()) {
+    return Response.json({ error: "Not configured" }, { status: 503 });
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const data = await exportUserData(supabase, user.id);
+    const json = JSON.stringify(data, null, 2);
+    const filename = `tsp-data-${new Date().toISOString().slice(0, 10)}.json`;
+
+    return new Response(json, {
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store"
+      }
+    });
+  } catch (error) {
+    console.error("[user/export] export failed", error);
+    return Response.json({ error: "Export failed" }, { status: 500 });
+  }
+}
+```
+
+---
+
+### `src/components/profile/delete-account-form.tsx` (new)
+
+```tsx
+"use client";
+
+import { useActionState, useState } from "react";
+import {
+  deleteAccountAction,
+  type ProfileActionState
+} from "@/app/(app)/profile/actions";
+
+const CONFIRMATION_WORD = "DELETE";
+const initialState: ProfileActionState = { ok: true, message: "" };
+
+export function DeleteAccountForm() {
+  const [confirmText, setConfirmText] = useState("");
+  const [state, action, isPending] = useActionState(deleteAccountAction, initialState);
+  const canSubmit = confirmText === CONFIRMATION_WORD && !isPending;
+
+  return (
+    <form action={action} className="grid gap-4">
+      <div>
+        <p className="text-sm font-medium text-destructive">Danger zone</p>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          Permanently delete your account and all associated data. This cannot be undone.
+        </p>
+      </div>
+
+      <label className="grid gap-2 text-sm font-medium">
+        Type{" "}
+        <span className="font-mono font-semibold text-destructive">
+          {CONFIRMATION_WORD}
+        </span>{" "}
+        to confirm
+        <input
+          autoComplete="off"
+          className="h-11 rounded-md border border-destructive/40 bg-background px-3 text-sm outline-none focus:border-destructive"
+          name="confirmation"
+          placeholder={CONFIRMATION_WORD}
+          type="text"
+          value={confirmText}
+          onChange={(event) => setConfirmText(event.target.value)}
+        />
+      </label>
+
+      {state.message && !state.ok ? (
+        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {state.message}
+        </p>
+      ) : null}
+
+      <button
+        className="h-11 self-start rounded-md border border-destructive bg-transparent px-4 text-sm font-semibold text-destructive transition hover:bg-destructive hover:text-destructive-foreground disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={!canSubmit}
+        type="submit"
+      >
+        {isPending ? "Deleting..." : "Delete my account"}
+      </button>
+    </form>
+  );
+}
+```
+
+---
+
+### `src/tests/unit/export-service.test.ts` (new)
+
+Tests target `assembleExportResult` — the pure assembly function — not the Supabase-dependent `exportUserData`.
+
+```ts
+import { describe, expect, it } from "vitest";
+import { assembleExportResult } from "@/lib/profile/export-service";
+
+describe("assembleExportResult", () => {
+  it("returns an object with all expected keys", () => {
+    const result = assembleExportResult(null, [], [], [], [], []);
+
+    expect(result).toHaveProperty("exportedAt");
+    expect(result).toHaveProperty("profile");
+    expect(result).toHaveProperty("consents");
+    expect(result).toHaveProperty("testSessions");
+    expect(result).toHaveProperty("masteryRecords");
+    expect(result).toHaveProperty("mistakeItems");
+    expect(result).toHaveProperty("chatSessions");
+  });
+
+  it("defaults null arrays to empty arrays and preserves profile", () => {
+    const profile = { name: "Rahul", current_streak: 5 };
+    const consents = [{ consent_type: "ai_features", granted: true, version: "v1.0.0" }];
+
+    const result = assembleExportResult(profile, consents, null as unknown as [], null as unknown as [], [], []);
+
+    expect(result.profile).toEqual(profile);
+    expect(result.consents).toHaveLength(1);
+    expect(result.testSessions).toEqual([]);
+    expect(result.masteryRecords).toEqual([]);
+  });
+});
+```
+
+---
+
+### `src/app/(app)/profile/actions.ts` (edit — add at bottom)
+
+Add two imports at the top (alongside existing imports):
+
+```ts
+import { createAdminClient, hasAdminConfig } from "@/lib/supabase/admin";
+```
+
+Add `deleteAccountAction` at the bottom of the file:
+
+```ts
+export async function deleteAccountAction(
+  _previousState: ProfileActionState,
+  formData: FormData
+): Promise<ProfileActionState> {
+  if (formData.get("confirmation") !== "DELETE") {
+    return { ok: false, message: "Type DELETE to confirm account deletion." };
+  }
+
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+
+  if (!hasAdminConfig()) {
+    return {
+      ok: false,
+      message: "Account deletion is not available in this environment. Contact support."
+    };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login?redirectTo=/profile");
+  }
+
+  let deleted = false;
+  try {
+    const adminClient = createAdminClient();
+    const { error } = await adminClient.auth.admin.deleteUser(user.id);
+    if (error) throw new Error(error.message);
+    deleted = true;
+  } catch (error) {
+    console.error("[profile] account deletion failed", error);
+    return {
+      ok: false,
+      message: "Account deletion failed. Please try again or contact support."
+    };
+  }
+
+  if (deleted) {
+    redirect("/");
+  }
+
+  return { ok: false, message: "Unexpected state." };
+}
+```
+
+**Why the `deleted` flag:** `redirect()` in Next.js throws a special error internally. Calling it inside a `try/catch` would catch it and return an error state instead of redirecting. The flag pattern puts the `redirect()` call safely outside the try/catch.
+
+---
+
+### `src/components/profile/profile-form.tsx` (edit)
+
+**Add import at top:**
+```ts
+import { DeleteAccountForm } from "@/components/profile/delete-account-form";
+```
+
+**Append this card after the closing `</div>` of the AI features card**, inside the outer `<section>`:
+
+```tsx
+<div className="rounded-xl border border-border bg-card p-5 shadow-card">
+  <div className="grid gap-5">
+    <div>
+      <h2 className="text-lg font-semibold">Data &amp; privacy</h2>
+      <p className="mt-1 text-sm leading-6 text-muted-foreground">
+        Download a copy of your data or permanently delete your account.
+      </p>
+    </div>
+
+    <div>
+      <a
+        className="inline-flex h-11 items-center rounded-md border border-border bg-background px-4 text-sm font-medium hover:border-primary hover:text-primary"
+        download
+        href="/api/user/export"
+      >
+        Download my data
+      </a>
+      <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+        Returns a JSON file with your profile, consent history, test sessions, mastery
+        records, and study data.
+      </p>
+    </div>
+
+    <div className="border-t border-border pt-5">
+      <DeleteAccountForm />
+    </div>
+  </div>
+</div>
+```
+
+---
+
+## What to Reuse (do not duplicate)
+
+| What | Where |
+|---|---|
+| `createClient` (user RLS client) | `src/lib/supabase/server.ts` |
+| `createAdminClient`, `hasAdminConfig` | `src/lib/supabase/admin.ts` |
+| `hasSupabaseConfig` | `src/lib/supabase/env.ts` |
+| `ProfileActionState` type | `src/app/(app)/profile/actions.ts` (export it, already exported) |
+| `redirect` | `next/navigation` |
+| `revalidatePath` | not needed here — account is gone after delete |
+| Card/border Tailwind classes | match existing profile-form.tsx patterns exactly |
+
+---
+
+## Out of Scope (Builder must NOT touch)
+
+- Google OAuth (TSP-010) — needs Supabase provider config
+- Any migration or new DB table
+- Soft-delete or deferred deletion queuing
+- Chat message export (chat_sessions are included; messages are not — acceptable for v1)
+- Any file outside the 6 listed above
+- Layout, nav, or middleware changes
+
+---
+
+## Verification Gates
+
+**Standard gates (run in `C:\Users\Rakesh\Documents\Test_Portal`):**
+```powershell
+corepack pnpm typecheck   # 0 errors
+corepack pnpm lint        # 0 errors
+corepack pnpm test        # expect 318 → ~320 (2 new export-service tests)
+corepack pnpm build       # confirm /api/user/export in output
+```
+
+**Build output to confirm:**
+```
+├ ƒ /api/user/export
+├ ƒ /profile
+```
+
+**Manual smoke (dev server with live Supabase, after sanity testing):**
+1. Sign in → `/profile` → scroll to "Data & privacy" card
+2. Click "Download my data" → browser downloads `tsp-data-YYYY-MM-DD.json`
+3. Open JSON → verify `profile`, `consents`, `testSessions` keys present and accurate
+4. Type anything other than DELETE → Delete button remains disabled
+5. Type DELETE → button enables → click → page redirects to `/`
+6. Try to sign in with the deleted account → auth fails
+
+**Manual smoke (no `SERVICE_ROLE_KEY`):**
+1. `/profile` → "Data & privacy" card visible
+2. Click "Download my data" → returns 503 gracefully (or is hidden if no Supabase at all)
+3. Type DELETE → click → "Account deletion is not available" message shown inline
+
+**Acceptance (TSP-014):** User can download all personal data as JSON; user can permanently delete account with DELETE confirmation; all cascading data is removed; no remaining auth session.
+
+---
+
+## Tracker update (after builder completes and gates pass)
+
+TSP-014: `Backlog/Unassigned` → `Review/Claude (Builder)`
