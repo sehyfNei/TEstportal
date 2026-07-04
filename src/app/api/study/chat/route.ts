@@ -13,6 +13,7 @@ import {
   writeChatCostLedger
 } from "@/lib/chat/chat-service";
 import { assembleContext, type ContextPayload } from "@/lib/chat/context-injector";
+import { getAiConsent } from "@/lib/profile/profile-service";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -57,6 +58,11 @@ export async function POST(request: NextRequest): Promise<Response> {
         { error: "daily_limit", reason: cap.reason ?? "usage_cap_exceeded" },
         { status: 429 }
       );
+    }
+
+    const hasConsent = await getAiConsent(supabase, user.id);
+    if (!hasConsent) {
+      return Response.json({ error: "no_consent" }, { status: 403 });
     }
 
     const adminSupabase = createAdminClient();

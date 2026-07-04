@@ -1,6 +1,7 @@
 "use client";
 
 import DOMPurify from "dompurify";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, KeyboardEvent } from "react";
 import type { ChatDisplayMessage } from "@/lib/chat/chat-read";
@@ -27,6 +28,7 @@ type ChatViewProps = {
 const ERROR_MESSAGES: Record<string, string> = {
   daily_limit: "Daily chat limit reached. Try again tomorrow.",
   ai_unavailable: "AI is currently unavailable. Please try again later.",
+  no_consent: "Enable AI features in your Profile to use chat.",
   unauthenticated: "Session expired. Please sign in again.",
   request_failed: "Something went wrong. Please try again.",
   network_error: "Network error. Check your connection and try again.",
@@ -332,7 +334,14 @@ function ErrorBanner({
 }) {
   return (
     <div className="mt-2 flex items-center justify-between gap-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-      <span>{ERROR_MESSAGES[errorKey] ?? "An error occurred."}</span>
+      <span>
+        {ERROR_MESSAGES[errorKey] ?? "An error occurred."}
+        {errorKey === "no_consent" ? (
+          <Link className="ml-2 font-medium underline" href="/profile">
+            Open Profile
+          </Link>
+        ) : null}
+      </span>
       <button className="shrink-0 text-xs font-medium underline" type="button" onClick={onDismiss}>
         Dismiss
       </button>
@@ -341,6 +350,7 @@ function ErrorBanner({
 }
 
 function resolveErrorKey(status: number): string {
+  if (status === 403) return "no_consent";
   if (status === 429) return "daily_limit";
   if (status === 503) return "ai_unavailable";
   if (status === 401) return "unauthenticated";
