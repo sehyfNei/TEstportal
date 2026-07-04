@@ -13560,3 +13560,774 @@ Remove `GROQ_API_KEY`, repeat curl — expect 503 with `{"error":"ai_disabled"}`
 ### Next session after TSP-169
 
 TSP-170 — Conversational chat UI (`/study/chat`). Depends on TSP-169 Route Handler being in Review. UI needs: message input, streaming message display (word-by-word), session resume from `X-Session-Id`, exam selector if no `examId` in URL params.
+
+---
+
+## Session 45 — Architect Plan: TSP-170 Conversational Chat UI
+
+**Date:** 2026-07-04  
+**Ticket:** TSP-170  
+**Milestone:** M5 — AI & Workers (Phase B — AI Study Companion)  
+**Depends on:** TSP-169 (Route Handler in Review ✓), TSP-168 (schema live ✓), TSP-171 (context injector in Review ✓)
+
+---
+
+### Context
+
+`POST /api/study/chat` is live. It authenticates via cookie, streams Groq tokens as `text/plain`, writes `chat_sessions` + `chat_messages` via the admin client, and returns `X-Session-Id` in the response header. The builder's job is to wire a user-facing page onto this endpoint: scrollable history, streaming display, session resume across page refreshes, and entry points from the dashboard.
+
+No new migration. No new npm packages.
+
+---
+
+### Milestone context
+
+M5 Phase B is the AI Study Companion slice: TSP-168 (schema) → TSP-171 (context injector) → TSP-169 (route handler) → **TSP-170 (chat UI)**. After this row the companion is end-to-end usable by a student. TSP-172+ (Learning Paths) is M7 and independent.
+
+---
+
+### Dependency table
+
+| Dependency | Status | What we use |
+|---|---|---|
+| `POST /api/study/chat` | Review | Streaming endpoint, `X-Session-Id` header |
+| `chat_sessions` / `chat_messages` tables | Done (live DB) | RLS-protected, readable via user-scoped client |
+| `src/lib/chat/context-injector.ts` | Review | `ContextPayload` type only (no call from UI) |
+| `src/lib/chat/types.ts` | Done | `ChatRole` type |
+| `src/components/dashboard/weak-topics.tsx` | Done | Edit to add Ask AI entry point |
+| `src/app/(app)/layout.tsx` | Done | Edit to add Chat nav link |
+
+---
+
+### Design decisions
+
+**A. Route shape: `/study/chat` under the `(app)` layout**  
+Consistent with `/tests`, `/mistakes`, `/dashboard`. Uses the existing sticky header with nav. Server component at `src/app/(app)/study/chat/page.tsx` handles auth guard and initial data load; a client component (`ChatView`) owns all interactive state.
+
+**B. URL search params drive state: `?examId=UUID&sessionId=UUID&topic=TEXT`**  
+- `examId` — pre-selects the exam; set by entry-point links on the dashboard.  
+- `sessionId` — if present, the server component loads existing messages for display. After the first successful send, the client writes the returned `X-Session-Id` to the URL via `window.history.replaceState` so the session survives refresh without a navigation.  
+- `topic` — optional topic name from the Weak Topics entry point. Pre-populates the textarea with `"Help me understand {topic}"`.
+
+**C. Initial message loading in the server component**  
+On page load, if `sessionId` is in the URL, the server component calls `loadChatHistory(supabase, sessionId)` using the user-scoped Supabase client (RLS owner check on `chat_sessions` gates access to `chat_messages`). The last 50 messages are passed as `initialMessages` to `ChatView`. The client renders them immediately, then appends new exchanges. Refreshing the page restores the visible history.
+
+**D. Streaming consumption is entirely client-side**  
+`ChatView` calls `fetch("/api/study/chat", { method: "POST", body: JSON.stringify({...}) })` directly. This avoids a Server Action (which cannot return streaming responses). The response body is read with `response.body.getReader()` in a while-loop; each decoded chunk is appended to the in-progress assistant message in React state. The `[DONE]` terminator is already handled server-side (the stream just ends). The client marks the message as `streaming: false` when the reader returns `done: true`.
+
+**E. Markdown rendering: inline pure function + DOMPurify sanitization**  
+During streaming: raw text displayed with `white-space: pre-wrap` (newlines respected, no markdown). After stream completes: `parseMarkdown(text)` converts `**bold**`, `` `code` ``, `*italic*`, `\n\n` paragraph breaks to HTML. `DOMPurify.sanitize(html)` (already in `package.json` as `dompurify`) sanitizes before `dangerouslySetInnerHTML`. `parseMarkdown` is a pure string function defined in `src/lib/chat/markdown.ts` and tested in isolation.
+
+**F. Exam selector: shown when no `examId` and no `sessionId`**  
+If the user arrives at `/study/chat` with no context, a compact `<select>` at the top lets them pick an active exam before chatting. Selecting an exam pushes `?examId=UUID` to the URL via `router.replace`. If there are no active exams, a notice is shown.
+
+---
+
+### Files to create / edit
+
+| Action | File |
+|---|---|
+| Create | `src/lib/chat/markdown.ts` |
+| Create | `src/lib/chat/chat-read.ts` |
+| Create | `src/app/(app)/study/chat/page.tsx` |
+| Create | `src/components/chat/chat-view.tsx` |
+| Create | `src/tests/unit/chat-markdown.test.ts` |
+| Edit | `src/app/(app)/layout.tsx` |
+| Edit | `src/components/dashboard/weak-topics.tsx` |
+
+No migration. No new dependencies. No changes to the route handler.
+
+---
+
+### Per-file implementation
+
+#### `src/lib/chat/markdown.ts` (new)
+
+Pure string function — no imports, fully unit-testable in Node.
+
+```ts
+export function parseMarkdown(text: string): string {
+  let result = text;
+
+  // Code spans first (prevents bold/italic processing inside backticks)
+  result = result.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+
+  // Bold before italic (avoid matching partial **)
+  result = result.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+
+  // Italic (negative lookbehind/lookahead to avoid matching **)
+  result = result.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+
+  // Headings (h1/h2/h3 all render as bold-ish inline for simplicity in chat)
+  result = result.replace(/^#{1,3}\s+(.+)$/gm, "<strong>$1</strong>");
+
+  // Paragraph breaks (double newline → close/open p)
+  const paragraphs = result.split(/\n\n+/);
+  return paragraphs
+    .map((para) => {
+      const withLineBreaks = para.replace(/\n/g, "<br>");
+      return `<p>${withLineBreaks}</p>`;
+    })
+    .join("");
+}
+```
+
+**Note:** This function does NOT HTML-escape the input. DOMPurify (called in the React component) handles sanitization. This is intentional — if the text contained `<script>` DOMPurify removes it; HTML-escaping first would double-encode legitimate HTML produced by the regexes.
+
+---
+
+#### `src/lib/chat/chat-read.ts` (new)
+
+Server-side query for initial history load. Uses the user-scoped client — RLS on `chat_sessions` (owner check `user_id = auth.uid()`) is the security gate. The join on `chat_messages` is done by the Supabase `eq("chat_session_id", sessionId)` filter; the session ownership check in the first query is the authorization proof.
+
+```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type ChatDisplayMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+};
+
+type RawMessageRow = {
+  id: string | null;
+  role: string | null;
+  content: string | null;
+};
+
+export async function loadChatHistory(
+  supabase: SupabaseClient,
+  sessionId: string
+): Promise<ChatDisplayMessage[]> {
+  // Verify ownership via RLS — if user doesn't own this session, maybeSingle returns null
+  const { data: session } = await supabase
+    .from("chat_sessions")
+    .select("id")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (!session) {
+    return [];
+  }
+
+  const { data: rows } = await supabase
+    .from("chat_messages")
+    .select("id, role, content")
+    .eq("chat_session_id", sessionId)
+    .in("role", ["user", "assistant"])
+    .order("created_at", { ascending: true })
+    .limit(50);
+
+  return toDisplayMessages((rows ?? []) as RawMessageRow[]);
+}
+
+function toDisplayMessages(rows: RawMessageRow[]): ChatDisplayMessage[] {
+  return rows
+    .filter(
+      (row): row is { id: string; role: "user" | "assistant"; content: string } =>
+        typeof row.id === "string" &&
+        (row.role === "user" || row.role === "assistant") &&
+        typeof row.content === "string" &&
+        row.content.trim().length > 0
+    )
+    .map((row) => ({ id: row.id, role: row.role, content: row.content }));
+}
+```
+
+---
+
+#### `src/app/(app)/study/chat/page.tsx` (new)
+
+Server component. Handles auth guard, exam list load, and initial message load. Passes everything to the client component.
+
+```tsx
+import { redirect } from "next/navigation";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { createClient } from "@/lib/supabase/server";
+import { loadChatHistory, type ChatDisplayMessage } from "@/lib/chat/chat-read";
+import { ChatView } from "@/components/chat/chat-view";
+
+type Exam = { id: string; name: string };
+
+export const metadata = { title: "Study Chat" };
+
+export default async function StudyChatPage({
+  searchParams
+}: {
+  searchParams: Promise<{ examId?: string; sessionId?: string; topic?: string }>;
+}) {
+  if (!hasSupabaseConfig()) {
+    return (
+      <section className="grid gap-6">
+        <PageHeader />
+        <Notice message="Supabase is not configured. Add environment variables to enable the study chat." />
+      </section>
+    );
+  }
+
+  const { examId, sessionId, topic } = await searchParams;
+  const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  // Load active exam list for the selector
+  const { data: examRows } = await supabase
+    .from("exams")
+    .select("id,name")
+    .eq("is_active", true)
+    .order("name");
+
+  const exams: Exam[] = toExams(examRows);
+
+  // Load existing messages if resuming a session
+  const initialMessages: ChatDisplayMessage[] = sessionId
+    ? await loadChatHistory(supabase, sessionId).catch(() => [])
+    : [];
+
+  // Validate examId against active exams
+  const resolvedExamId =
+    examId && exams.some((exam) => exam.id === examId) ? examId : null;
+
+  return (
+    <ChatView
+      exams={exams}
+      initialMessages={initialMessages}
+      initialExamId={resolvedExamId}
+      initialSessionId={sessionId ?? null}
+      topicHint={topic ?? null}
+    />
+  );
+}
+
+function PageHeader() {
+  return (
+    <div>
+      <p className="text-sm font-medium text-primary">Study Chat</p>
+      <h1 className="mt-2 text-3xl font-semibold">AI Study Companion</h1>
+    </div>
+  );
+}
+
+function Notice({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+      {message}
+    </div>
+  );
+}
+
+function toExams(rows: unknown): Exam[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+    .map((row) => ({
+      id: typeof row.id === "string" ? row.id : "",
+      name: typeof row.name === "string" ? row.name : ""
+    }))
+    .filter((exam) => exam.id && exam.name);
+}
+```
+
+---
+
+#### `src/components/chat/chat-view.tsx` (new)
+
+Client component. All interactive state lives here. Reads from the route handler; no Server Actions.
+
+```tsx
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import DOMPurify from "dompurify";
+import { parseMarkdown } from "@/lib/chat/markdown";
+import type { ChatDisplayMessage } from "@/lib/chat/chat-read";
+
+type Exam = { id: string; name: string };
+
+type DisplayMessage = ChatDisplayMessage & { streaming?: boolean };
+
+type Props = {
+  exams: Exam[];
+  initialMessages: ChatDisplayMessage[];
+  initialExamId: string | null;
+  initialSessionId: string | null;
+  topicHint: string | null;
+};
+
+export function ChatView({
+  exams,
+  initialMessages,
+  initialExamId,
+  initialSessionId,
+  topicHint
+}: Props) {
+  const [messages, setMessages] = useState<DisplayMessage[]>(initialMessages);
+  const [examId, setExamId] = useState<string | null>(initialExamId);
+  const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
+  const [input, setInput] = useState(topicHint ? `Help me understand ${topicHint}` : "");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || isStreaming) return;
+
+    setInput("");
+    setErrorKey(null);
+
+    const userMsg: DisplayMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text
+    };
+    const assistantId = crypto.randomUUID();
+    const assistantMsg: DisplayMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      streaming: true
+    };
+
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setIsStreaming(true);
+
+    try {
+      const response = await fetch("/api/study/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, examId, message: text })
+      });
+
+      if (!response.ok) {
+        const key =
+          response.status === 429
+            ? "daily_limit"
+            : response.status === 503
+              ? "ai_unavailable"
+              : response.status === 401
+                ? "unauthenticated"
+                : "request_failed";
+        setErrorKey(key);
+        setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+        return;
+      }
+
+      // Capture session ID from first response
+      const newSessionId = response.headers.get("X-Session-Id");
+      if (newSessionId && !sessionId) {
+        setSessionId(newSessionId);
+        const url = new URL(window.location.href);
+        url.searchParams.set("sessionId", newSessionId);
+        if (examId) url.searchParams.set("examId", examId);
+        window.history.replaceState(null, "", url.toString());
+      }
+
+      if (!response.body) {
+        setErrorKey("no_stream");
+        setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m))
+        );
+      }
+
+      // Mark streaming complete so markdown rendering kicks in
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, content: accumulated, streaming: false } : m
+        )
+      );
+    } catch {
+      setErrorKey("network_error");
+      setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+    } finally {
+      setIsStreaming(false);
+      textareaRef.current?.focus();
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey && !isStreaming) {
+      e.preventDefault();
+      void handleSend();
+    }
+  }
+
+  function handleTextareaChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInput(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+  }
+
+  function handleExamChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const id = e.target.value || null;
+    setExamId(id);
+    if (id) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("examId", id);
+      window.history.replaceState(null, "", url.toString());
+    }
+  }
+
+  const noContext = !examId && !sessionId && exams.length > 0;
+  const currentExam = exams.find((exam) => exam.id === examId);
+
+  return (
+    <section className="flex flex-col" style={{ height: "calc(100vh - 8rem)" }}>
+      {/* Header */}
+      <div className="flex items-center justify-between pb-4">
+        <div>
+          <p className="text-sm font-medium text-primary">Study Chat</p>
+          <h1 className="mt-1 text-2xl font-semibold">
+            {currentExam ? currentExam.name : "AI Study Companion"}
+          </h1>
+        </div>
+        {exams.length > 1 && (
+          <select
+            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            value={examId ?? ""}
+            onChange={handleExamChange}
+          >
+            <option value="">Select exam…</option>
+            {exams.map((exam) => (
+              <option key={exam.id} value={exam.id}>
+                {exam.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Message list */}
+      <div className="flex-1 overflow-y-auto rounded-xl border border-border bg-card p-4">
+        {messages.length === 0 && (
+          <EmptyState
+            examName={currentExam?.name ?? null}
+            noContext={noContext}
+          />
+        )}
+        <ul className="grid gap-4">
+          {messages.map((message) => (
+            <MessageBubble key={message.id} message={message} />
+          ))}
+        </ul>
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Error banner */}
+      {errorKey && (
+        <ErrorBanner errorKey={errorKey} onDismiss={() => setErrorKey(null)} />
+      )}
+
+      {/* Input */}
+      <div className="mt-3 flex items-end gap-3">
+        <textarea
+          ref={textareaRef}
+          className="flex-1 resize-none rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+          disabled={isStreaming}
+          placeholder={
+            noContext
+              ? "Select an exam above to get personalised help…"
+              : "Ask anything… (Enter to send, Shift+Enter for new line)"
+          }
+          rows={1}
+          style={{ minHeight: "48px", maxHeight: "200px" }}
+          value={input}
+          onChange={handleTextareaChange}
+          onKeyDown={handleKeyDown}
+        />
+        <button
+          className="shrink-0 rounded-xl bg-primary px-5 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={isStreaming || !input.trim()}
+          type="button"
+          onClick={() => void handleSend()}
+        >
+          {isStreaming ? "…" : "Send"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function MessageBubble({ message }: { message: DisplayMessage }) {
+  const isUser = message.role === "user";
+
+  if (isUser) {
+    return (
+      <li className="flex justify-end">
+        <div className="max-w-[75%] rounded-xl rounded-tr-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+          {message.content}
+        </div>
+      </li>
+    );
+  }
+
+  // Assistant message
+  if (message.streaming) {
+    // Raw text during streaming — show typing indicator when empty
+    return (
+      <li className="flex justify-start">
+        <div className="max-w-[85%] rounded-xl rounded-tl-sm border border-border bg-background px-4 py-2.5 text-sm text-foreground">
+          {message.content ? (
+            <span style={{ whiteSpace: "pre-wrap" }}>{message.content}</span>
+          ) : (
+            <span className="animate-pulse text-muted-foreground">▋</span>
+          )}
+        </div>
+      </li>
+    );
+  }
+
+  // Completed assistant message — render markdown
+  const html = DOMPurify.sanitize(parseMarkdown(message.content));
+
+  return (
+    <li className="flex justify-start">
+      <div
+        className="prose prose-sm max-w-[85%] rounded-xl rounded-tl-sm border border-border bg-background px-4 py-2.5 text-sm text-foreground"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </li>
+  );
+}
+
+function EmptyState({
+  examName,
+  noContext
+}: {
+  examName: string | null;
+  noContext: boolean;
+}) {
+  if (noContext) {
+    return (
+      <p className="py-12 text-center text-sm text-muted-foreground">
+        Select an exam above to start a personalised study session.
+      </p>
+    );
+  }
+
+  return (
+    <p className="py-12 text-center text-sm text-muted-foreground">
+      {examName
+        ? `Ask me anything about ${examName}. I'll use your study data to give personalised guidance.`
+        : "Ask me anything. I'll help you study for your exam."}
+    </p>
+  );
+}
+
+function ErrorBanner({
+  errorKey,
+  onDismiss
+}: {
+  errorKey: string;
+  onDismiss: () => void;
+}) {
+  const messages: Record<string, string> = {
+    daily_limit: "Daily chat limit reached. Try again tomorrow.",
+    ai_unavailable: "AI is currently unavailable. Please try again later.",
+    unauthenticated: "Session expired. Please sign in again.",
+    request_failed: "Something went wrong. Please try again.",
+    network_error: "Network error. Check your connection and try again.",
+    no_stream: "AI response could not be streamed. Please try again."
+  };
+
+  return (
+    <div className="mt-2 flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+      <span>{messages[errorKey] ?? "An error occurred."}</span>
+      <button
+        className="ml-4 text-xs underline hover:no-underline"
+        type="button"
+        onClick={onDismiss}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+```
+
+**Note on DOMPurify import:** `dompurify` is the browser-only package (correct for a `"use client"` component). The `isomorphic-dompurify` variant is only needed for server-side rendering. The client component runs only in the browser so the direct `dompurify` import is correct.
+
+---
+
+#### `src/tests/unit/chat-markdown.test.ts` (new)
+
+Tests for the pure `parseMarkdown` function — no DOM, no mocks.
+
+```ts
+import { describe, expect, it } from "vitest";
+import { parseMarkdown } from "@/lib/chat/markdown";
+
+describe("parseMarkdown", () => {
+  it("passes through plain text inside a paragraph wrapper", () => {
+    const result = parseMarkdown("hello world");
+    expect(result).toContain("hello world");
+    expect(result).toContain("<p>");
+  });
+
+  it("converts **bold** markers to strong tags", () => {
+    expect(parseMarkdown("This is **important** text")).toContain(
+      "<strong>important</strong>"
+    );
+  });
+
+  it("converts backtick spans to code tags", () => {
+    expect(parseMarkdown("Use `const x = 1` here")).toContain(
+      "<code>const x = 1</code>"
+    );
+  });
+
+  it("splits double newlines into separate paragraph elements", () => {
+    const result = parseMarkdown("First.\n\nSecond.");
+    expect(result).toContain("First.");
+    expect(result).toContain("Second.");
+    expect(result.match(/<p>/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+});
+```
+
+---
+
+#### `src/app/(app)/layout.tsx` (edit — add Chat nav link)
+
+Add a `<NavLink href="/study/chat">Chat</NavLink>` between "Tests" and "Mistakes":
+
+```tsx
+// BEFORE:
+<NavLink href="/tests">Tests</NavLink>
+<NavLink href="/mistakes">Mistakes</NavLink>
+
+// AFTER:
+<NavLink href="/tests">Tests</NavLink>
+<NavLink href="/study/chat">Chat</NavLink>
+<NavLink href="/mistakes">Mistakes</NavLink>
+```
+
+---
+
+#### `src/components/dashboard/weak-topics.tsx` (edit — add Ask AI entry point)
+
+Add an "Ask AI" link alongside the existing "Practice" link in each topic row. The `examId` prop is already accepted by the component but unused — put it to use here.
+
+```tsx
+// BEFORE (in TopicRow):
+<Link className="w-fit text-xs font-medium text-primary hover:underline" href="/tests">
+  Practice &rarr;
+</Link>
+
+// AFTER:
+<div className="flex items-center gap-4">
+  <Link className="text-xs font-medium text-primary hover:underline" href="/tests">
+    Practice &rarr;
+  </Link>
+  <Link
+    className="text-xs font-medium text-muted-foreground hover:text-primary hover:underline"
+    href={`/study/chat?examId=${examId}&topic=${encodeURIComponent(topic.topicName)}`}
+  >
+    Ask AI &rarr;
+  </Link>
+</div>
+```
+
+The `topic.topicName` value is passed via the `topicHint` prop to `ChatView`, which pre-fills the textarea with `"Help me understand {topicName}"`.
+
+The `TopicRow` function signature must accept `examId` as a prop:
+```tsx
+// BEFORE:
+function TopicRow({ topic }: { topic: WeakTopic }) {
+
+// AFTER:
+function TopicRow({ topic, examId }: { topic: WeakTopic; examId: string }) {
+```
+
+And the caller inside `WeakTopics`:
+```tsx
+// BEFORE:
+{topics.map((topic) => (
+  <TopicRow key={topic.topicId} topic={topic} />
+))}
+
+// AFTER:
+{topics.map((topic) => (
+  <TopicRow key={topic.topicId} topic={topic} examId={examId} />
+))}
+```
+
+---
+
+### What Builder must NOT touch
+
+- `src/app/api/study/chat/route.ts` — route handler is complete; UI calls it as-is
+- `src/lib/chat/chat-service.ts` — no changes needed
+- `src/lib/ai/stream.ts` — no changes needed
+- Any admin pages, test runner, or scoring code
+- `chat_sessions` / `chat_messages` migration — schema is live, no edits
+
+---
+
+### Verification gates
+
+Run in `C:\Users\Rakesh\Documents\Test_Portal` after syncing:
+
+```powershell
+corepack pnpm typecheck   # 0 errors
+corepack pnpm lint        # 0 errors / 5 pre-existing warnings
+corepack pnpm test        # 310 → ~314 pass (+4 chat-markdown tests)
+corepack pnpm build       # clean — confirm /study/chat appears in build output
+```
+
+**Dev server smoke (in Test_Portal with GROQ_API_KEY set):**
+
+1. `pnpm dev` → navigate to `http://localhost:3000/study/chat`
+2. If no exam in DB: notice renders; no crash
+3. Add `?examId=<valid-id>`: empty-state message appears for that exam
+4. Type a question, press Enter: user bubble appears immediately, typing indicator (▋) shows, then tokens stream in word by word
+5. After response completes: markdown renders (bold if any `**...**` in response)
+6. Check browser URL: `?sessionId=<uuid>` was written to the URL without a page reload
+7. Reload the page: previous messages appear (server-loaded from DB)
+8. Dashboard → Weak Topics card: "Ask AI →" link visible per topic
+9. Click "Ask AI →": navigates to `/study/chat?examId=...&topic=Polity`; textarea pre-filled with "Help me understand Polity"
+10. Nav header: "Chat" link visible and highlights when on `/study/chat`
+
+**AI disabled smoke:**
+1. Unset `GROQ_API_KEY` in Test_Portal `.env`
+2. Send a message → error banner appears: "AI is currently unavailable. Please try again later."
+3. Previous messages still displayed correctly; input re-enabled; Dismiss works
+
+---
+
+### Sanity flags for next Sanity review
+
+1. **DOMPurify client-only guard** — `dompurify` import in a `"use client"` component is correct. If typecheck complains about missing `window`, confirm the import is inside `ChatView` (not at module top level in a server-rendered context). The `dompurify` package is browser-only by design.
+2. **`streaming: false` vs `undefined`** — `initialMessages` from `chat-read.ts` have no `streaming` property. The `MessageBubble` checks `message.streaming` (falsy = `undefined` or `false`); both trigger the markdown rendering path. Confirm this works for both initial and completed streamed messages.
+3. **`X-Session-Id` CORS** — same-origin `fetch` from the Next.js page always has access to all response headers. No CORS issue for a same-origin call. No `Access-Control-Expose-Headers` header needed.
+4. **`window.history.replaceState` in SSR** — only called inside the async `handleSend` function which runs on the client after user interaction. No SSR execution path. Safe.
+5. **`prose` Tailwind class** — the `prose prose-sm` classes on the assistant bubble require `@tailwindcss/typography` plugin. If this plugin is not installed, the prose classes will have no effect (not a crash, but markdown won't be styled nicely). Check `tailwind.config.ts` — if `@tailwindcss/typography` is absent, remove the `prose` classes from the bubble and rely on the inline HTML tags (`<strong>`, `<code>`, `<em>`, `<p>`) with Tailwind-compatible base styles.
+
+---
+
+### Expected test count
+
+310 → ~314 (+4 `chat-markdown.test.ts` cases).
