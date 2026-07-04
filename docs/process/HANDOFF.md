@@ -14331,3 +14331,489 @@ corepack pnpm build       # clean — confirm /study/chat appears in build outpu
 ### Expected test count
 
 310 → ~314 (+4 `chat-markdown.test.ts` cases).
+
+---
+
+## Session 46 — Architect Plan: TSP-012 + TSP-013 Profile Page + AI Consent
+
+**Date:** 2026-07-05
+**Tickets:** TSP-012 (profile page), TSP-013 (AI consent capture)
+**Milestone:** M6 — Hardening & Launch (Account features)
+**Depends on:** TSP-011 (user_profiles + user_consents schema ✓), TSP-009 (auth ✓), TSP-169/170 (chat live ✓)
+
+---
+
+### Context
+
+A stub profile page (`src/app/(app)/profile/page.tsx`) has existed since the initial design pass — it shows the user's email and nothing else. The nav link is already wired. The `user_profiles` and `user_consents` tables both exist with full owner-only RLS. AI chat (TSP-169/170) is live but currently has no consent gate — any authenticated user can chat with Groq. TSP-013 gates chat behind explicit opt-in.
+
+No migration needed. All schema is already live.
+
+---
+
+### Milestone context
+
+M6 "Finish accounts" block: TSP-010 (Google OAuth), **TSP-012** (profile), **TSP-013** (AI consent), TSP-014 (export/delete). TSP-012 and TSP-013 share the same UI surface — one session covers both. TSP-010 (OAuth) requires founder Supabase config and is deferred. TSP-014 (GDPR export/delete) is independent and follows.
+
+---
+
+### Schema reference
+
+`user_profiles` — editable fields this session:
+- `name text not null`
+- `prep_start_date date` — when the student started preparing
+- `daily_study_minutes int` — 0–720
+- `preferred_test_days text[]` — subset of `['Mon','Tue','Wed','Thu','Fri','Sat','Sun']`
+
+System-managed (do NOT expose in the form):
+- `current_streak`, `longest_streak`, `streak_freezes`, `last_active_at`, `target_exams`
+
+`user_consents` — append-only audit log:
+- `consent_type text` — use `"ai_features"` as the single type for all AI calls
+- `granted boolean`
+- `version text` — use `"v1.0.0"`; bump manually when consent language changes
+- No `UNIQUE` constraint: each toggle appends a new row; latest row = current state
+
+---
+
+### Design decisions
+
+**A. Consent is opt-in; default = no consent**
+New users have no `user_consents` row. `getAiConsent` returns `false` when no row exists. AI features are off by default.
+
+**B. Consent check gates only the chat route in this session**
+Background analysis/plan jobs run after test submit. Adding consent checks to the async job system is TSP-068 scope. For TSP-013 scope: only `POST /api/study/chat` checks consent. If no consent, returns `403 { error: "no_consent" }`. The chat UI maps 403 → a banner with a link to `/profile`.
+
+**C. Profile service is a thin server-side module; user-scoped client for all reads/writes**
+`user_profiles` and `user_consents` both have owner-only RLS. All reads/writes go through the cookie-scoped Supabase client (not admin). No admin client needed in the profile flow.
+
+**D. Separate server actions for profile update and consent toggle**
+`updateProfileAction` updates name + study settings. `setAiConsentAction` appends a consent row. Separate actions keep them independently retryable and allow the UI to show per-section save state.
+
+**E. `parseProfileUpdate` is a pure exported function — unit-testable without Supabase**
+It validates + transforms FormData into a typed update object. Returns `null` if name is missing or empty. Clamps `daily_study_minutes` to 0–720. Filters `preferred_test_days` to valid abbreviations only.
+
+**F. AI consent toggle uses a standalone mini-form (instant submit on change)**
+The toggle is a `<form>` with a hidden `granted` input. `onChange` on the checkbox submits the form immediately via `requestSubmit()`. This avoids a separate Save button for the consent toggle and gives instant feedback.
+
+**G. Target exams deferred**
+`user_profiles.target_exams text[]` is not exposed in this session (multi-select from active exam list is higher complexity and not critical for M6). The column stays as-is (empty array for most users). Deferring to a future polish session.
+
+---
+
+### Files to create / edit
+
+| Action | File |
+|---|---|
+| Create | `src/lib/profile/profile-service.ts` |
+| Replace stub | `src/app/(app)/profile/page.tsx` |
+| Create | `src/components/profile/profile-form.tsx` |
+| Create | `src/app/(app)/profile/actions.ts` |
+| Create | `src/tests/unit/profile-service.test.ts` |
+| Edit | `src/app/api/study/chat/route.ts` |
+| Edit | `src/components/chat/chat-view.tsx` |
+
+No layout edit — Profile nav link is already present (added in a prior design pass).
+
+---
+
+### Per-file implementation notes
+
+#### `src/lib/profile/profile-service.ts`
+
+```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export const AI_CONSENT_TYPE = "ai_features";
+export const AI_CONSENT_VERSION = "v1.0.0";
+
+const VALID_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+export type DayAbbr = typeof VALID_DAYS[number];
+
+export type UserProfile = {
+  name: string;
+  prepStartDate: string | null;        // ISO date "YYYY-MM-DD" or null
+  dailyStudyMinutes: number | null;
+  preferredTestDays: DayAbbr[];
+};
+
+export type ProfileUpdate = {
+  name: string;
+  prepStartDate: string | null;
+  dailyStudyMinutes: number | null;
+  preferredTestDays: DayAbbr[];
+};
+
+// Pure function — exported for testing
+export function parseProfileUpdate(
+  fields: Record<string, unknown>
+): ProfileUpdate | null {
+  const name = typeof fields.name === "string" ? fields.name.trim() : "";
+  if (!name) return null;
+
+  const rawMinutes = Number(fields.dailyStudyMinutes);
+  const dailyStudyMinutes =
+    Number.isFinite(rawMinutes) && rawMinutes >= 0
+      ? Math.min(720, Math.floor(rawMinutes))
+      : null;
+
+  const rawDays = fields.preferredTestDays;
+  const preferredTestDays = (
+    Array.isArray(rawDays) ? rawDays : []
+  ).filter((d): d is DayAbbr => VALID_DAYS.includes(d as DayAbbr));
+
+  const rawDate = typeof fields.prepStartDate === "string" ? fields.prepStartDate.trim() : "";
+  const prepStartDate = rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null;
+
+  return { name, prepStartDate, dailyStudyMinutes, preferredTestDays };
+}
+
+export async function getProfile(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<UserProfile | null> {
+  const { data } = await supabase
+    .from("user_profiles")
+    .select("name,prep_start_date,daily_study_minutes,preferred_test_days")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    name: typeof data.name === "string" ? data.name : "",
+    prepStartDate: typeof data.prep_start_date === "string" ? data.prep_start_date : null,
+    dailyStudyMinutes:
+      typeof data.daily_study_minutes === "number" ? data.daily_study_minutes : null,
+    preferredTestDays: Array.isArray(data.preferred_test_days)
+      ? (data.preferred_test_days as string[]).filter(
+          (d): d is DayAbbr => VALID_DAYS.includes(d as DayAbbr)
+        )
+      : []
+  };
+}
+
+export async function updateProfile(
+  supabase: SupabaseClient,
+  userId: string,
+  update: ProfileUpdate
+): Promise<void> {
+  const { error } = await supabase
+    .from("user_profiles")
+    .update({
+      name: update.name,
+      prep_start_date: update.prepStartDate,
+      daily_study_minutes: update.dailyStudyMinutes,
+      preferred_test_days: update.preferredTestDays
+    })
+    .eq("id", userId);
+  if (error) throw new Error(`Profile update failed: ${error.message}`);
+}
+
+export async function getAiConsent(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("user_consents")
+    .select("granted")
+    .eq("user_id", userId)
+    .eq("consent_type", AI_CONSENT_TYPE)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.granted === true;
+}
+
+export async function setAiConsent(
+  supabase: SupabaseClient,
+  userId: string,
+  granted: boolean
+): Promise<void> {
+  const { error } = await supabase.from("user_consents").insert({
+    user_id: userId,
+    consent_type: AI_CONSENT_TYPE,
+    granted,
+    version: AI_CONSENT_VERSION
+  });
+  if (error) throw new Error(`Consent update failed: ${error.message}`);
+}
+```
+
+---
+
+#### `src/app/(app)/profile/page.tsx` (replace stub entirely)
+
+Server component:
+1. `hasSupabaseConfig()` guard → show unconfigured notice if false
+2. `auth.getUser()` → `redirect("/login")` if no user
+3. `getProfile(supabase, user.id)` — falls back to `DEFAULT_PROFILE = { name: user.email?.split("@")[0] ?? "User", prepStartDate: null, dailyStudyMinutes: null, preferredTestDays: [] }`
+4. `getAiConsent(supabase, user.id)`
+5. Render `<ProfileForm profile={profile} aiConsent={aiConsent} />`
+
+Export `metadata = { title: "Profile" }`.
+
+---
+
+#### `src/components/profile/profile-form.tsx`
+
+`"use client"` component. Props: `{ profile: UserProfile; aiConsent: boolean }`.
+
+**Structure:**
+```
+<section>
+  <PageHeader />           ← "Profile", "Study Profile", subtitle
+
+  /* Profile card */
+  <form action={updateProfileAction}>
+    Name input (text, required)
+    Prep start date (date input, optional)
+    Daily study time (select: 0 = "Not set", 30, 60, 90, 120, 180, 240, 300, 360, 480, 600, 720 min shown as labels like "30 min", "1 hr", "2 hr")
+    Preferred test days (7 checkboxes: Mon–Sun, inline row)
+    Save button + status message
+  </form>
+
+  /* AI Features card */
+  <form action={setAiConsentAction} id="consent-form">
+    <h2>AI Features</h2>
+    <p class="text-sm text-muted-foreground">
+      Allow Test Series Portal to use AI (powered by Groq) to personalise your
+      post-test analysis, improvement plan, and study chat. Your answers and
+      study data are sent to Groq for processing.
+    </p>
+    <label class="flex items-center gap-3">
+      <input type="checkbox" name="granted" value="true"
+        defaultChecked={aiConsent}
+        onChange={(e) => e.currentTarget.form?.requestSubmit()}
+      />
+      <span>Enable AI personalisation</span>
+    </label>
+    <input type="hidden" name="granted" value="false" />
+    /* note: two inputs named "granted" — the checkbox value overrides the hidden
+       one when checked; only the hidden one submits when unchecked */
+  </form>
+  /* status message under AI card */
+</section>
+```
+
+**State:** `useActionState` for both forms independently. Show "Saved" or the error message inline below each form.
+
+**Checkbox trick for boolean form submission:**
+The standard HTML pattern for a boolean checkbox: add a hidden `<input type="hidden" name="granted" value="false" />` BEFORE the checkbox. When the checkbox is checked, its `value="true"` appears in the FormData alongside the hidden `value="false"` — the server reads the last value for the field. Use `formData.getAll("granted").at(-1)` or `formData.get("granted")` — the checkbox value overrides the hidden input when checked because `checkboxValue` appears after. 
+
+Actually the simpler approach: hidden input `value="false"` comes **before** the checkbox. `formData.get("granted")` returns the first value ("false"), so use `formData.getAll("granted").includes("true")` to check. OR: use a hidden input named `grantedFallback` and only one `<input type="checkbox" name="granted" value="true" />`. Then check `formData.has("granted")` — present = checked (true), absent = unchecked (false). This is cleaner.
+
+**Simplest consent submit pattern:**
+```html
+<input type="checkbox" name="granted" value="true" onChange="...submit" />
+```
+Server-side: `const granted = formData.get("granted") === "true"` — present when checked, absent when unchecked. No hidden input needed.
+
+---
+
+#### `src/app/(app)/profile/actions.ts`
+
+```ts
+"use server";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import {
+  parseProfileUpdate,
+  updateProfile,
+  setAiConsent
+} from "@/lib/profile/profile-service";
+
+export type ProfileActionState = {
+  ok: boolean;
+  message: string;
+};
+
+export async function updateProfileAction(
+  _prevState: ProfileActionState,
+  formData: FormData
+): Promise<ProfileActionState> {
+  if (!hasSupabaseConfig()) return { ok: false, message: "Not configured." };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const fields: Record<string, unknown> = {
+    name: formData.get("name"),
+    prepStartDate: formData.get("prepStartDate"),
+    dailyStudyMinutes: formData.get("dailyStudyMinutes"),
+    preferredTestDays: formData.getAll("preferredTestDays")
+  };
+
+  const update = parseProfileUpdate(fields);
+  if (!update) return { ok: false, message: "Name is required." };
+
+  try {
+    await updateProfile(supabase, user.id, update);
+    return { ok: true, message: "Profile saved." };
+  } catch {
+    return { ok: false, message: "Failed to save profile." };
+  }
+}
+
+export async function setAiConsentAction(
+  _prevState: ProfileActionState,
+  formData: FormData
+): Promise<ProfileActionState> {
+  if (!hasSupabaseConfig()) return { ok: false, message: "Not configured." };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const granted = formData.get("granted") === "true";
+
+  try {
+    await setAiConsent(supabase, user.id, granted);
+    return { ok: true, message: granted ? "AI features enabled." : "AI features disabled." };
+  } catch {
+    return { ok: false, message: "Failed to update AI preference." };
+  }
+}
+```
+
+---
+
+#### `src/tests/unit/profile-service.test.ts`
+
+4 tests for `parseProfileUpdate`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { parseProfileUpdate } from "@/lib/profile/profile-service";
+
+describe("parseProfileUpdate", () => {
+  it("returns valid update for well-formed input", () => {
+    const result = parseProfileUpdate({
+      name: "  Rahul  ",
+      dailyStudyMinutes: "120",
+      prepStartDate: "2026-01-15",
+      preferredTestDays: ["Mon", "Wed", "Fri"]
+    });
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe("Rahul");
+    expect(result?.dailyStudyMinutes).toBe(120);
+    expect(result?.prepStartDate).toBe("2026-01-15");
+    expect(result?.preferredTestDays).toEqual(["Mon", "Wed", "Fri"]);
+  });
+
+  it("returns null when name is empty", () => {
+    expect(parseProfileUpdate({ name: "  ", dailyStudyMinutes: "60" })).toBeNull();
+  });
+
+  it("clamps daily_study_minutes above 720 to 720", () => {
+    const result = parseProfileUpdate({ name: "Rahul", dailyStudyMinutes: "900" });
+    expect(result?.dailyStudyMinutes).toBe(720);
+  });
+
+  it("filters invalid day abbreviations from preferredTestDays", () => {
+    const result = parseProfileUpdate({
+      name: "Rahul",
+      preferredTestDays: ["Mon", "Xyz", "Fri", ""]
+    });
+    expect(result?.preferredTestDays).toEqual(["Mon", "Fri"]);
+  });
+});
+```
+
+---
+
+#### Edit: `src/app/api/study/chat/route.ts`
+
+After `checkDailyUsageCap` (line ~54), add consent check:
+
+```ts
+// after: if (!cap.allowed) { return 429 }
+
+const hasConsent = await getAiConsent(supabase, user.id);
+if (!hasConsent) {
+  return Response.json({ error: "no_consent" }, { status: 403 });
+}
+```
+
+Add import at top:
+```ts
+import { getAiConsent } from "@/lib/profile/profile-service";
+```
+
+The `supabase` client (cookie-scoped) is already in scope from `createClient()` above.
+
+---
+
+#### Edit: `src/components/chat/chat-view.tsx`
+
+Add to `ERROR_MESSAGES`:
+```ts
+no_consent: "Enable AI features in your Profile to use chat.",
+```
+
+Add to `resolveErrorKey`:
+```ts
+if (status === 403) return "no_consent";
+```
+
+---
+
+### What to reuse (do NOT duplicate)
+
+| What | File |
+|---|---|
+| `createClient` | `src/lib/supabase/server.ts` |
+| `hasSupabaseConfig` | `src/lib/supabase/env.ts` |
+| `NavLink` pattern | `src/components/nav-link.tsx` |
+| `useActionState` | React 19 built-in (already used in 11 components) |
+| Tailwind card/form classes | Mirror `src/app/(app)/dashboard/page.tsx` patterns |
+
+---
+
+### Out of scope (Builder must NOT touch)
+
+- `target_exams` field (deferred — complex multi-select)
+- Google OAuth (TSP-010 — requires founder Supabase config)
+- Account export/deletion (TSP-014 — independent follow-on)
+- Consent gate in background analysis/plan jobs (async job system — separate scope)
+- Any migration (schema is already live)
+
+---
+
+### Sanity flags
+
+1. **Consent check uses user-scoped client** — `getAiConsent(supabase, user.id)` where `supabase = await createClient()`. Do NOT use `adminSupabase` for reading `user_consents` — RLS is the correct gate here.
+2. **`formData.get("granted") === "true"` vs `=== true`** — FormData values are always strings; the checkbox value `"true"` is a string. Ensure strict string comparison.
+3. **Double-input consent checkbox** — if using the hidden input + checkbox pattern, verify `formData.getAll("granted")` order. Safest: use only one checkbox input with `name="granted" value="true"` and check `formData.has("granted")` for boolean.
+4. **`useActionState` initial state** — initial state must match `ProfileActionState` type: `{ ok: true, message: "" }` (neutral, no message shown).
+5. **`requestSubmit()` on consent form** — `e.currentTarget.form?.requestSubmit()` triggers server action submission programmatically. Confirm `form` reference is not null (checkbox is inside the form element).
+6. **Profile update does not touch streak columns** — `updateProfile` must only SET `name, prep_start_date, daily_study_minutes, preferred_test_days`. Any accidental inclusion of streak columns would reset them.
+
+---
+
+### Verification gates
+
+```powershell
+corepack pnpm typecheck   # 0 errors
+corepack pnpm lint        # 0 errors
+corepack pnpm test        # 314 → ~318 (+4 profile-service tests)
+corepack pnpm build       # /profile in build output
+```
+
+**Manual smoke (dev server, live Supabase):**
+1. `/profile` → page renders with current name, empty study fields
+2. Update name + select 3 preferred days + set daily study time → Save → "Profile saved."
+3. Refresh → saved values persist
+4. Toggle AI consent ON → "AI features enabled."
+5. `/study/chat` → send a message → streams correctly (consent = true)
+6. Toggle AI consent OFF → go to `/study/chat` → send message → error banner: "Enable AI features in your Profile to use chat."
+7. Toggle AI consent back ON → chat works again
+
+**No-Supabase smoke:**
+1. `/profile` → unconfigured notice renders, no crash
+
+---
+
+### Next session after TSP-012/013
+
+TSP-014 — Account export and deletion (`/profile/export`, `/profile/delete-account`). Or TSP-094 (audit log viewer, admin-only, Medium priority M5). Architect will decide based on milestone priority at the time.
