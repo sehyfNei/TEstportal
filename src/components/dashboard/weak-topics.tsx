@@ -6,7 +6,7 @@ type Props = {
   examId: string;
 };
 
-export function WeakTopics({ topics }: Props) {
+export function WeakTopics({ examId, topics }: Props) {
   return (
     <div className="rounded-xl border border-border bg-card shadow-card p-5">
       <h2 className="text-lg font-semibold">Weak topics</h2>
@@ -18,7 +18,7 @@ export function WeakTopics({ topics }: Props) {
       ) : (
         <ul className="mt-4 grid gap-4">
           {topics.map((topic) => (
-            <TopicRow key={topic.topicId} topic={topic} />
+            <TopicRow examId={examId} key={topic.topicId} topic={topic} />
           ))}
         </ul>
       )}
@@ -26,7 +26,7 @@ export function WeakTopics({ topics }: Props) {
   );
 }
 
-function TopicRow({ topic }: { topic: WeakTopic }) {
+function TopicRow({ examId, topic }: { examId: string; topic: WeakTopic }) {
   const mastery = Math.round(Math.min(100, Math.max(0, topic.masteryScore)));
 
   return (
@@ -50,9 +50,17 @@ function TopicRow({ topic }: { topic: WeakTopic }) {
         </p>
       </div>
 
-      <Link className="w-fit text-xs font-medium text-primary hover:underline" href="/tests">
-        Practice &rarr;
-      </Link>
+      <div className="flex items-center gap-4">
+        <Link className="text-xs font-medium text-primary hover:underline" href="/tests">
+          Practice &rarr;
+        </Link>
+        <Link
+          className="text-xs font-medium text-muted-foreground hover:text-primary hover:underline"
+          href={`/study/chat?examId=${examId}&topic=${encodeURIComponent(topic.topicName)}`}
+        >
+          Ask AI &rarr;
+        </Link>
+      </div>
     </li>
   );
 }
