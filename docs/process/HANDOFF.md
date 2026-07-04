@@ -13114,3 +13114,449 @@ No migration to run. No RPC grant checker update needed (no new RPCs).
 
 TSP-169 (AI chat server action + Groq streaming) — requires **founder Standing Decision #4** first: per-user/day AI chat cost cap and cap-hit behavior (pause vs notify vs throttle). Architect should bring a focused options doc when the founder is ready.
 4. **Next build session:** TSP-169 — AI chat server action with Groq streaming. Requires founder decision on per-user/day cost cap before shipping (ROADMAP Standing Decision #4).
+
+---
+
+## Session 44 Architect Plan (2026-07-04) — TSP-169
+
+**Architect:** Claude Sonnet 4.6
+
+### Milestone
+
+**M5 — AI & Workers (Phase B).** Critical path: TSP-168 ✅ Done (migration applied to live DB) → TSP-171 ✅ Review → **TSP-169** (this session) → TSP-170 (chat UI).
+
+### Scope
+
+**In:** TSP-169 — AI chat Route Handler with Groq streaming. User sends a message; the server assembles context, calls Groq with streaming, persists both messages to `chat_messages`, returns a streamed text response.
+
+**Out:** TSP-170 (chat UI — separate session). No new DB tables or migrations (TSP-168 schema is already live). Cost-cap enforcement deferred to Standing Decision #4 — a stub is wired in place.
+
+### Dependencies verified
+
+| Dependency | Status | What we use |
+|---|---|---|
+| TSP-168 chat schema | ✅ Live on Supabase | `chat_sessions`, `chat_messages` tables + RLS |
+| TSP-171 context injector | ✅ Review | `assembleContext(supabase, userId, examId)` |
+| `callAi` gateway | Done | Pattern reference; streaming needs new `streamChatCompletion` |
+| `createAdminClient()` | Done | Service-role client for DB writes inside Route Handler |
+| `createClient()` | Done | Cookie-based client for `auth.getUser()` only |
+
+### Design decisions
+
+**A. Route Handler, not Server Action**
+Next.js Server Actions cannot return a streaming response — they serialize their return value. A Route Handler at `POST /api/study/chat` returns a native `ReadableStream`, which the TSP-170 chat UI reads with `fetch + response.body.getReader()`. This is the idiomatic Next.js 14 pattern for AI streaming chat.
+
+**B. Admin client for all DB writes; user client for auth only**
+`createClient()` (cookie-based, user context) is used once at entry to call `auth.getUser()`. All `chat_sessions` and `chat_messages` inserts use `createAdminClient()` (service role). This avoids threading auth cookies through the async streaming pipeline and keeps the write path clean. The Route Handler is server-only — the service role key is never exposed to the client.
+
+**C. Cost cap as a wired stub — Standing Decision #4**
+`checkDailyUsageCap(userId)` always returns `{ allowed: true }` for now. The function call site is in place with a `// TODO Standing Decision #4` comment. When the founder decides (pause / notify / throttle), the builder drops the real implementation into this function without touching the Route Handler logic.
+
+**D. Context payload → system message via `buildSystemMessage` pure function**
+`buildSystemMessage(payload: ContextPayload, examName: string | null): AiMessage` lives in `chat-service.ts`. It produces the Groq system prompt from the student's real data. Keeping it pure makes it testable and easy to evolve without touching the Route Handler.
+
+**E. Message history: last 10 messages from DB (CHAT_HISTORY_LIMIT = 10)**
+Before calling Groq, the Route Handler fetches the 10 most recent `chat_messages` for the session (ordered `created_at asc`). This provides conversation continuity without unbounded context growth. Configurable constant — adjust when TSP-170 UX is clearer.
+
+**F. Groq streaming via `streamChatCompletion` in `src/lib/ai/stream.ts`**
+New function wrapping the Groq `/chat/completions` endpoint with `stream: true`. Returns a `ReadableStream<string>` yielding text chunks. Token count comes from the final `[DONE]` chunk's `x_groq.usage` if present; falls back to `Math.ceil(text.length / 4)` estimate. Cost is written to the AI ledger after stream completion.
+
+**G. Session auto-creation**
+If `sessionId` is absent from the request body, a new `chat_sessions` row is created. The `title` is derived from the first 60 chars of the user's message. `context` stores the `ContextPayload` as a snapshot (not live-queried per message — context is assembled once per session start).
+
+### Files to create / modify
+
+| Action | Path |
+|---|---|
+| Create | `src/lib/ai/stream.ts` |
+| Create | `src/lib/chat/chat-service.ts` |
+| Create | `src/app/api/study/chat/route.ts` |
+| Edit (1 line) | `src/lib/ai/types.ts` — add `"chat"` to `AiFeature` |
+| Create | `src/tests/unit/chat-service.test.ts` |
+
+No migration. No new DB tables.
+
+### Per-file implementation notes
+
+#### `src/lib/ai/types.ts` (edit — 1 line)
+
+```ts
+export type AiFeature =
+  | "post_test_analysis"
+  | "improvement_plan"
+  | "question_generation"
+  | "question_enrichment"
+  | "chat";  // ← add
+```
+
+#### `src/lib/ai/stream.ts` (new)
+
+```ts
+import { DEFAULT_GROQ_MODEL, GROQ_BASE_URL, isAiEnabled } from "@/lib/ai/config";
+import type { AiMessage } from "@/lib/ai/types";
+
+export type StreamChatResult =
+  | { ok: true; stream: ReadableStream<string>; getUsage: () => Promise<{ tokensIn: number; tokensOut: number }> }
+  | { ok: false; error: string };
+
+export async function streamChatCompletion(
+  messages: AiMessage[],
+  model?: string
+): Promise<StreamChatResult> {
+  if (!isAiEnabled()) {
+    return { ok: false, error: "ai_disabled" };
+  }
+
+  const response = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: model ?? DEFAULT_GROQ_MODEL,
+      messages,
+      stream: true,
+      temperature: 0.7,
+      max_tokens: 1024,
+    }),
+  });
+
+  if (!response.ok || !response.body) {
+    return { ok: false, error: `http_error:${response.status}` };
+  }
+
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let usageResolved = false;
+  let resolveUsage!: (v: { tokensIn: number; tokensOut: number }) => void;
+  const usagePromise = new Promise<{ tokensIn: number; tokensOut: number }>((res) => {
+    resolveUsage = res;
+  });
+
+  const stream = new ReadableStream<string>({
+    async start(controller) {
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") {
+            if (!usageResolved) { resolveUsage({ tokensIn, tokensOut }); usageResolved = true; }
+            controller.close();
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data) as {
+              choices?: { delta?: { content?: string } }[];
+              x_groq?: { usage?: { prompt_tokens?: number; completion_tokens?: number } };
+            };
+            const chunk = parsed.choices?.[0]?.delta?.content ?? "";
+            if (chunk) controller.enqueue(chunk);
+            if (parsed.x_groq?.usage) {
+              tokensIn = parsed.x_groq.usage.prompt_tokens ?? 0;
+              tokensOut = parsed.x_groq.usage.completion_tokens ?? 0;
+            }
+          } catch { /* malformed chunk — skip */ }
+        }
+      }
+      if (!usageResolved) { resolveUsage({ tokensIn, tokensOut }); }
+      controller.close();
+    },
+  });
+
+  return { ok: true, stream, getUsage: () => usagePromise };
+}
+```
+
+#### `src/lib/chat/chat-service.ts` (new)
+
+```ts
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { AiMessage } from "@/lib/ai/types";
+import type { ContextPayload } from "@/lib/chat/context-injector";
+
+export const CHAT_HISTORY_LIMIT = 10;
+
+// Standing Decision #4 stub — always allows until founder sets cap policy
+export async function checkDailyUsageCap(
+  _userId: string
+): Promise<{ allowed: boolean; reason?: string }> {
+  // TODO Standing Decision #4: implement per-user/day chat cap here
+  // Options: pause (return { allowed: false, reason: "daily_limit" })
+  //          notify (return { allowed: true } + set warning flag)
+  //          throttle (delay + return { allowed: true })
+  return { allowed: true };
+}
+
+export function buildSystemMessage(payload: ContextPayload): AiMessage {
+  const lines: string[] = [];
+
+  lines.push(
+    payload.examName
+      ? `You are a personalised AI study tutor for ${payload.examName}.`
+      : "You are a personalised AI study tutor for competitive exam preparation."
+  );
+
+  if (payload.hasData) {
+    lines.push("");
+    lines.push(`Student readiness: ${payload.readinessScore}/100 (${payload.readinessConfidence} confidence)`);
+
+    if (payload.weakTopics.length > 0) {
+      const topics = payload.weakTopics
+        .map((t) => `${t.topicName} (mastery ${Math.round(t.masteryScore)}%, weight ${t.weightPercent}%)`)
+        .join("; ");
+      lines.push(`Weak topics: ${topics}`);
+    }
+
+    if (payload.recentMistakes.length > 0) {
+      const mistakes = payload.recentMistakes
+        .map((m) => `${m.mistakeType}${m.topicName ? ` in ${m.topicName}` : ""}`)
+        .join("; ");
+      lines.push(`Recent unresolved mistakes: ${mistakes}`);
+    }
+
+    if (payload.improvementPlanHeadline) {
+      lines.push(`Current study plan: ${payload.improvementPlanHeadline}`);
+    }
+
+    lines.push("");
+    lines.push(
+      "Focus on the student's weak areas. Keep answers concise, accurate, and actionable. " +
+      "Do not reveal raw scores or internal data — frame feedback constructively."
+    );
+  } else {
+    lines.push("");
+    lines.push(
+      "The student is new — no learning data yet. Introduce yourself and ask what topic they want to work on."
+    );
+  }
+
+  return { role: "system", content: lines.join("\n") };
+}
+
+export async function getOrCreateSession(
+  adminSupabase: SupabaseClient,
+  userId: string,
+  examId: string,
+  sessionId: string | null,
+  firstMessagePreview: string,
+  contextSnapshot: ContextPayload
+): Promise<string> {
+  if (sessionId) {
+    const { data } = await adminSupabase
+      .from("chat_sessions")
+      .select("id")
+      .eq("id", sessionId)
+      .eq("user_id", userId)
+      .single();
+    if (data?.id) return data.id;
+  }
+
+  const title = firstMessagePreview.slice(0, 60).trim();
+  const { data, error } = await adminSupabase
+    .from("chat_sessions")
+    .insert({ user_id: userId, exam_id: examId || null, title, context: contextSnapshot })
+    .select("id")
+    .single();
+
+  if (error || !data?.id) throw new Error("Failed to create chat session");
+  return data.id;
+}
+
+export async function insertMessage(
+  adminSupabase: SupabaseClient,
+  sessionId: string,
+  role: "user" | "assistant" | "system",
+  content: string,
+  tokenCount?: number
+): Promise<void> {
+  await adminSupabase.from("chat_messages").insert({
+    chat_session_id: sessionId,
+    role,
+    content,
+    token_count: tokenCount ?? null,
+  });
+}
+
+export async function getRecentMessages(
+  adminSupabase: SupabaseClient,
+  sessionId: string
+): Promise<AiMessage[]> {
+  const { data } = await adminSupabase
+    .from("chat_messages")
+    .select("role, content")
+    .eq("chat_session_id", sessionId)
+    .order("created_at", { ascending: false })
+    .limit(CHAT_HISTORY_LIMIT);
+
+  return ((data ?? []) as { role: "user" | "assistant" | "system"; content: string }[])
+    .reverse()
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+```
+
+#### `src/app/api/study/chat/route.ts` (new)
+
+```ts
+import { NextRequest } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { assembleContext } from "@/lib/chat/context-injector";
+import {
+  buildSystemMessage,
+  checkDailyUsageCap,
+  getOrCreateSession,
+  insertMessage,
+  getRecentMessages,
+} from "@/lib/chat/chat-service";
+import { streamChatCompletion } from "@/lib/ai/stream";
+import { computeCostUsd } from "@/lib/ai/cost";
+import { DEFAULT_GROQ_MODEL } from "@/lib/ai/config";
+
+export async function POST(req: NextRequest) {
+  // 1. Auth
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return new Response("Unauthorized", { status: 401 });
+
+  // 2. Parse body
+  let body: { sessionId?: string; examId?: string; message?: string };
+  try { body = await req.json(); } catch { return new Response("Bad request", { status: 400 }); }
+  const { sessionId = null, examId = "", message = "" } = body;
+  if (!message.trim()) return new Response("Empty message", { status: 400 });
+
+  // 3. Cost cap check
+  const cap = await checkDailyUsageCap(user.id);
+  if (!cap.allowed) {
+    return new Response(JSON.stringify({ error: "daily_limit", reason: cap.reason }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const adminSupabase = createAdminClient();
+
+  // 4. Assemble context
+  const contextPayload = examId
+    ? await assembleContext(supabase, user.id, examId).catch(() => null)
+    : null;
+
+  // 5. Get or create session
+  const activeSessionId = await getOrCreateSession(
+    adminSupabase,
+    user.id,
+    examId,
+    sessionId,
+    message,
+    contextPayload ?? { examName: null, readinessScore: 0, readinessConfidence: "low", weakTopics: [], recentMistakes: [], improvementPlanHeadline: null, hasData: false }
+  );
+
+  // 6. Persist user message
+  await insertMessage(adminSupabase, activeSessionId, "user", message);
+
+  // 7. Build Groq message list
+  const systemMsg = contextPayload ? buildSystemMessage(contextPayload) : { role: "system" as const, content: "You are a helpful study tutor." };
+  const history = await getRecentMessages(adminSupabase, activeSessionId);
+  const groqMessages = [systemMsg, ...history, { role: "user" as const, content: message }];
+
+  // 8. Stream from Groq
+  const streamResult = await streamChatCompletion(groqMessages);
+  if (!streamResult.ok) {
+    return new Response(JSON.stringify({ error: streamResult.error }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // 9. Pipe stream to client; collect full text for DB write
+  let collected = "";
+  const passthrough = new TransformStream<string, string>({
+    transform(chunk, ctrl) {
+      collected += chunk;
+      ctrl.enqueue(chunk);
+    },
+    async flush() {
+      // After stream ends: persist assistant reply + write cost ledger
+      const usage = await streamResult.getUsage();
+      const tokenCount = usage.tokensOut || Math.ceil(collected.length / 4);
+      await insertMessage(adminSupabase, activeSessionId, "assistant", collected, tokenCount);
+      // Cost ledger (fire-and-forget; import writeLedger from gateway internals if needed)
+      // writeLedger({ userId: user.id, feature: "chat", ... });
+    },
+  });
+
+  return new Response(streamResult.stream.pipeThrough(passthrough), {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Session-Id": activeSessionId,
+      "Transfer-Encoding": "chunked",
+      "Cache-Control": "no-cache",
+    },
+  });
+}
+```
+
+> **Ledger note:** Full cost ledger integration (AI cost tracking with `writeLedger`) is deferred to TSP-170 or a follow-up. The infrastructure is in place — import `defaultWriteLedger` from `gateway.ts` internals if needed. For now the builder should add a `// TODO: write cost ledger` comment in the `flush` callback.
+
+#### `src/tests/unit/chat-service.test.ts` (new — pure function tests only)
+
+**4 test cases for `buildSystemMessage`:**
+
+1. **New user (hasData: false)** — payload with `hasData: false`. Expect system content to contain "new" and ask what topic they want to work on. No score text.
+2. **Known user with exam name** — `hasData: true`, `examName: "UPSC Prelims"`, `readinessScore: 55`. Expect content to start with "UPSC Prelims" and contain "55/100".
+3. **Weak topics included** — 2 weak topics in payload. Expect "Weak topics:" line with both topic names.
+4. **Plan headline included** — `improvementPlanHeadline: "Focus on Modern History"`. Expect it to appear in content.
+
+**Expected test count:** 306 → ~312 (4 tests × ~1.5 assertions avg, but distinct `it` blocks count as tests).
+
+### What Builder must NOT touch
+
+- `src/lib/ai/gateway.ts` — `callAi` is unchanged; streaming is additive via `stream.ts`
+- Any existing action files, admin pages, or dashboard code
+- TSP-170 scope — chat UI is next session
+- `chat_sessions` / `chat_messages` schema — migration already applied, no edits
+
+### Verification gates
+
+Run in `C:\Users\Rakesh\Documents\Test_Portal` after syncing:
+
+```powershell
+corepack pnpm typecheck   # 0 errors
+corepack pnpm lint        # 0 errors / 5 pre-existing warnings
+corepack pnpm test        # 306 → ~312 pass
+corepack pnpm build       # clean
+```
+
+**Manual smoke (dev server in Test_Portal, GROQ_API_KEY set):**
+```bash
+curl -X POST http://localhost:3000/api/study/chat \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <valid session cookie>" \
+  -d '{"examId":"<valid-exam-id>","message":"What should I focus on this week?"}'
+```
+Expect: streaming text response, `X-Session-Id` header in response.
+
+**AI disabled smoke:**
+Remove `GROQ_API_KEY`, repeat curl — expect 503 with `{"error":"ai_disabled"}`.
+
+### Risks / Sanity flags
+
+1. **`flush` callback timing** — `TransformStream.flush` is called when the writable side closes, which happens after the readable side is fully consumed by the HTTP response. Confirm that the `await insertMessage` inside `flush` actually completes (not fire-and-forget). If it doesn't, move the DB write to a separate `waitUntil` or accept eventual consistency.
+2. **`getRecentMessages` race** — messages are fetched before the user message is inserted (step 7 before step 6... wait, step 6 inserts then step 7 fetches). Builder must insert user message *before* fetching history to avoid the new message appearing in its own context window. Verify ordering in the route code above — step 6 (insert) precedes step 7 (fetch history). ✓
+3. **`examId` empty string** — if the client sends `examId: ""`, `assembleContext` is skipped and a generic system prompt is used. This is correct behaviour (no exam context = generic tutor). Builder must not call `assembleContext` with an empty string.
+4. **Vercel streaming** — Vercel Edge Runtime supports `ReadableStream` natively; Node.js runtime also works. The Route Handler should include `export const runtime = "nodejs"` or omit it (Node.js is the default). Do NOT use `export const runtime = "edge"` — the admin Supabase client uses `postgres` under the hood which is Node-only.
+5. **`X-Session-Id` header** — the chat UI (TSP-170) needs this to resume conversations. Builder must confirm the header is accessible from the client (`fetch` response headers) — CORS headers are already handled by Next.js for same-origin requests.
+
+### Next session after TSP-169
+
+TSP-170 — Conversational chat UI (`/study/chat`). Depends on TSP-169 Route Handler being in Review. UI needs: message input, streaming message display (word-by-word), session resume from `X-Session-Id`, exam selector if no `examId` in URL params.
