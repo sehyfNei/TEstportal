@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { createAdminClient, hasAdminConfig } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
   parseProfileUpdate,
@@ -83,4 +84,41 @@ export async function setAiConsentAction(
     console.error("[profile] consent update failed", error);
     return { ok: false, message: "Failed to update AI preference." };
   }
+}
+
+export async function deleteAccountAction(
+  _previousState: ProfileActionState,
+  formData: FormData
+): Promise<ProfileActionState> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+
+  if (formData.get("confirmation") !== "DELETE") {
+    return { ok: false, message: "Type DELETE to confirm account deletion." };
+  }
+
+  if (!hasAdminConfig()) {
+    return { ok: false, message: "Account deletion is not available." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login?redirectTo=/profile");
+  }
+
+  const adminSupabase = createAdminClient();
+  const { error } = await adminSupabase.auth.admin.deleteUser(user.id);
+
+  if (error) {
+    console.error("[profile] account deletion failed", error);
+    return { ok: false, message: "Failed to delete account." };
+  }
+
+  await supabase.auth.signOut();
+  redirect("/");
 }

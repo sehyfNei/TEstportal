@@ -7,6 +7,7 @@ import {
   updateProfileAction,
   type ProfileActionState
 } from "@/app/(app)/profile/actions";
+import { DeleteAccountForm } from "@/components/profile/delete-account-form";
 import { VALID_DAYS, type UserProfile } from "@/lib/profile/profile-service";
 import { cn } from "@/lib/utils";
 
@@ -179,6 +180,24 @@ export function ProfileForm({ aiConsent, profile }: ProfileFormProps) {
 
           <ActionMessage state={consentState} />
         </form>
+      </div>
+
+      <div className="grid gap-5 rounded-xl border border-border bg-card p-5 shadow-card">
+        <div>
+          <h2 className="text-lg font-semibold">Data & privacy</h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Download your profile and study records, or permanently delete your account.
+          </p>
+        </div>
+
+        <a
+          className="inline-flex h-11 w-fit items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-semibold transition hover:border-primary hover:text-primary"
+          href="/api/user/export"
+        >
+          Download my data
+        </a>
+
+        <DeleteAccountForm />
       </div>
     </section>
   );
