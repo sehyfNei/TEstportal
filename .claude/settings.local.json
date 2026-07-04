@@ -4,7 +4,15 @@
       "WebSearch",
       "PowerShell(cd \"C:\\\\Users\\\\Rakesh\\\\Documents\\\\Test_Portal\"; $out = node scripts/check-rpc-grants.js 2>&1 | Out-String; Write-Output \"EXITCODE=$LASTEXITCODE\"; Write-Output $out)",
       "Read(//c/Users/Rakesh/Documents/Test_Portal/**)",
-      "Bash(grep -nEA3 \"SetAllCookies\" node_modules/@supabase/ssr/dist/module/types.d.ts)"
+      "Bash(grep -nEA3 \"SetAllCookies\" node_modules/@supabase/ssr/dist/module/types.d.ts)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(grep -Hm1 ^description: 'C:\\\\Users\\\\Rakesh\\\\Documents\\\\Test_Portal/.claude/skills/*/SKILL.md')",
+      "Bash(git push *)",
+      "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" add \"trackers/JIRA_TRACKER.csv\" \"docs/process/SESSION_STATE.md\" \"docs/process/HANDOFF.md\")",
+      "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" push)"
     ]
   }
 }
