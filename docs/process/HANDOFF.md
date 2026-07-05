@@ -15331,3 +15331,398 @@ corepack pnpm build       # confirm /api/user/export in output
 ## Tracker update (after builder completes and gates pass)
 
 TSP-014: `Backlog/Unassigned` → `Review/Claude (Builder)`
+
+---
+
+# Session 48 — Architect Plan: TSP-134 + TSP-129 Testing Confidence
+
+## Context
+
+TSP-014 (account export/deletion) landed in Session 47. The TSP-008 Auth & Profiles epic is now one founder action (Google OAuth) away from complete. The critical path next is M6 Hardening — specifically the Testing & Quality confidence rows. Two gaps are buildable right now without any external dependencies:
+
+- **TSP-134** (Critical, M6): No security or authorization unit tests exist. The auth guard (`requireAdminForAction`) and its JWT-role logic have never been exercised in Vitest. This is the highest-risk untested path in the codebase — a regression here lets any authenticated user call admin actions.
+- **TSP-129** (High, M3): `updateMasteryJob` — the orchestrator that coordinates per-topic/concept mastery computation — has only a live smoke script, no unit tests. The pure computation functions (`computeTopicMastery`, etc.) are well covered; the orchestrator's grouping, skipping, accumulation, and concept-vs-topic branching are not.
+
+Both are **new test files only. No application code changes.**
+
+---
+
+## Milestone
+
+**M6 — Hardening & Launch** (TSP-134) · **M3 — Scoring & Learning Model** (TSP-129)
+
+---
+
+## Scope
+
+**In:**
+- TSP-134 → `src/tests/unit/auth-guard.test.ts` (new, 8 tests)
+- TSP-129 → `src/tests/unit/mastery-job.test.ts` (new, 7 tests)
+
+**Out:** Any application code changes, any new routes, any migrations, TSP-130/131/132/133 (require Playwright or live DB setup), TSP-102+ infra rows.
+
+---
+
+## Architectural Decisions
+
+### A. TSP-134 — Test `requireAdminForAction` via vi.mock, not by exporting internals
+
+`getUserRole` and `getJwtUserRole` are intentionally private. Testing them by exporting would expose internal implementation details and create a maintenance contract. Instead, test `requireAdminForAction` end-to-end with `vi.mock("@/lib/supabase/env")` and `vi.mock("@/lib/supabase/server")`. The JWT parsing is testable by crafting a fake three-segment `header.payload.sig` token with a base64url-encoded JSON payload in the test file itself — no real Supabase key needed.
+
+### B. TSP-134 — Critical assertion: `user_metadata` must NOT be trusted
+
+The auth_role_rule (see memory) records that the S1-A finding fixed in TSP-090 was precisely this: `user_metadata.user_role` is client-writable via `supabase.auth.updateUser` and must not be in the trust chain. Test 4 below asserts exactly this. If this test ever fails, a user can self-promote.
+
+### C. TSP-129 — Test `updateMasteryJob` via its injectable `MasteryUpdateRepository`
+
+The function already accepts an optional repository parameter for this exact reason (written in Session 12 to enable testability). Supply a stub repository built with `vi.fn()` — no Supabase mock needed. The pure computation (`computeTopicMastery`, etc.) is already tested elsewhere; here we test the orchestration logic only.
+
+### D. TSP-129 — Use `topicScores` to control attempt count in tests
+
+`processMasteryEntity` reads `scoreBucket = source.topicScores[entityId] ?? summarizeAnswers(answers)`. By providing explicit `topicScores` in the test source, tests control exactly how many attempts are attributed to a topic — simpler than crafting answer arrays that produce the right `summarizeAnswers` output.
+
+---
+
+## Files to Create
+
+| Action | Path |
+|---|---|
+| Create | `src/tests/unit/auth-guard.test.ts` |
+| Create | `src/tests/unit/mastery-job.test.ts` |
+
+No application code changes.
+
+---
+
+## Per-File Implementation Notes
+
+### `src/tests/unit/auth-guard.test.ts` (new)
+
+```ts
+import { vi, describe, it, expect, beforeEach } from "vitest";
+
+vi.mock("@/lib/supabase/env");
+vi.mock("@/lib/supabase/server");
+vi.mock("next/navigation");
+
+import { requireAdminForAction } from "@/lib/auth/require-admin";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { createClient } from "@/lib/supabase/server";
+
+// Build a fake JWT with base64url-encoded payload — no real signing needed
+// (getJwtUserRole only parses the middle segment, it does not verify the signature)
+function makeToken(payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `header.${encoded}.signature`;
+}
+
+function mockSupabase(
+  user: Record<string, unknown> | null,
+  accessToken?: string
+) {
+  const getUser = vi.fn().mockResolvedValue({
+    data: { user },
+    error: user ? null : { message: "Not signed in" }
+  });
+  const getSession = vi.fn().mockResolvedValue({
+    data: { session: accessToken ? { access_token: accessToken } : null },
+    error: null
+  });
+  vi.mocked(createClient).mockResolvedValue({
+    auth: { getUser, getSession }
+  } as unknown as Awaited<ReturnType<typeof createClient>>);
+}
+
+describe("requireAdminForAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(hasSupabaseConfig).mockReturnValue(true);
+  });
+
+  it("returns {ok:false} when Supabase is not configured", async () => {
+    vi.mocked(hasSupabaseConfig).mockReturnValue(false);
+    const result = await requireAdminForAction();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/not configured/i);
+  });
+
+  it("returns {ok:false} when getUser returns no user (unauthenticated)", async () => {
+    mockSupabase(null);
+    const result = await requireAdminForAction();
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns {ok:false} when user has no role in app_metadata", async () => {
+    mockSupabase({ id: "u1", app_metadata: {} });
+    const result = await requireAdminForAction();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/admin access required/i);
+  });
+
+  // CRITICAL — this is the S1-A security regression guard.
+  // user_metadata is client-writable; it must never be trusted for role checks.
+  it("returns {ok:false} when ONLY user_metadata has admin role (must not be trusted)", async () => {
+    mockSupabase({
+      id: "u1",
+      app_metadata: {},
+      user_metadata: { user_role: "admin" }
+    });
+    const result = await requireAdminForAction();
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns {ok:true} when app_metadata.user_role is 'admin'", async () => {
+    mockSupabase({ id: "u1", app_metadata: { user_role: "admin" } });
+    const result = await requireAdminForAction();
+    expect(result).toEqual({ ok: true, userId: "u1" });
+  });
+
+  it("returns {ok:false} when app_metadata.user_role is 'user' (non-admin role)", async () => {
+    mockSupabase({ id: "u1", app_metadata: { user_role: "user" } });
+    const result = await requireAdminForAction();
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns {ok:true} when JWT app_metadata.user_role is 'admin' (user object has no role)", async () => {
+    const token = makeToken({ app_metadata: { user_role: "admin" } });
+    mockSupabase({ id: "u1", app_metadata: {} }, token);
+    const result = await requireAdminForAction();
+    expect(result).toEqual({ ok: true, userId: "u1" });
+  });
+
+  it("returns {ok:false} when JWT payload is malformed base64 (graceful degradation)", async () => {
+    mockSupabase({ id: "u1", app_metadata: {} }, "header.!!!not-base64!!!.sig");
+    const result = await requireAdminForAction();
+    expect(result.ok).toBe(false);
+  });
+});
+```
+
+**Note:** `vi.mock(...)` calls must appear before any `import` of the module under test. In Vitest, the mock factory runs before module imports. The order above (mock declarations first, then imports) is correct.
+
+---
+
+### `src/tests/unit/mastery-job.test.ts` (new)
+
+```ts
+import { vi, describe, it, expect } from "vitest";
+import {
+  updateMasteryJob,
+  type MasteryJobSource,
+  type MasteryUpdateRepository,
+  type MasteryRecordUpsert
+} from "@/lib/jobs/handlers/update-mastery";
+import type { SessionAnswerForMastery, ScoreBucket } from "@/lib/scoring/mastery-types";
+
+// Stub repository — every method is a vi.fn() returning safe defaults
+function makeRepo(
+  overrides: Partial<MasteryUpdateRepository> = {}
+): MasteryUpdateRepository {
+  return {
+    loadMasterySource: vi.fn().mockResolvedValue(null),
+    findMasteryRecord: vi.fn().mockResolvedValue(null),
+    upsertMasteryRecord: vi.fn().mockResolvedValue(undefined),
+    ...overrides
+  };
+}
+
+// Minimal source with one topic answer
+function makeSource(overrides: Partial<MasteryJobSource> = {}): MasteryJobSource {
+  return {
+    resultId: "r1",
+    userId: "u1",
+    examId: "e1",
+    sessionId: "s1",
+    sessionType: "topic",
+    topicScores: {},
+    conceptScores: null,
+    sessionAnswers: [],
+    questionDifficulties: new Map(),
+    questionTopics: new Map(),
+    questionConcepts: new Map(),
+    ...overrides
+  };
+}
+
+const ANSWER: SessionAnswerForMastery = {
+  questionId: "q1",
+  isCorrect: true,
+  confidence: "sure",
+  marksAwarded: 2,
+  timeSpentSec: 30,
+  revisitCount: 0
+};
+
+const FULL_BUCKET: ScoreBucket = {
+  score: 2,
+  maxScore: 2,
+  attempted: 1,
+  correct: 1,
+  incorrect: 0,
+  skipped: 0
+};
+
+const ZERO_BUCKET: ScoreBucket = {
+  score: 0,
+  maxScore: 2,
+  attempted: 0,
+  correct: 0,
+  incorrect: 0,
+  skipped: 1
+};
+
+describe("updateMasteryJob", () => {
+  it("throws when repository is not provided", async () => {
+    await expect(updateMasteryJob("r1", undefined)).rejects.toThrow(
+      /requires a repository/i
+    );
+  });
+
+  it("throws when the session result is not found", async () => {
+    const repo = makeRepo({ loadMasterySource: vi.fn().mockResolvedValue(null) });
+    await expect(updateMasteryJob("r1", repo)).rejects.toThrow(/not found/i);
+  });
+
+  it("skips topics with zero questionsAttempted and does not upsert", async () => {
+    const source = makeSource({
+      sessionAnswers: [ANSWER],
+      questionTopics: new Map([["q1", "topic-1"]]),
+      topicScores: { "topic-1": ZERO_BUCKET }
+    });
+    const repo = makeRepo({ loadMasterySource: vi.fn().mockResolvedValue(source) });
+    const updates = await updateMasteryJob("r1", repo);
+    expect(vi.mocked(repo.upsertMasteryRecord)).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("initializes mastery from null on the first attempt", async () => {
+    const source = makeSource({
+      sessionAnswers: [ANSWER],
+      questionTopics: new Map([["q1", "topic-1"]]),
+      questionDifficulties: new Map([["q1", "medium"]]),
+      topicScores: { "topic-1": FULL_BUCKET }
+    });
+    const repo = makeRepo({
+      loadMasterySource: vi.fn().mockResolvedValue(source),
+      findMasteryRecord: vi.fn().mockResolvedValue(null)
+    });
+    const updates = await updateMasteryJob("r1", repo);
+    expect(vi.mocked(repo.upsertMasteryRecord)).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(repo.upsertMasteryRecord).mock.calls[0][0] as MasteryRecordUpsert;
+    expect(call.topicId).toBe("topic-1");
+    expect(call.masteryScore).toBeGreaterThan(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].oldMasteryScore).toBeNull();
+  });
+
+  it("accumulates questionsAttempted from existing and new attempts", async () => {
+    const source = makeSource({
+      sessionAnswers: [ANSWER],
+      questionTopics: new Map([["q1", "topic-1"]]),
+      questionDifficulties: new Map([["q1", "medium"]]),
+      topicScores: { "topic-1": FULL_BUCKET }
+    });
+    const existing = {
+      id: "mr-1",
+      masteryScore: "70",
+      questionsAttempted: "5",
+      questionsCorrect: "4",
+      stabilityFactor: "1.2"
+    };
+    const repo = makeRepo({
+      loadMasterySource: vi.fn().mockResolvedValue(source),
+      findMasteryRecord: vi.fn().mockResolvedValue(existing)
+    });
+    await updateMasteryJob("r1", repo);
+    const call = vi.mocked(repo.upsertMasteryRecord).mock.calls[0][0] as MasteryRecordUpsert;
+    // new total: 5 (existing) + 1 (this session) = 6
+    expect(call.questionsAttempted).toBe(6);
+    expect(call.questionsCorrect).toBe(5);
+  });
+
+  it("processes concept mastery when conceptScores and questionConcepts are present", async () => {
+    const source = makeSource({
+      sessionAnswers: [ANSWER],
+      questionTopics: new Map([["q1", "topic-1"]]),
+      questionConcepts: new Map([["q1", ["concept-1"]]]),
+      questionDifficulties: new Map([["q1", "medium"]]),
+      topicScores: { "topic-1": FULL_BUCKET },
+      conceptScores: { "concept-1": FULL_BUCKET }
+    });
+    const repo = makeRepo({ loadMasterySource: vi.fn().mockResolvedValue(source) });
+    const updates = await updateMasteryJob("r1", repo);
+    // Should upsert once for topic-1 and once for concept-1
+    expect(vi.mocked(repo.upsertMasteryRecord)).toHaveBeenCalledTimes(2);
+    const calls = vi.mocked(repo.upsertMasteryRecord).mock.calls.map(
+      (c) => c[0] as MasteryRecordUpsert
+    );
+    const topicCall = calls.find((c) => c.topicId === "topic-1");
+    const conceptCall = calls.find((c) => c.conceptId === "concept-1");
+    expect(topicCall).toBeDefined();
+    expect(conceptCall).toBeDefined();
+    expect(updates).toHaveLength(2);
+  });
+
+  it("skips concept processing when conceptScores is null", async () => {
+    const source = makeSource({
+      sessionAnswers: [ANSWER],
+      questionTopics: new Map([["q1", "topic-1"]]),
+      questionConcepts: new Map([["q1", ["concept-1"]]]),
+      questionDifficulties: new Map([["q1", "medium"]]),
+      topicScores: { "topic-1": FULL_BUCKET },
+      conceptScores: null  // explicitly null — no concept pass
+    });
+    const repo = makeRepo({ loadMasterySource: vi.fn().mockResolvedValue(source) });
+    await updateMasteryJob("r1", repo);
+    // Only topic upsert; concept pass uses conceptScores ?? {} which is {} when null
+    expect(vi.mocked(repo.upsertMasteryRecord)).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(repo.upsertMasteryRecord).mock.calls[0][0] as MasteryRecordUpsert;
+    expect(call.topicId).toBe("topic-1");
+    expect(call.conceptId).toBeUndefined();
+  });
+});
+```
+
+**Note on `existing` fields:** The `ExistingMasteryRecord` type uses the Drizzle-inferred column types which come through as `string | number` (numeric Drizzle columns can be either). The `toNumber` helper inside `update-mastery.ts` handles both — passing strings like `"70"` is intentional and mirrors what the DB adapter actually returns.
+
+---
+
+## What to Reuse (do not duplicate)
+
+| What | File |
+|---|---|
+| `requireAdminForAction` | `src/lib/auth/require-admin.ts` |
+| `updateMasteryJob`, types | `src/lib/jobs/handlers/update-mastery.ts` |
+| `SessionAnswerForMastery`, `ScoreBucket` | `src/lib/scoring/mastery-types.ts` |
+| Vitest patterns | Mirrors `generate-analysis.test.ts` and `chat-service.test.ts` |
+
+---
+
+## Out of Scope (Builder must NOT touch)
+
+- Any changes to `require-admin.ts`, `update-mastery.ts`, or any other source file
+- TSP-130/131/132/133 (Playwright or DB-integration tests)
+- TSP-102+ infra rows
+
+---
+
+## Verification Gates
+
+**Standard gates (run in `C:\Users\Rakesh\Documents\Test_Portal`):**
+```powershell
+corepack pnpm typecheck   # 0 errors
+corepack pnpm lint        # 0 errors (6 pre-existing warnings)
+corepack pnpm test        # expect 320 → 335 (+8 auth-guard, +7 mastery-job)
+corepack pnpm build       # clean
+```
+
+**Acceptance:**
+- TSP-134: `auth-guard.test.ts` passes all 8 tests; test 4 (user_metadata not trusted) is the critical regression guard.
+- TSP-129: `mastery-job.test.ts` passes all 7 tests; `updateMasteryJob` orchestration is covered for null-init, accumulation, concept vs topic branching, and zero-skip.
+
+---
+
+## Tracker update (after builder completes and gates pass)
+
+TSP-134: `Backlog/Unassigned` → `Review/Claude (Builder)`
+TSP-129: `Backlog/Unassigned` → `Review/Claude (Builder)`
