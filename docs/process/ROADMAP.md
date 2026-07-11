@@ -16,6 +16,26 @@ Build the **thinnest vertical slice a user can experience, then deepen it.** Wor
 
 ---
 
+## Phase 1 closure mandate
+
+`docs/final/PRODUCT_VISION.md` is the strategic north star. Phase 1 is locked as the **Trusted Prelims Improvement Engine**: one complete English UPSC GS Prelims pathway that proves diagnostic -> plan -> practice -> test -> mistake recovery -> retest -> improved readiness.
+
+Phase 1 does not close because its modules exist individually. It closes only when the end-to-end user loop, trusted content gate, deployed-runtime reliability, browser/E2E checks, production controls, and private-beta outcome gates in the Product Vision all pass.
+
+Until that happens, prioritize work in this order:
+
+1. Launch-critical correctness and safety: TSP-177, TSP-178, and the per-user/day AI cost-cap decision.
+2. The 19 pending Review-row browser smokes and tracker closure.
+3. A student-facing test catalog exposing diagnostic, topic, sectional, mock, and retest paths already supported by the engine.
+4. A minimum 300 expert-reviewed question inventory, targeting 500 for private beta, with verified PYQ provenance and sufficient Gold/Silver pools.
+5. Simple target-date scheduling, reminders, and plan recovery required by the Phase 1 promise.
+6. Integration/E2E coverage, staging, monitoring, backup/restore, rate limits, cost alerts, and rollback rehearsals.
+7. A 50-100 user private beta measured against the Product Vision exit gate.
+
+Phase 2 topic learning, current affairs, CSAT, motivation, payments, and expanded AI work must not displace these closure items unless beta evidence makes one necessary.
+
+---
+
 ## Critical path (one line)
 
 **M0 unblock → M1 playable demo → M2 quality/selection+content-pipeline → M3 learning model → M4 dashboard → (M5 AI+chat-companion ∥ M6 hardening) → M7 learning-paths.**
