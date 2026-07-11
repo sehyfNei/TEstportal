@@ -1,25 +1,26 @@
-import { StartTest } from "@/components/test/start-test";
+import { TestCatalog } from "@/components/test/test-catalog";
+import type { ExamOption, TopicOption } from "@/components/test/start-test";
+import { parseCatalogSearchParams } from "@/lib/tests/catalog";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
-type ExamOption = {
-  description: string | null;
-  id: string;
-  name: string;
-  slug: string;
+type TestsPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function TestsPage() {
+export default async function TestsPage({ searchParams }: TestsPageProps) {
+  const resolvedParams = searchParams ? await searchParams : {};
+  const preselect = parseCatalogSearchParams(resolvedParams);
   const data = await loadTestsPageData();
 
   return (
     <section className="grid gap-6">
       <div>
         <p className="text-sm font-medium text-primary">Tests</p>
-        <h1 className="mt-2 text-3xl font-semibold">Start practice</h1>
+        <h1 className="mt-2 text-3xl font-semibold">Test catalog</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Start a timed session from the live practice pool, answer one question at a time, and submit for an inline
-          score.
+          Pick how you want to practice: map your level with a diagnostic, drill a topic, take a timed sectional or
+          full mock, or re-attempt your recorded mistakes.
         </p>
       </div>
 
@@ -30,28 +31,7 @@ export default async function TestsPage() {
       {data.loadError ? <StatusPanel message={data.loadError} /> : null}
 
       {data.configured && !data.loadError ? (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <StartTest exams={data.exams} />
-
-          <aside className="rounded-xl border border-border bg-card shadow-card p-5">
-            <h2 className="text-lg font-semibold">Available exams</h2>
-            {data.exams.length ? (
-              <div className="mt-4 grid gap-3">
-                {data.exams.map((exam) => (
-                  <div className="rounded-md border border-border bg-background p-3" key={exam.id}>
-                    <p className="text-sm font-semibold">{exam.name}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{exam.slug}</p>
-                    {exam.description ? (
-                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{exam.description}</p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-4 text-sm leading-6 text-muted-foreground">No active exams are visible yet.</p>
-            )}
-          </aside>
-        </div>
+        <TestCatalog exams={data.exams} preselect={preselect} topics={data.topics} />
       ) : null}
     </section>
   );
@@ -70,21 +50,22 @@ async function loadTestsPageData() {
     return {
       configured: false,
       loadError: null,
-      exams: []
+      exams: [] as ExamOption[],
+      topics: [] as TopicOption[]
     };
   }
 
   const supabase = await createClient();
-  const examsResult = await supabase
-    .from("exams")
-    .select("id,name,slug,description")
-    .eq("is_active", true)
-    .order("name");
+  const [examsResult, topicsResult] = await Promise.all([
+    supabase.from("exams").select("id,name,slug,description").eq("is_active", true).order("name"),
+    supabase.from("topics").select("id,exam_id,name,level,order_index").eq("level", 1).order("order_index")
+  ]);
 
   return {
     configured: true,
-    loadError: examsResult.error?.message ?? null,
-    exams: toExamOptions(examsResult.data)
+    loadError: examsResult.error?.message ?? topicsResult.error?.message ?? null,
+    exams: toExamOptions(examsResult.data),
+    topics: toTopicOptions(topicsResult.data)
   };
 }
 
@@ -108,4 +89,25 @@ function toExamOptions(rows: unknown): ExamOption[] {
       return id && name && slug ? { description, id, name, slug } : null;
     })
     .filter((row): row is ExamOption => Boolean(row));
+}
+
+function toTopicOptions(rows: unknown): TopicOption[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows
+    .map((row) => {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      const record = row as Record<string, unknown>;
+      const id = typeof record.id === "string" ? record.id : "";
+      const examId = typeof record.exam_id === "string" ? record.exam_id : "";
+      const name = typeof record.name === "string" ? record.name : "";
+
+      return id && examId && name ? { examId, id, name } : null;
+    })
+    .filter((row): row is TopicOption => Boolean(row));
 }
