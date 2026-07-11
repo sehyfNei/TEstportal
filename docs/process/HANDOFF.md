@@ -16087,3 +16087,62 @@ TSP-179, TSP-083, TSP-084, TSP-105 → `Review` (Builder Remarks + Rollback Note
 ## Recommended next
 
 Sanity pass on this slice (the middleware-activation smoke matters most), then founder browser-smoke of the now-25-row Review queue, or Architect Session 51 (candidates: TSP-130 session integration tests; auto-complete scheduled_items on submit; TSP-161 fixed templates to unlock benchmark mode in the catalog).
+
+---
+
+# Session 51 — Architect Plan — TSP-104 + TSP-130 + TSP-131 + TSP-180 (2026-07-12)
+
+Second multi-story big slice. Mandate alignment (PRODUCT_VISION Phase 1 closure): item 5 (scheduling → TSP-180 closes the loop), item 6 (hardening/tests/infra → TSP-104, TSP-130, TSP-131). Items 2/4 remain founder-gated. Bonus: TSP-131 supplies the missing verification for the Codex-built TSP-025 import slice ("In Progress" = built, tests pending) — if the import tests pass, Builder may move TSP-025 → Review with a remark.
+
+## Story 1 — TSP-104: Rate limiting (Production Infrastructure, M6)
+
+DB-backed fixed-window limiter. **No external services** — Upstash/Redis are founder-gated; Postgres is what we have.
+
+1. Migration `supabase/migrations/202607130001_rate_limit.sql`:
+   - `public.rate_limit_counters (key text primary key, window_started_at timestamptz not null, count int not null default 0)`.
+   - Security-definer RPC `public.consume_rate_limit(p_key text, p_limit int, p_window_seconds int) returns boolean`: if row missing or window expired → upsert fresh window with count=1, return true; else if count < p_limit → increment, return true; else return false. `set search_path = public`. Revoke from public/anon; grant execute to `authenticated` and `service_role`. RLS on the table with **no policies** (RPC is definer; nobody reads it directly).
+   - Rollback: `drop function if exists public.consume_rate_limit(text, int, int); drop table if exists public.rate_limit_counters;`
+   - **Apply to live DB** (DB gate, Test_Portal .env DATABASE_URL, postgres npm package pattern from Session 50).
+2. `src/lib/security/rate-limit.ts` (pure, DI): `checkRateLimit(client, { name, userId, limit, windowSeconds })` → calls the RPC with key `` `${name}:${userId}` ``; **fail-open**: any RPC error or null data → allowed (rate limiting must never take the product down). Export per-route configs: `CHAT_RATE_LIMIT = { name: "chat", limit: 20, windowSeconds: 300 }`, `EXPORT_RATE_LIMIT = { name: "export", limit: 3, windowSeconds: 3600 }`.
+3. Wire into `POST /api/study/chat` (after auth, before Groq call) → on deny, 429 JSON `{ error: "Too many requests. Please wait a few minutes." }`; chat client already surfaces error strings. And `GET /api/user/export` → 429 with a plain message.
+4. Tests `src/tests/unit/rate-limit.test.ts`: mock client — allows under limit, denies over, fail-open on error/exception, key composition, config sanity (limits > 0).
+
+## Story 2 — TSP-130: Session integration tests (Testing And Quality, M6, Critical)
+
+**Rescope recorded in tracker**: AC says "against test database", but staging (TSP-102) is founder-gated. Deliver action-level integration tests that mock `@/lib/supabase/server` with one contract-faithful fake client — the vi.hoisted + vi.mock pattern in `src/tests/unit/auth-guard.test.ts:3-14`.
+
+- New `src/tests/integration/session-flow.test.ts` (if vitest config doesn't glob src/tests/integration, put it in src/tests/unit/ — check `vitest.config`).
+- Build a stateful fake: `rpc(name, args)` dispatches on name; `from(table)` returns a chainable stub recording filters. Simulate: `start_test_session` → session payload with questions; `saveAnswerAction` → answer row upsert; `submit_test_session` → result payload; verify analysis job enqueue happens via the `after()` block — import `after` is from `next/server`, so **mock `next/server`'s `after` to run the callback inline** and assert the job-kick/enqueue call happened.
+- Flow assertions: start → save answer → submit → result shape → analysis job enqueued; plus unauthenticated rejection and RPC-error propagation paths.
+- Read `src/app/test/actions.ts` first (startSessionAction:66, saveAnswerAction:140, submitSessionAction:333, after() at :446) and mirror the real RPC names/arg shapes exactly — the fake must fail the test if an arg name drifts.
+
+## Story 3 — TSP-131: Admin import integration tests (Testing And Quality, M6)
+
+Same fake-client technique over the admin content pipeline:
+
+- `importQuestionsAction` (src/app/admin/questions/import/actions.ts:31): dry-run validates without insert; real run calls `create_admin_question` per row only after all rows validate; row-level validation failures reported.
+- Review/approve/flag: `setQuestionStatusAction`, `setQualityTierAction` (src/app/admin/questions/actions.ts) and manifest import action (src/app/admin/manifests/actions.ts) happy path + non-admin rejection (`requireAdminForAction` mocked both ways).
+- Every action must reject when `requireAdminForAction` fails — that's the security half of the AC.
+- If these pass, note in TSP-025 Builder Remarks that its pending verification is now covered; move TSP-025 → Review.
+
+## Story 4 — TSP-180: Schedule auto-completion (Scheduling, M4, new row)
+
+Closes the scheduling loop: Start now → session runs → item auto-completes. **No schema change** — `scheduled_items.session_id` exists.
+
+1. `startNowHref` (src/lib/schedule/schedule-service.ts) appends `&scheduleId=<item.id>` for test-type items (not the /mistakes retest link — that flow can't carry it yet; leave retest manual).
+2. `parseCatalogSearchParams` (src/lib/tests/catalog.ts) gains optional `scheduleId` (UUID-validated, defaults null); /tests page passes it to TestCatalog → StartTest renders hidden input `scheduledItemId`.
+3. `startSessionAction`: after successful `start_test_session`, if `scheduledItemId` valid UUID → owner-scoped update `scheduled_items.session_id = <new session id>` where `user_id = auth user`, `status = 'planned'` — **non-fatal** (ignore errors; the test session matters more than the link).
+4. `submitSessionAction`: inside the existing `after()` block, owner-scoped update `scheduled_items` set `status='completed'` where `session_id = <sessionId>`, `status='planned'`.
+5. Tests: extend schedule-service tests (href carries scheduleId; retest link doesn't) + catalog tests (scheduleId parsing: valid, malformed→null, absent→null).
+
+## Order & gates
+
+Build order: TSP-104 → TSP-180 → TSP-130 → TSP-131 (migration first so the DB gate happens early; tests last since they freeze the contracts). One commit per row, `TSP-XXX:` prefix + Co-Authored-By trailer.
+
+Gates (AGENT_WORKFLOW §8, off-OneDrive Test_Portal clone; commit → `git pull --ff-only origin main` there): typecheck / lint / test / build all green; DB gate for the rate-limit migration (apply live + verify RPC exists and revocation holds: calling `consume_rate_limit` as anon must fail). Live probe: authenticated chat POST hammer to confirm 429 after 20 (optional if auth-in-curl too fiddly — unit coverage suffices, note it for Sanity).
+
+## Constraints & founder-gated (unchanged)
+
+- Do NOT implement `checkDailyUsageCap` (Standing Decision #4 — rate limiting ≠ cost cap; say so in remarks if tempted).
+- CSP stays Report-Only; no Upstash/Redis/external limiter; no RESEND features; CRON_SECRET still pending founder.
+- Tracker edits via Python csv only; verify 180 rows × 18 cols after every write.

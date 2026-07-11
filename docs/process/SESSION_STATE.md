@@ -1,7 +1,23 @@
 # Session State
 
-**Last updated:** 2026-07-12 — Session 50: all 4 rows BUILT + middleware-activation fix — gates green (372/372) → Review
-**Updated by:** Claude (Architect/Builder)
+**Last updated:** 2026-07-12 — Session 51 planned: TSP-104 rate limiting + TSP-130/131 integration tests + TSP-180 schedule auto-completion
+**Updated by:** Claude (Architect)
+
+---
+
+## Session 51 (2026-07-12) — Architect: second multi-story big slice (4 rows)
+
+**Status:** Planned — TSP-104, TSP-130, TSP-131, TSP-180 → In Progress (tracker: 180 rows × 18 cols verified)
+
+**Mandate alignment:** PRODUCT_VISION Phase 1 closure item 5 (TSP-180 closes the scheduling loop opened in Session 50) and item 6 (TSP-104 infra hardening; TSP-130/131 critical-path test coverage). Items 2/4 remain founder-gated. Side effect: TSP-131 supplies the verification the Codex-built TSP-025 import slice never got — if its tests pass, Builder moves TSP-025 → Review too.
+
+**Rows (build order = commit order; full architecture in HANDOFF.md):**
+- **TSP-104 (M6, rescoped):** DB-backed fixed-window rate limiting — `202607130001_rate_limit.sql` (`rate_limit_counters` + security-definer `consume_rate_limit` RPC, granted to authenticated only), pure `src/lib/security/rate-limit.ts` (DI, **fail-open**), applied to POST /api/study/chat (20/5min → 429) and /api/user/export (3/hour). No Upstash/external services (founder-gated). DB gate: apply live + verify anon cannot execute the RPC.
+- **TSP-180 (new, High, M4):** schedule auto-completion — Start-now href carries `scheduleId` → hidden `scheduledItemId` in StartTest → `startSessionAction` links `scheduled_items.session_id` (owner-scoped, non-fatal) → `submitSessionAction` marks the linked planned item completed inside the existing `after()` block. No schema change.
+- **TSP-130 (Critical, M6, rescoped):** session-flow integration tests — action-level, mocking `@/lib/supabase/server` with a contract-faithful stateful fake (auth-guard.test.ts pattern); mock `next/server`'s `after` to run inline so the analysis-enqueue assertion works. Rescope recorded in tracker: staging test DB is founder-gated (TSP-102), so AC is satisfied at the action layer.
+- **TSP-131 (M6):** admin import integration tests — importQuestionsAction dry-run vs real-run vs row-validation failure, review/approve/flag actions, and non-admin rejection on every action.
+
+**Key builder checks:** mirror real RPC names/arg shapes in fakes (drift must fail the test); rate limiting ≠ cost cap — `checkDailyUsageCap` stays a stub (Standing Decision #4); drop TSP-131 first under time pressure, never TSP-104's migration+wiring pairing.
 
 ---
 
