@@ -1,7 +1,25 @@
 # Session State
 
-**Last updated:** 2026-07-12 — Session 49: TSP-177 + TSP-178 built and verified — all 4 gates green (349/349) → Review
-**Updated by:** Claude (Architect/Builder)
+**Last updated:** 2026-07-12 — Session 50: Architect plan — big slice: TSP-179 (test catalog) + TSP-083/084 (scheduling) + TSP-105 (security headers)
+**Updated by:** Claude (Architect)
+
+---
+
+## Session 50 (2026-07-12) — Architect: first multi-story "big slice" (4 rows)
+
+**Status:** Architect plan written — ready for Builder (full architecture in HANDOFF.md)
+
+**Driver:** `d9a31dd` added `docs/final/PRODUCT_VISION.md` + Phase 1 closure mandate to ROADMAP.md. This session takes the top agent-doable mandate items: #3 (student test catalog), #5 (target-date scheduling), and the founder-independent part of #6 (security headers).
+
+**Rows (one commit per row, in order):**
+- **TSP-179 (new, Critical, M2):** `/tests` becomes a mode catalog — diagnostic / topic practice / sectional / mock cards + retest link. The `start_test_session` RPC already supports all types with per-type exposure policies (TSP-036/037/038); the UI never exposed them. Pure `TEST_MODES` config + deep-link `?mode=&topicId=` preselect. UI + wiring only, no schema.
+- **TSP-083 (M4, rescoped):** `scheduled_items` migration (`202607120001_scheduling.sql`) — owner-only RLS, planned/completed/cancelled, overdue derived at read time (no cron), additive-only, rollback = single drop. `weekly_pledges` rescoped to TSP-087.
+- **TSP-084 (M4):** `/schedule` page (already in middleware protectedPrefixes) — Overdue/Upcoming/History, create/reschedule/cancel/complete server actions, "Start now" deep-links into the TSP-179 catalog. Completion is manual this session (auto-link on submit = named follow-up).
+- **TSP-105 (M6, rescoped):** security headers via pure `src/lib/security/headers.ts` → next.config `headers()` — HSTS, nosniff, X-Frame-Options, Referrer-Policy, Permissions-Policy, **CSP Report-Only** (never enforcing this session). WAF deferred to TSP-102 (founder).
+
+**Key builder checks:** RPC behavior when pool < p_count (before settling mock defaults); `/schedule` already protected — verify, don't re-add; drop TSP-105 first if time pressure, never split 083/084.
+
+**Tracker:** TSP-179 added; TSP-179/083/084/105 → In Progress (179 rows × 18 cols verified).
 
 ---
 

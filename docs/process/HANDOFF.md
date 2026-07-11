@@ -15945,3 +15945,92 @@ TSP-177 → `Review` · TSP-178 → `Review` (Builder Remarks populated on both;
 ## Recommended next
 
 Sanity pass on this slice, then either the founder browser-smoke session for the 21 Review rows, or Architect Session 50 (candidates: TSP-130 session integration tests, or converting inline mastery/mistake side-effects to queue jobs now that the runner path is proven).
+
+---
+
+# Session 50 — Architect Plan — TSP-179 + TSP-083 + TSP-084 + TSP-105 (2026-07-12)
+
+**Theme:** First multi-story "big slice" session. Directly advances Product Vision Phase 1 closure mandate items **3** (student-facing test catalog), **5** (simple target-date scheduling), and a founder-independent piece of **6** (security headers). Milestones touched: M2, M4, M6. No founder decision blocks any of these four rows.
+
+**Context:** `d9a31dd` (founder/orchestrator) added `docs/final/PRODUCT_VISION.md` + Phase 1 closure mandate to ROADMAP.md — this plan is sequenced against that mandate. Items 1 (TSP-177/178) are built and in Review; item 2 (Review-row smokes) and item 4 (question inventory) are founder work; items 3 and 5 are the highest agent-doable priorities.
+
+## Rows in scope (one commit per row, in this order)
+
+| Row | Milestone | What |
+|---|---|---|
+| TSP-179 (new) | M2 | Student test catalog on `/tests` — expose the selection engine the UI never surfaced |
+| TSP-083 | M4 | `scheduled_items` schema (migration + RLS + rollback notes) |
+| TSP-084 | M4 | `/schedule` page — create/reschedule/cancel/complete, overdue handling |
+| TSP-105 | M6 | Security headers via next.config (CSP Report-Only baseline; WAF deferred to TSP-102) |
+
+Sequencing: TSP-179 is independent; TSP-083 must precede TSP-084; TSP-105 last (config-wide change — run full gates + header probe after everything else is in).
+
+## A. TSP-179 — Student test catalog
+
+**Fact established this session:** `start_test_session` (latest definition in `202606030001_concept_retest_routing.sql`) already accepts `p_type in ('diagnostic','topic','concept_retest','sectional','mock','benchmark','custom')` with per-type exposure policies and selection modes, plus `p_topic_id`, `p_count`, `p_duration_minutes`, `p_min_quality_tier`. `src/app/test/actions.ts` `startSessionAction` already forwards all of these — but the UI (`src/app/(app)/tests/page.tsx` + `StartTest`) hardcodes the default flow (type defaults to `diagnostic`, no topic, count 10). TSP-036/037/038 built the engine; nothing exposed it. This row is UI + wiring, no schema work.
+
+1. **`src/lib/tests/catalog.ts` (new, pure/testable):** exported `TEST_MODES` config — one entry per card: `{ id, sessionType, title, description, requiresTopic, defaultCount, defaultDurationMinutes, minQualityTier }`.
+   - `diagnostic` → type `diagnostic`, 20 q, 25 min.
+   - `topic` → type `topic`, 10 q, untimed, **requiresTopic**.
+   - `sectional` → type `sectional`, 25 q, 30 min, **requiresTopic**.
+   - `mock` → type `mock`, 50 q, 60 min. (Do NOT use `benchmark` — that path expects a fixed template, TSP-161 backlog.)
+   - Also export a `parseCatalogSearchParams(searchParams)` helper for deep-link preselect (`/tests?mode=topic&topicId=<uuid>`): invalid mode/uuid degrade to defaults, never throw.
+2. **`/tests` page:** render mode cards from `TEST_MODES` + a **Mistake retest** card that links to `/mistakes` (retest flow exists — TSP-062/063 Done). Selecting a card shows the start form for that mode. Server component loads active exams AND level-1 topics (`topics` table: `id, exam_id, parent_id, name, level, order_index` — filter `level = 1` or `parent_id is null`, order by `order_index`); pass both down, filter topics client-side by selected exam.
+3. **`StartTest` component:** accept mode props; render topic select only when `requiresTopic`; submit `type`, `topicId`, `count`, `durationMinutes` — all fields `startSessionAction` already reads. Keep the default no-params behavior working (do not break existing flow or tests).
+4. **Builder MUST verify before fixing defaults:** what the RPC does when the pool has fewer questions than `p_count` (read the selection SQL — does it raise or return fewer?). If it raises, lower mock default or surface a friendly error path. Record findings in Builder Remarks.
+5. **Tests (`src/tests/unit/test-catalog.test.ts`):** every `TEST_MODES` sessionType is a valid RPC type; topic-required modes flagged; counts/durations positive; `parseCatalogSearchParams` — valid preselect, bad mode → default, malformed uuid → null, array/absent params safe. Target ≥6 tests.
+
+## B. TSP-083 — Scheduling schema
+
+Rescoped (tracker updated): `scheduled_items` only; `weekly_pledges` moves to TSP-087 where the pledge feature actually gets built.
+
+1. **Migration `supabase/migrations/202607120001_scheduling.sql`:**
+   - `public.scheduled_items`: `id uuid pk default gen_random_uuid()`, `user_id uuid not null references auth.users(id) on delete cascade`, `exam_id uuid not null references public.exams(id)`, `topic_id uuid null references public.topics(id)`, `item_type text not null check (item_type in ('test','retest'))`, `session_type text not null check (session_type in ('diagnostic','topic','concept_retest','sectional','mock','benchmark','custom'))`, `scheduled_for timestamptz not null`, `status text not null default 'planned' check (status in ('planned','completed','cancelled'))`, `session_id uuid null references public.test_sessions(id)`, `notes text null`, `created_at`/`updated_at` + existing `set_updated_at` trigger.
+   - **No `missed` status** — overdue is derived at read time (`status = 'planned' and scheduled_for < now()`); avoids needing a cron.
+   - Index `(user_id, scheduled_for)`.
+   - RLS: enable; owner-only `select/insert/update/delete` (`auth.uid() = user_id`); insert check `user_id = auth.uid()`.
+2. **Rollback Notes column (tracker):** `drop table if exists public.scheduled_items;` — additive migration, touches no existing table.
+3. **DB gate:** apply to live DB per Database Gate; read-only probe confirms table + RLS.
+
+## C. TSP-084 — Schedule page
+
+1. **`src/lib/schedule/schedule-service.ts` (new, pure/testable):** `groupScheduledItems(items, now)` → `{ overdue, upcoming, past }` (past = completed/cancelled, most recent first; upcoming ascending by `scheduled_for`; overdue = planned + past due, oldest first). Plus input validation helpers for the actions (uuid, future-date rules: creation requires a parseable date; reschedule same).
+2. **`src/app/(app)/schedule/page.tsx` + `actions.ts`:** server component loads exams, level-1 topics, and the user's `scheduled_items`; sections Overdue / Upcoming / History. Actions: `createScheduledItemAction` (exam, optional topic, item_type+session_type from a mode select reusing `TEST_MODES`, scheduled_for, notes), `rescheduleScheduledItemAction`, `setScheduledItemStatusAction` (completed/cancelled). All behind `requireAuth`, all UUID/date-validated, RLS as backstop. `/schedule` is ALREADY in middleware `protectedPrefixes` — verify, don't re-add.
+3. **"Start now"** on a planned item → link to `/tests?mode=<mode>&topicId=<topicId>` (deep-link from TSP-179). Completing an item stays **manual** this session; auto-linking `session_id` on submit is a named follow-up candidate, not scope.
+4. **Tests (`src/tests/unit/schedule-service.test.ts`):** grouping boundaries (exactly-now not overdue), ordering in each bucket, status filtering, validation rejects bad uuid/date, accepts valid. Target ≥6 tests.
+
+## D. TSP-105 — Security headers
+
+Scoped (tracker updated): app-level headers now; platform WAF deferred to TSP-102 (founder-gated Vercel setup).
+
+1. **`src/lib/security/headers.ts` (new, pure/testable):** export the header list consumed by `next.config` `headers()`:
+   - `Strict-Transport-Security: max-age=15552000; includeSubDomains`
+   - `X-Content-Type-Options: nosniff`
+   - `X-Frame-Options: DENY`
+   - `Referrer-Policy: strict-origin-when-cross-origin`
+   - `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+   - `Content-Security-Policy-Report-Only`: pragmatic baseline (`default-src 'self'`; `script-src 'self' 'unsafe-inline' 'unsafe-eval'`; `style-src 'self' 'unsafe-inline'`; `img-src 'self' data: blob:`; `connect-src 'self' https://*.supabase.co`; `frame-ancestors 'none'`). **Report-Only, NOT enforcing** — Next.js inline runtime + Tailwind need the unsafe directives; enforcement with nonces is a TSP-102-era follow-up. Do not ship an enforcing CSP this session.
+2. Wire into `next.config` `headers()` for `/(.*)`.
+3. **Tests (`src/tests/unit/security-headers.test.ts`):** required header names present, HSTS shape, CSP is the Report-Only variant, no enforcing `Content-Security-Policy` key. ≥3 tests.
+4. **Live probe (prod server in Test_Portal):** response headers present on `/login` and `/tests`; pages still render (200/307 as appropriate); chat page loads (CSP report-only must not break streaming fetch).
+
+## Gates & verification (AGENT_WORKFLOW §8 — all evidence from Test_Portal clone)
+
+- Per-row: targeted vitest for new test files.
+- Full: `corepack pnpm typecheck` / `lint` / `test` / `build` — all green; test count should rise from 349 by ≥15.
+- DB gate for TSP-083 (apply migration, read-only probe).
+- Prod-server probe: `/tests` renders catalog anon→307, `/schedule` anon→307, headers present, logged-out `/login` 200.
+- OneDrive vitest silent-exit quirk: never treat as pass.
+- Tracker: re-verify 179 rows × 18 cols after every write (recurring corruption class).
+
+## Risks / notes
+
+- **Mock count vs small pool** — see A.4; builder must check RPC insufficient-pool behavior before settling defaults.
+- **CSP breakage** — mitigated by Report-Only; if even Report-Only causes console noise that confuses smoke, note it, don't enforce.
+- **Migration is additive-only**; rollback is a single drop.
+- **Do not touch:** `checkDailyUsageCap` stub (founder Standing Decision #4), TSP-085 reminder job (blocked on RESEND_API_KEY), weekly_pledges (TSP-087).
+- Working-tree drift not ours: `.claude/settings.local.json`, `docs/process/AGENT_WORKFLOW.md` (§8 codification — content matches practice; leave uncommitted for founder).
+
+## Estimate
+
+L — biggest session to date (4 rows, 1 migration, 2 student-facing pages, 1 config-wide change). If time pressure hits, **drop TSP-105 first** (lowest coupling), never split TSP-083/084.
