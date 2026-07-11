@@ -26,7 +26,8 @@ describe("TEST_MODES", () => {
   });
 
   it("never uses the template-dependent benchmark type", () => {
-    expect(TEST_MODES.some((mode) => mode.sessionType === "benchmark")).toBe(false);
+    const sessionTypes: string[] = TEST_MODES.map((mode) => mode.sessionType);
+    expect(sessionTypes).not.toContain("benchmark");
   });
 
   it("has unique ids and sane defaults", () => {
