@@ -1,13 +1,17 @@
 # Session State
 
-**Last updated:** 2026-07-12 — Session 51 planned: TSP-104 rate limiting + TSP-130/131 integration tests + TSP-180 schedule auto-completion
-**Updated by:** Claude (Architect)
+**Last updated:** 2026-07-12 — Session 51 BUILT: rate limiting + schedule auto-completion + session/admin integration tests — gates green (405/405) → Review
+**Updated by:** Claude (Architect/Builder)
 
 ---
 
 ## Session 51 (2026-07-12) — Architect: second multi-story big slice (4 rows)
 
-**Status:** Planned — TSP-104, TSP-130, TSP-131, TSP-180 → In Progress (tracker: 180 rows × 18 cols verified)
+**Status:** Built — TSP-104/180/130/131 in Review (commits `428c89a`, `eb0d725`, `b54633f`+`b4a5051`+`1e3f17c`, `d249735`); **TSP-025 also → Review** (its stalled verification is superseded by TSP-131's passing import tests)
+
+**Builder result (2026-07-12):** all gates green in Test_Portal @ `1e3f17c` — typecheck 0 err · lint 0 err/6 pre-existing warn · **test 405/405** (+33 new) · build clean (`ƒ Middleware` intact). DB gate: `202607130001_rate_limit.sql` applied live and verified — RLS on with zero policies (RPC-only by design), `consume_rate_limit` security definer, anon exec revoked, fixed window live-probed (2/60s → true,true,false). Remaining smoke needs an authenticated session: chat 21st message in 5 min → 429; export 4th in an hour → 429; scheduled test auto-completes via Start now → submit. **Founder: GitHub PAT is invalid — `git push` to the GitHub mirror fails (gates unaffected; Test_Portal pulls from the OneDrive repo).**
+
+**Notable finding:** concurrent dynamic imports of the same specifier race vitest's mock interception (first call got the mock, second the real module) — submit side-effects now share one `import("@/lib/jobs/enqueue")` promise (`1e3f17c`, behavior-neutral in prod).
 
 **Mandate alignment:** PRODUCT_VISION Phase 1 closure item 5 (TSP-180 closes the scheduling loop opened in Session 50) and item 6 (TSP-104 infra hardening; TSP-130/131 critical-path test coverage). Items 2/4 remain founder-gated. Side effect: TSP-131 supplies the verification the Codex-built TSP-025 import slice never got — if its tests pass, Builder moves TSP-025 → Review too.
 

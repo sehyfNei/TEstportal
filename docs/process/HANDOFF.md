@@ -16146,3 +16146,47 @@ Gates (AGENT_WORKFLOW §8, off-OneDrive Test_Portal clone; commit → `git pull 
 - Do NOT implement `checkDailyUsageCap` (Standing Decision #4 — rate limiting ≠ cost cap; say so in remarks if tempted).
 - CSP stays Report-Only; no Upstash/Redis/external limiter; no RESEND features; CRON_SECRET still pending founder.
 - Tracker edits via Python csv only; verify 180 rows × 18 cols after every write.
+
+---
+
+# Session 51 — Builder Handoff — TSP-104 + TSP-180 + TSP-130 + TSP-131 (2026-07-12)
+
+All four rows built per the Session 51 Architect plan. One commit per row plus two follow-up fixes found during verification.
+
+## Commits
+
+- `428c89a` — **TSP-104**: DB-backed rate limiting (migration + fail-open helper + chat/export wiring + 7 tests)
+- `eb0d725` — **TSP-180**: schedule auto-completion (scheduleId deep-link → session link on start → completed on submit)
+- `b54633f` — **TSP-130**: session-flow integration tests (10 tests, stateful fake client with exact RPC-contract assertions)
+- `d249735` — **TSP-131**: admin import/review integration tests (13 tests); `b4a5051` fixture alignment (both suites)
+- `1e3f17c` — **TSP-130 follow-up, touches prod code**: submit side-effects now share ONE dynamic `import("@/lib/jobs/enqueue")` promise instead of two concurrent ones. Root cause: concurrent dynamic imports of the same specifier race vitest's mock interception — the first import got the mock, the second silently got the real module. Production behavior unchanged (both resolve the same module there); worth knowing for any future test that mocks a dynamically imported module.
+
+## Verification (Test_Portal clone @ `1e3f17c`, 2026-07-12)
+
+- `corepack pnpm typecheck` → ✅ 0 errors
+- `corepack pnpm lint` → ✅ 0 errors / 6 pre-existing warnings
+- `corepack pnpm test` → ✅ **405/405** (was 372; +33 new)
+- `corepack pnpm build` → ✅ clean; `ƒ Middleware 88.5 kB` still present
+- **DB gate**: `202607130001_rate_limit.sql` applied to live DB and verified: table exists with RLS enabled and **zero policies** (RPC-only access by design), `consume_rate_limit` is security definer, **anon cannot execute**, authenticated can, fixed-window semantics live-probed (limit 2/60s → true, true, false), probe counter deleted. Rollback: `drop function if exists public.consume_rate_limit(text, int, int); drop table if exists public.rate_limit_counters;`
+- No prod-server probe this session: rate-limit 429s need an authenticated session (unit-covered; listed for Sanity below).
+
+## Plan deviations & findings
+
+1. **`1e3f17c`** (above) — small unplanned prod-code change, behavior-neutral, one shared import instead of two.
+2. **revisitIncrement quirk** (documented in session-flow test): the declared fallback of 1 in `integerValue(formData, "revisitIncrement", 1)` is unreachable when the field is absent — `Number("") === 0` is a valid integer, so a plain save counts **0** revisits. Real clients send the field explicitly; noted in case anyone trusts the fallback.
+3. Manifest fixture rule learned: `marking.sections` question counts must sum to `marking.totalQuestions` (validated in `createManifestImportPlanFromJson`, not just zod field checks).
+4. **GitHub push fails** — `git push origin main` → "Invalid username or token". Gates were unaffected (Test_Portal's origin is the OneDrive repo), but the GitHub mirror is stale. **Founder: rotate/refresh the GitHub PAT.**
+
+## Remaining smoke (needs authenticated session — Sanity/founder)
+
+1. **Rate limit**: send 21 chat messages inside 5 minutes → 21st gets the friendly 429 error in the chat UI; wait out the window → works again. Export: 4th download within an hour → 429.
+2. **Schedule auto-complete**: create a scheduled test → Start now → complete + submit the session → item moves to History as completed without touching Done. A retest item's Start now still goes to /mistakes and stays manual.
+3. Confirm normal chat usage (a few messages) is nowhere near the 20/5min limit.
+
+## Tracker
+
+TSP-104, TSP-180, TSP-130, TSP-131 → `Review` (remarks + rollback notes). **TSP-025 → `Review`** — its blocked verification is superseded by TSP-131's import tests passing 405/405 in the clean clone. CSV verified 180 rows × 18 cols. Review queue now 30 rows; In Progress back to the 7 epics.
+
+## Recommended next
+
+Founder browser-smoke of the 30-row Review queue (Session 50's middleware-activation smoke + this session's two items above are the priority), or Architect Session 52 (candidates: TSP-161 fixed templates to unlock benchmark mode; TSP-129-adjacent M6 test rows; TSP-102 prep that doesn't need founder secrets).
