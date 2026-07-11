@@ -28,9 +28,10 @@ type StartTestProps = {
   topics: TopicOption[];
   mode: TestMode;
   initialTopicId: string | null;
+  scheduledItemId?: string | null;
 };
 
-export function StartTest({ exams, topics, mode, initialTopicId }: StartTestProps) {
+export function StartTest({ exams, topics, mode, initialTopicId, scheduledItemId }: StartTestProps) {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(startSessionAction, initialState);
   const [examId, setExamId] = useState(exams.length === 1 ? exams[0].id : "");
@@ -52,6 +53,7 @@ export function StartTest({ exams, topics, mode, initialTopicId }: StartTestProp
 
       <input name="type" type="hidden" value={mode.sessionType} />
       <input name="minQualityTier" type="hidden" value={mode.minQualityTier} />
+      {scheduledItemId ? <input name="scheduledItemId" type="hidden" value={scheduledItemId} /> : null}
 
       <label className="grid gap-2 text-sm font-medium">
         Exam

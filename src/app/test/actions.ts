@@ -114,6 +114,23 @@ export async function startSessionAction(
 
   const result = toStartSessionResult(data);
 
+  // Link the session back to a scheduled item non-fatally (TSP-180): the item
+  // auto-completes on submit via that link, but a failed link must never block
+  // the session the student just started.
+  const scheduledItemId = nullableString(formData, "scheduledItemId");
+  if (scheduledItemId && isUuid(scheduledItemId)) {
+    const { error: linkError } = await supabase
+      .from("scheduled_items")
+      .update({ session_id: result.session_id })
+      .eq("id", scheduledItemId)
+      .eq("user_id", auth.userId)
+      .eq("status", "planned");
+
+    if (linkError) {
+      console.error("[schedule] failed to link scheduled item", scheduledItemId, linkError);
+    }
+  }
+
   // Log test_start event non-fatally
   try {
     const { logEvent } = await import("@/lib/analytics/log-event");
@@ -425,6 +442,18 @@ export async function submitSessionAction(
         ).catch((e) => console.error("[plan] enqueue failed for result", resultId, e))
       );
     }
+
+    // Auto-complete any scheduled item linked to this session at start time (TSP-180).
+    sideEffects.push(
+      Promise.resolve(
+        supabase
+          .from("scheduled_items")
+          .update({ status: "completed" })
+          .eq("session_id", sessionId)
+          .eq("user_id", userId)
+          .eq("status", "planned")
+      ).then(() => {}).catch((e) => console.error("[schedule] failed to auto-complete scheduled item", e))
+    );
 
     if (sessionType === "concept_retest") {
       const retestQueueId = readRetestQueueId(sessionRow?.metadata);

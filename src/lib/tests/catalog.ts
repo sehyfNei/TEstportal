@@ -67,6 +67,7 @@ export function getTestMode(id: string | null | undefined): TestMode | null {
 export type CatalogPreselect = {
   modeId: TestModeId;
   topicId: string | null;
+  scheduleId: string | null;
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -75,13 +76,16 @@ export function parseCatalogSearchParams(
   params: Record<string, string | string[] | undefined>
 ): CatalogPreselect {
   const mode = getTestMode(singleValue(params.mode));
-  const rawTopicId = singleValue(params.topicId);
-  const topicId = rawTopicId && UUID_PATTERN.test(rawTopicId) ? rawTopicId : null;
 
   return {
     modeId: mode?.id ?? DEFAULT_MODE_ID,
-    topicId
+    topicId: uuidOrNull(singleValue(params.topicId)),
+    scheduleId: uuidOrNull(singleValue(params.scheduleId))
   };
+}
+
+function uuidOrNull(value: string | null): string | null {
+  return value && UUID_PATTERN.test(value) ? value : null;
 }
 
 function singleValue(value: string | string[] | undefined): string | null {

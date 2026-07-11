@@ -55,6 +55,7 @@ export function TestCatalog({ exams, topics, preselect }: TestCatalogProps) {
         initialTopicId={preselect.topicId}
         key={selectedMode.id}
         mode={selectedMode}
+        scheduledItemId={selectedMode.id === preselect.modeId ? preselect.scheduleId : null}
         topics={topics}
       />
     </div>

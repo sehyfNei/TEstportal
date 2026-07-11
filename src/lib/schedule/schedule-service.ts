@@ -83,8 +83,17 @@ export function resolveScheduleMode(modeId: string | null | undefined): Resolved
   };
 }
 
-/** Where "Start now" on a planned item should send the student. */
-export function startNowHref(item: { sessionType: string; topicId: string | null }): string {
+/**
+ * Where "Start now" on a planned item should send the student.
+ * Test-type items carry their own id as scheduleId so the started session links
+ * back and auto-completes the item on submit (TSP-180). The retest path can't
+ * carry it — /mistakes drives its own queue — so those stay manual.
+ */
+export function startNowHref(item: {
+  id?: string;
+  sessionType: string;
+  topicId: string | null;
+}): string {
   if (item.sessionType === "concept_retest") {
     return "/mistakes";
   }
@@ -94,7 +103,15 @@ export function startNowHref(item: { sessionType: string; topicId: string | null
     return "/tests";
   }
 
-  return item.topicId ? `/tests?mode=${mode.id}&topicId=${item.topicId}` : `/tests?mode=${mode.id}`;
+  const params = new URLSearchParams({ mode: mode.id });
+  if (item.topicId) {
+    params.set("topicId", item.topicId);
+  }
+  if (item.id) {
+    params.set("scheduleId", item.id);
+  }
+
+  return `/tests?${params.toString()}`;
 }
 
 export type ScheduledForParse = { ok: true; iso: string } | { ok: false; message: string };

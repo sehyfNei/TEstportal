@@ -70,8 +70,17 @@ describe("startNowHref", () => {
     expect(startNowHref({ sessionType: "mock", topicId: null })).toBe("/tests?mode=mock");
   });
 
-  it("sends retests to the mistake notebook and unknown types to the catalog", () => {
-    expect(startNowHref({ sessionType: "concept_retest", topicId: null })).toBe("/mistakes");
+  it("carries the item id as scheduleId so submit can auto-complete the item", () => {
+    expect(startNowHref({ id: "item-1", sessionType: "mock", topicId: null })).toBe(
+      "/tests?mode=mock&scheduleId=item-1"
+    );
+    expect(startNowHref({ id: "item-1", sessionType: "topic", topicId: "abc" })).toBe(
+      "/tests?mode=topic&topicId=abc&scheduleId=item-1"
+    );
+  });
+
+  it("sends retests to the mistake notebook without a scheduleId and unknown types to the catalog", () => {
+    expect(startNowHref({ id: "item-1", sessionType: "concept_retest", topicId: null })).toBe("/mistakes");
     expect(startNowHref({ sessionType: "custom", topicId: null })).toBe("/tests");
   });
 });

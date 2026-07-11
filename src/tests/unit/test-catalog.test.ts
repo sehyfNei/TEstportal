@@ -65,29 +65,50 @@ describe("parseCatalogSearchParams", () => {
   it("preselects a valid mode and topic", () => {
     expect(parseCatalogSearchParams({ mode: "topic", topicId: VALID_UUID })).toEqual({
       modeId: "topic",
-      topicId: VALID_UUID
+      topicId: VALID_UUID,
+      scheduleId: null
     });
   });
 
   it("falls back to the default mode for unknown modes", () => {
     expect(parseCatalogSearchParams({ mode: "benchmark" })).toEqual({
       modeId: DEFAULT_MODE_ID,
-      topicId: null
+      topicId: null,
+      scheduleId: null
     });
-    expect(parseCatalogSearchParams({})).toEqual({ modeId: DEFAULT_MODE_ID, topicId: null });
+    expect(parseCatalogSearchParams({})).toEqual({
+      modeId: DEFAULT_MODE_ID,
+      topicId: null,
+      scheduleId: null
+    });
   });
 
   it("drops malformed topic ids instead of throwing", () => {
     expect(parseCatalogSearchParams({ mode: "sectional", topicId: "not-a-uuid" })).toEqual({
       modeId: "sectional",
-      topicId: null
+      topicId: null,
+      scheduleId: null
     });
   });
 
   it("uses the first value when params repeat and ignores empty arrays", () => {
     expect(parseCatalogSearchParams({ mode: ["mock", "topic"], topicId: [] })).toEqual({
       modeId: "mock",
-      topicId: null
+      topicId: null,
+      scheduleId: null
+    });
+  });
+
+  it("carries a valid scheduleId and drops malformed ones", () => {
+    expect(parseCatalogSearchParams({ mode: "mock", scheduleId: VALID_UUID })).toEqual({
+      modeId: "mock",
+      topicId: null,
+      scheduleId: VALID_UUID
+    });
+    expect(parseCatalogSearchParams({ mode: "mock", scheduleId: "not-a-uuid" })).toEqual({
+      modeId: "mock",
+      topicId: null,
+      scheduleId: null
     });
   });
 });
