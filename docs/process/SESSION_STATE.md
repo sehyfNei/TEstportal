@@ -1,13 +1,17 @@
 # Session State
 
-**Last updated:** 2026-07-12 — Session 50: Architect plan — big slice: TSP-179 (test catalog) + TSP-083/084 (scheduling) + TSP-105 (security headers)
-**Updated by:** Claude (Architect)
+**Last updated:** 2026-07-12 — Session 50: all 4 rows BUILT + middleware-activation fix — gates green (372/372) → Review
+**Updated by:** Claude (Architect/Builder)
 
 ---
 
 ## Session 50 (2026-07-12) — Architect: first multi-story "big slice" (4 rows)
 
-**Status:** Architect plan written — ready for Builder (full architecture in HANDOFF.md)
+**Status:** Built — TSP-179/083/084/105 in Review (commits `e93b827`+`79028de`, `d0f2534`, `d22a5e5`, `df2fe82`, plus fix `983d5d4`)
+
+**Builder result (2026-07-12):** all gates green in Test_Portal @ `983d5d4` — typecheck 0 err · lint 0 err/6 pre-existing warn · **test 372/372** (+23 new) · build clean with `ƒ /schedule`, `ƒ /tests`, and `ƒ Middleware` in output. DB gate: `202607120001_scheduling.sql` applied to live DB (table + RLS + owner policy + trigger verified). Live prod-server probe: anon `/tests`, `/schedule`, `/dashboard` → **307 login redirect**; `/login` carries all six security headers, CSP Report-Only.
+
+**⚠️ Launch-critical discovery (fixed `983d5d4`):** `middleware.ts` sat at the repo root but the app dir lives in `src/` — Next never bundled it, so the auth-redirect middleware **had never run in any build**; middleware-manifest.json was empty and anon users could render /dashboard, /tests, /mistakes shells (RLS still guarded data). Session 49's 307 probe was actually `/study/chat`'s page-level redirect. Moved to `src/middleware.ts`; first build ever with `ƒ Middleware`, redirects curl-verified. **Sanity/founder: logged-in navigation smoke matters — middleware now runs for authenticated users for the first time.**
 
 **Driver:** `d9a31dd` added `docs/final/PRODUCT_VISION.md` + Phase 1 closure mandate to ROADMAP.md. This session takes the top agent-doable mandate items: #3 (student test catalog), #5 (target-date scheduling), and the founder-independent part of #6 (security headers).
 

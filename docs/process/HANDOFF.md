@@ -16034,3 +16034,56 @@ Scoped (tracker updated): app-level headers now; platform WAF deferred to TSP-10
 ## Estimate
 
 L — biggest session to date (4 rows, 1 migration, 2 student-facing pages, 1 config-wide change). If time pressure hits, **drop TSP-105 first** (lowest coupling), never split TSP-083/084.
+
+---
+
+# Session 50 — Builder Handoff — TSP-179 + TSP-083 + TSP-084 + TSP-105 (2026-07-12)
+
+All four rows built per the Session 50 Architect plan, plus one unplanned launch-critical fix discovered during verification. One commit per row.
+
+## Commits
+
+- `e93b827` — **TSP-179**: student test catalog (catalog.ts config + TestCatalog + mode-aware StartTest + reworked /tests page + 9 tests); `79028de` small test fix (narrowed-union comparison flagged by tsc in clean clone)
+- `d0f2534` — **TSP-083**: scheduled_items migration (owner RLS, derived overdue, additive-only)
+- `d22a5e5` — **TSP-084**: /schedule page + actions + pure schedule-service + nav link + 10 tests
+- `df2fe82` — **TSP-105**: security headers via src/lib/security/headers.ts + next.config.mjs → next.config.ts + 4 tests
+- `983d5d4` — **fix (unplanned)**: moved middleware.ts → src/middleware.ts — see below
+
+## Launch-critical discovery: middleware was never active
+
+The TSP-105 header probe returned 200 for anon `/tests` — investigation showed `middleware-manifest.json` was **empty in every build to date**: `middleware.ts` sat at the repo root, but Next only loads middleware from the same level as the app directory, which is `src/` here. All prior "middleware-protected" behavior was an illusion — the 307s observed in Session 49 came from `/study/chat`'s own page-level redirect. Anon users could render `/dashboard`, `/tests`, `/mistakes` shells (data still RLS-guarded). Fixed by `git mv middleware.ts src/middleware.ts`; build now shows `ƒ Middleware 88.5 kB` and anon `/tests`, `/schedule`, `/dashboard` 307 to `/login?redirectTo=…` (curl-verified). TSP-178's tracker row has an addendum.
+
+Probe-tooling note: PowerShell 5.1 `Invoke-WebRequest -MaximumRedirection 0` silently reported the followed-redirect landing page (200) — all definitive probes were redone with `curl.exe`. Also: killing a `next.CMD` wrapper PID does not kill the node child; kill the PID that owns the listening port (`Get-NetTCPConnection -LocalPort <port>`), or stale servers keep answering probes with old builds.
+
+## Plan deviations
+
+1. **next.config.mjs → next.config.ts** (plan said "wire into next.config"): .mjs can't import the TS headers module; Next 15 supports TS config natively. Build verified.
+2. **src/middleware.ts move** — unplanned fix, zero code change, but behaviorally the biggest security change of the session.
+3. Architect A.4 check result: `start_test_session` returns fewer questions when the pool is short (selectors LIMIT) and raises only on zero eligible → mock default 50q/60min kept.
+
+## Verification (Test_Portal clone @ `983d5d4`, 2026-07-12)
+
+- Targeted: test-catalog + schedule-service + security-headers → **23/23 pass**
+- `corepack pnpm typecheck` → ✅ 0 errors (re-run at final SHA)
+- `corepack pnpm lint` → ✅ 0 errors / 6 warnings (same 6 pre-existing)
+- `corepack pnpm test` → ✅ **372/372** (was 349; +23 new)
+- `corepack pnpm build` → ✅ clean; route table lists `ƒ /schedule`, `ƒ /tests`, and `ƒ Middleware 88.5 kB` (first build ever to include middleware)
+- **DB gate**: `202607120001_scheduling.sql` applied to live DB; verified live: table exists, RLS enabled, `scheduled_items_owner(ALL)` policy, `set_updated_at` trigger, `(user_id, scheduled_for)` index. Rollback: `drop table if exists public.scheduled_items;`
+- **Live prod-server probe** (`next start -p 3791`, then stopped):
+  - anon `/tests` → **307 → /login?redirectTo=%2Ftests** · anon `/schedule` → **307** · anon `/dashboard` → **307** · `/login` → 200
+  - `/login` response carries all six headers; CSP is **Report-Only**, no enforcing `Content-Security-Policy` present
+
+## Remaining smoke (needs authenticated session — Sanity/founder)
+
+1. Catalog: start one session of each mode (diagnostic / topic / sectional / mock) — topic picker filters by exam; mock with small pool starts with fewer questions rather than erroring.
+2. Schedule: create → appears in Upcoming; backdate → appears in Overdue; Start now deep-links with mode+topic preselected; Done/Cancel/Reschedule.
+3. Logged-in navigation smoke after the middleware activation — middleware now actually runs for authenticated users for the first time; watch for any redirect loop or session-refresh oddity across /dashboard, /tests, /schedule, /admin (admin user).
+4. Browser console on any page: CSP Report-Only violations are logged not enforced — note any noisy directives for the TSP-102 enforcement pass.
+
+## Tracker
+
+TSP-179, TSP-083, TSP-084, TSP-105 → `Review` (Builder Remarks + Rollback Notes populated; TSP-178 remark addendum re middleware). CSV re-verified 179 rows × 18 cols.
+
+## Recommended next
+
+Sanity pass on this slice (the middleware-activation smoke matters most), then founder browser-smoke of the now-25-row Review queue, or Architect Session 51 (candidates: TSP-130 session integration tests; auto-complete scheduled_items on submit; TSP-161 fixed templates to unlock benchmark mode in the catalog).
