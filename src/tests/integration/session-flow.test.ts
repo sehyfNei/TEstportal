@@ -307,7 +307,9 @@ describe("session flow: start → save answer → submit", () => {
       selected_answer: { choice: "A" },
       confidence: "sure",
       time_spent_sec: 30,
-      revisit_count: 1
+      // revisitIncrement defaults to 0 when the form omits it (Number("") === 0
+      // beats the declared fallback of 1), so a plain save does not count a revisit.
+      revisit_count: 0
     });
 
     const submitState = await submitSessionAction(initialState, formOf({ sessionId: SESSION_ID }));
@@ -357,7 +359,8 @@ describe("session flow: start → save answer → submit", () => {
         sessionId: SESSION_ID,
         questionId: QUESTION_ID,
         selectedAnswer: JSON.stringify({ choice: "B" }),
-        timeSpentSec: "15"
+        timeSpentSec: "15",
+        revisitIncrement: "1"
       })
     );
 
@@ -365,7 +368,7 @@ describe("session flow: start → save answer → submit", () => {
     expect(fake.tables.session_answers[0]).toMatchObject({
       selected_answer: { choice: "B" },
       time_spent_sec: 45,
-      revisit_count: 2
+      revisit_count: 1
     });
   });
 

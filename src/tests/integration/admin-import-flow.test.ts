@@ -131,7 +131,7 @@ const VALID_MANIFEST = {
     supportedQuestionTypes: ["mcq"]
   },
   marking: {
-    totalQuestions: 100,
+    totalQuestions: 25,
     durationMinutes: 60,
     marksPerCorrect: 2,
     negativeMarkingFraction: 0.25,
