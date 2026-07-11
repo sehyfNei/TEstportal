@@ -4,6 +4,18 @@ Architecture and product decisions made during implementation.
 
 ---
 
+## 2026-07-12 - Product Vision And Phase 1 Scope Lock
+
+**Decision:** Adopt `docs/final/PRODUCT_VISION.md` as the canonical strategic north star and lock Phase 1 as the Trusted Prelims Improvement Engine for one English UPSC GS Prelims pathway.
+
+**Reason:** The long-term goal is an AI-managed preparation portal, but attempting topic learning, current affairs, CSAT, motivation, payments, Mains, multilingual support, and ecosystem features before the core improvement loop is trustworthy would dilute content quality and delay validation.
+
+**Phase 1 rule:** Close deployed-runtime defects, Review-row browser checks, student test selection, trusted content inventory, simple timeline guidance, production hardening, and private-beta outcome gates before promoting Phase 2 work.
+
+**Tradeoff:** Commercial and broader study-portal features remain visible in the vision but are intentionally deferred. Phase 1 optimizes for demonstrated learning improvement and trust rather than breadth or immediate subscription revenue.
+
+---
+
 ## 2026-05-06 - Manual Scaffold Instead Of Generator
 
 **Decision:** Create the app scaffold manually instead of using `create-next-app`.

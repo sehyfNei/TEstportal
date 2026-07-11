@@ -6,13 +6,15 @@ Production-ready modular test series and self-study portal for competitive exams
 
 For any new agent or session:
 
-1. `docs/process/HANDOFF.md`
-2. `docs/process/AGENT_WORKFLOW.md`
-3. `docs/process/SESSION_STATE.md`
-4. `trackers/JIRA_TRACKER.csv`
+1. `docs/final/PRODUCT_VISION.md`
+2. `docs/process/HANDOFF.md`
+3. `docs/process/AGENT_WORKFLOW.md`
+4. `docs/process/SESSION_STATE.md`
+5. `trackers/JIRA_TRACKER.csv`
 
 ## Source Of Truth
 
+- Product vision and phase boundaries: `docs/final/PRODUCT_VISION.md`
 - Product requirements: `docs/final/FINAL_PRD.md`
 - Technical requirements: `docs/final/FINAL_TRD.md`
 - Task tracker: `trackers/JIRA_TRACKER.csv`
