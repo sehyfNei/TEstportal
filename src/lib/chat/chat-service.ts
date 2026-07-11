@@ -7,6 +7,15 @@ import type { ContextPayload } from "@/lib/chat/context-injector";
 
 export const CHAT_HISTORY_LIMIT = 10;
 export const CHAT_PROMPT_VERSION = "chat@1.0.0";
+// Keep in sync with the composer maxLength in chat-view.tsx (client bundle
+// must not import this server module).
+export const MAX_CHAT_MESSAGE_CHARS = 4000;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type ChatRequestValidation =
+  | { ok: true; sessionId: string | null; examId: string | null; message: string }
+  | { ok: false; error: "empty_message" | "message_too_long" | "invalid_id" };
 
 export type UsageCapResult = {
   allowed: boolean;
@@ -41,6 +50,44 @@ type ChatMessageRow = {
 export async function checkDailyUsageCap(_userId: string): Promise<UsageCapResult> {
   // TODO Standing Decision #4: replace this stub with the founder-approved per-user/day cap.
   return { allowed: true };
+}
+
+export function validateChatRequestBody(body: unknown): ChatRequestValidation {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: "empty_message" };
+  }
+
+  const record = body as { sessionId?: unknown; examId?: unknown; message?: unknown };
+  const message = typeof record.message === "string" ? record.message.trim() : "";
+  if (!message) {
+    return { ok: false, error: "empty_message" };
+  }
+  if (message.length > MAX_CHAT_MESSAGE_CHARS) {
+    return { ok: false, error: "message_too_long" };
+  }
+
+  const sessionId = readOptionalUuid(record.sessionId);
+  const examId = readOptionalUuid(record.examId);
+  if (!sessionId.ok || !examId.ok) {
+    return { ok: false, error: "invalid_id" };
+  }
+
+  return { ok: true, sessionId: sessionId.id, examId: examId.id, message };
+}
+
+function readOptionalUuid(value: unknown): { ok: true; id: string | null } | { ok: false } {
+  // Non-strings (absent, null, wrong JSON type) degrade to "not provided";
+  // only a present-but-malformed string id is rejected.
+  if (typeof value !== "string") {
+    return { ok: true, id: null };
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: true, id: null };
+  }
+
+  return UUID_PATTERN.test(trimmed) ? { ok: true, id: trimmed } : { ok: false };
 }
 
 export function buildSystemMessage(payload: ContextPayload): AiMessage {

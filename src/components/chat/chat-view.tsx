@@ -32,8 +32,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   unauthenticated: "Session expired. Please sign in again.",
   request_failed: "Something went wrong. Please try again.",
   network_error: "Network error. Check your connection and try again.",
-  no_stream: "AI response could not be streamed. Please try again."
+  no_stream: "AI response could not be streamed. Please try again.",
+  message_too_long: "Message is too long. Keep it under 4000 characters.",
+  invalid_id: "This chat session could not be used. Start a new chat and try again."
 };
+
+// Mirrors MAX_CHAT_MESSAGE_CHARS in lib/chat/chat-service.ts (server-only module).
+const MAX_MESSAGE_CHARS = 4000;
 
 export function ChatView({
   exams,
@@ -232,6 +237,7 @@ export function ChatView({
           ref={textareaRef}
           className="min-h-12 flex-1 resize-none rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isStreaming || hasNoExams}
+          maxLength={MAX_MESSAGE_CHARS}
           placeholder={placeholderText({ hasNoExams, needsExam })}
           rows={1}
           style={{ maxHeight: 200 }}

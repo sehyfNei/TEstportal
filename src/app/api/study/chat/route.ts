@@ -10,6 +10,7 @@ import {
   getRecentMessages,
   insertMessage,
   loadSessionContextSnapshot,
+  validateChatRequestBody,
   writeChatCostLedger
 } from "@/lib/chat/chat-service";
 import { assembleContext, type ContextPayload } from "@/lib/chat/context-injector";
@@ -18,12 +19,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
-
-type ChatRequestBody = {
-  sessionId?: unknown;
-  examId?: unknown;
-  message?: unknown;
-};
 
 const EMPTY_CONTEXT: ContextPayload = {
   examName: null,
@@ -46,12 +41,12 @@ export async function POST(request: NextRequest): Promise<Response> {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const parsedBody = await parseChatRequest(request);
-    if (!parsedBody.ok) {
-      return Response.json({ error: parsedBody.error }, { status: 400 });
+    const validation = validateChatRequestBody(await request.json().catch(() => null));
+    if (!validation.ok) {
+      return Response.json({ error: validation.error }, { status: 400 });
     }
 
-    const { sessionId, examId, message } = parsedBody;
+    const { sessionId, examId, message } = validation;
     const cap = await checkDailyUsageCap(user.id);
     if (!cap.allowed) {
       return Response.json(
@@ -141,41 +136,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     console.error("[study/chat] request failed", error);
     return Response.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
-
-async function parseChatRequest(
-  request: NextRequest
-): Promise<
-  | { ok: true; sessionId: string | null; examId: string | null; message: string }
-  | { ok: false; error: string }
-> {
-  let body: ChatRequestBody;
-  try {
-    body = (await request.json()) as ChatRequestBody;
-  } catch {
-    return { ok: false, error: "Bad request" };
-  }
-
-  const message = typeof body.message === "string" ? body.message.trim() : "";
-  if (!message) {
-    return { ok: false, error: "Empty message" };
-  }
-
-  return {
-    ok: true,
-    sessionId: readOptionalString(body.sessionId),
-    examId: readOptionalString(body.examId),
-    message
-  };
-}
-
-function readOptionalString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
 }
 
 function ensureCurrentUserMessage(messages: AiMessage[], message: string): AiMessage[] {
