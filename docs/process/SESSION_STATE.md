@@ -1,13 +1,15 @@
 # Session State
 
-**Last updated:** 2026-07-12 — Session 49: Architect plan for TSP-177 (job-runner production trigger) + TSP-178 (chat guardrails); tracker repaired
-**Updated by:** Claude (Architect)
+**Last updated:** 2026-07-12 — Session 49: TSP-177 + TSP-178 built and verified — all 4 gates green (349/349) → Review
+**Updated by:** Claude (Architect/Builder)
 
 ---
 
 ## Session 49 (2026-07-12) — Architect: TSP-177 + TSP-178 (audit-driven hardening)
 
-**Status:** Architect plan written to HANDOFF.md — ready for Builder
+**Status:** Built — TSP-177 + TSP-178 in Review (commits `30e2019`, `5bc3b0d`)
+
+**Builder result (2026-07-12):** gates green in Test_Portal @ `5bc3b0d` — typecheck 0 err · lint 0 err/6 pre-existing warn · **test 349/349** (+14 new) · build clean (`/api/jobs/run` + `/study/chat` in route table). Live prod-server probe: anon `/study/chat` → 307 login redirect (middleware fix confirmed); anon chat POST → 401. Remaining smoke needs an authenticated session: >4000-char POST → 400; submit → analysis resolves with no manual runner curl. **Founder action: set `CRON_SECRET` in Vercel env.**
 
 **Audit findings that drove this session (full-project readiness review, 2026-07-12):**
 - All 4 gates re-verified GREEN at `f866eb9` in Test_Portal (typecheck 0 err · lint 0 err/6 warn · **test 335/335** · build clean). Test_Portal was synced 086208b → f866eb9 (stale untracked Session-48 test-file copies removed first).

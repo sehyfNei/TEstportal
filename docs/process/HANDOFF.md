@@ -15901,3 +15901,47 @@ App Build Gate (route/config changes) in the off-OneDrive clone per AGENT_WORKFL
 
 TSP-177: `Backlog/Unassigned` → `Review/Claude (Builder)`
 TSP-178: `Backlog/Unassigned` → `Review/Claude (Builder)`
+
+---
+
+# Session 49 — Builder Handoff — TSP-177 + TSP-178 (2026-07-12)
+
+Implemented both rows exactly per the Session 49 Architect plan. Two clean commits matching the plan's slice split, plus this chore commit.
+
+## Commits
+
+- `30e2019` — **TSP-177**: after() side-effects + post-submit kick + cron sweeper (5 files: `vercel.json` new, `src/lib/jobs/kick.ts` new, `src/tests/unit/job-kick.test.ts` new, `src/app/test/actions.ts` edit, `.env.example` edit)
+- `5bc3b0d` — **TSP-178**: chat guardrails (5 files: `src/tests/unit/chat-validate.test.ts` new, `src/lib/chat/chat-service.ts`, `src/app/api/study/chat/route.ts`, `middleware.ts`, `src/components/chat/chat-view.tsx` edits)
+
+## Deviations from plan
+
+None material. Two judgment calls within plan latitude:
+1. `chat-view.tsx` does not import from chat-service (server-only module — plan anticipated this); mirrors the cap as local `MAX_MESSAGE_CHARS = 4000` with a sync comment, and adds `message_too_long`/`invalid_id` client error strings so the new 400 reasons render properly.
+2. `kickJobRunnerNonFatal(limit, deps)` exports `DEFAULT_KICK_LIMIT = 3` so the default is asserted in tests rather than hardcoded twice.
+
+## Verification (Test_Portal clone @ `5bc3b0d`, 2026-07-12)
+
+- Targeted: `vitest run job-kick.test.ts chat-validate.test.ts` → **14/14 pass**
+- `corepack pnpm typecheck` → ✅ 0 errors
+- `corepack pnpm lint` → ✅ 0 errors / 6 warnings (same 6 pre-existing; `_userId` stub warning now at chat-service.ts:50)
+- `corepack pnpm test` → ✅ **349/349** (was 335; +14 new)
+- `corepack pnpm build` → ✅ compiled clean; route table lists `ƒ /api/jobs/run` and `ƒ /study/chat`
+- **Live prod-server probe** (`next start -p 3789` in Test_Portal, then stopped):
+  - anon `GET /study/chat` → **307 → /login?redirectTo=%2Fstudy%2Fchat** (middleware fix confirmed end-to-end)
+  - anon `GET /login` → 200
+  - anon `POST /api/study/chat` → **401** (route guard unchanged)
+- OneDrive-workspace vitest exited 0 with no output (known quirk) — all evidence above is from the Test_Portal clone per AGENT_WORKFLOW §8.
+
+## Remaining smoke (needs authenticated session — Sanity/founder)
+
+1. Logged-in `POST /api/study/chat` with a >4000-char message → 400 `message_too_long`; composer blocks typing past 4000.
+2. Submit a test on a Vercel-like runtime → analysis/plan panels resolve without any manual `/api/jobs/run` curl.
+3. **Founder action:** set `CRON_SECRET` in Vercel env vars (cron sweeper is inert without it; post-submit kick works regardless once `SUPABASE_SERVICE_ROLE_KEY` is present).
+
+## Tracker
+
+TSP-177 → `Review` · TSP-178 → `Review` (Builder Remarks populated on both; CSV re-verified 178 rows × 18 cols)
+
+## Recommended next
+
+Sanity pass on this slice, then either the founder browser-smoke session for the 21 Review rows, or Architect Session 50 (candidates: TSP-130 session integration tests, or converting inline mastery/mistake side-effects to queue jobs now that the runner path is proven).
