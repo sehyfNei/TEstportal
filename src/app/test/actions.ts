@@ -400,6 +400,10 @@ export async function submitSessionAction(
     const resultId = result.resultId;
     const userId = auth.userId;
 
+    // Load the enqueue module once and share the promise: concurrent dynamic
+    // imports of the same specifier can race module interception under test.
+    const enqueueModule = import("@/lib/jobs/enqueue");
+
     const sideEffects: Promise<unknown>[] = [
       import("@/lib/analytics/log-event").then(({ logEvent }) =>
         logEvent(supabase, {
@@ -420,7 +424,7 @@ export async function submitSessionAction(
       updateRetestQueueJob(resultId, supabase)
         .catch((e) => console.error("[retest] update failed for result", resultId, e)),
 
-      import("@/lib/jobs/enqueue").then(({ enqueueJob, generateIdempotencyKey }) =>
+      enqueueModule.then(({ enqueueJob, generateIdempotencyKey }) =>
         enqueueJob(
           supabase,
           "generate_analysis",
@@ -432,7 +436,7 @@ export async function submitSessionAction(
 
     if (sessionType === "diagnostic" && isUuid(sessionExamId)) {
       sideEffects.push(
-        import("@/lib/jobs/enqueue").then(({ enqueueJob, generateIdempotencyKey }) =>
+        enqueueModule.then(({ enqueueJob, generateIdempotencyKey }) =>
           enqueueJob(
             supabase,
             "generate_improvement_plan",
