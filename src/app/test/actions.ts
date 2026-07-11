@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import { createMistakeItemsJob } from "@/lib/jobs/handlers/create-mistake-items";
 import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
@@ -440,8 +441,13 @@ export async function submitSessionAction(
       }
     }
 
-    // Don't await — let side-effects run after response is sent
-    void Promise.all(sideEffects);
+    // after() keeps the invocation alive past the response; a bare un-awaited
+    // Promise.all gets frozen by serverless runtimes once the response is sent.
+    after(async () => {
+      await Promise.all(sideEffects);
+      const { kickJobRunnerNonFatal } = await import("@/lib/jobs/kick");
+      await kickJobRunnerNonFatal();
+    });
   }
 
   return {
