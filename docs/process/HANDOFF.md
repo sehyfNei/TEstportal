@@ -15726,3 +15726,178 @@ corepack pnpm build       # clean
 
 TSP-134: `Backlog/Unassigned` → `Review/Claude (Builder)`
 TSP-129: `Backlog/Unassigned` → `Review/Claude (Builder)`
+
+---
+
+# Session 49 — Architect Plan: TSP-177 Job-Runner Production Trigger + TSP-178 Chat Guardrails (2026-07-12)
+
+## Context
+
+A full-project architecture audit (2026-07-12) confirmed all 4 gates green at HEAD (`f866eb9`: typecheck 0 err, lint 0 err/6 warn, test 335/335, build clean) and live DB current through `202606180001_chat_schema.sql`. It also surfaced two launch-critical defects that no existing tracker row covers. Both are small, fully buildable now, and require no credentials or founder decisions:
+
+- **TSP-177 (Critical, M5):** Enqueued AI jobs never run in production. `/api/jobs/run` requires `CRON_SECRET` but nothing invokes it — no `vercel.json` cron, and `submitSessionAction` doesn't kick the runner. Worse, submit fires its post-score side-effects with `void Promise.all(sideEffects)` (src/app/test/actions.ts ~line 444); Vercel serverless freezes un-awaited work when the response returns, so mastery/mistakes/retest/enqueue writes can be silently lost. The analysis/plan panels poll for 60s then show failure.
+- **TSP-178 (Critical, M5):** The chat Route Handler validates only "message is non-empty" — a single request can carry an unbounded prompt straight into Groq token spend. `sessionId`/`examId` reach queries as unvalidated strings. And `middleware.ts` `protectedPrefixes` predates `/study`, so anonymous users can render the chat page shell. (The route itself returns 401 — this is defense-in-depth + UX, not a data leak.)
+
+Tracker hygiene done this session (Architect): repaired 3 malformed rows — TSP-169 (19 cells, empty cell inserted at Agent S Comments), TSP-170 (19 cells, Agent S comment split across two cells), TSP-020 (17 cells, missing Rollback Notes) — all now well-formed 18-column rows; full file verified 178 rows x 18 cols. Added rows TSP-177 and TSP-178.
+
+## Milestone
+
+**M5 — AI & Workers** (both). TSP-177 hardens the worker layer that M4/M5 features already depend on; TSP-178 is the decision-independent half of the Phase B pre-launch guardrails (Standing Decision #4's daily cost cap remains founder-blocked and is explicitly out of scope).
+
+## Scope
+
+**In (TSP-177):**
+- `src/lib/jobs/kick.ts` (new) — `kickJobRunnerNonFatal(limit)` helper
+- `src/app/test/actions.ts` — wrap side-effects in `after()`, chain runner kick
+- `vercel.json` (new) — daily cron sweeper
+- `.env.example` — add `CRON_SECRET`
+- `src/tests/unit/job-kick.test.ts` (new)
+
+**In (TSP-178):**
+- `src/lib/chat/chat-service.ts` — `MAX_CHAT_MESSAGE_CHARS`, pure `validateChatRequestBody()`
+- `src/app/api/study/chat/route.ts` — use the validator; new 400 reasons
+- `middleware.ts` — add `/study` to `protectedPrefixes`
+- `src/components/chat/chat-view.tsx` — `maxLength` on composer textarea
+- `src/tests/unit/chat-validate.test.ts` (new)
+
+**Out:** `checkDailyUsageCap` implementation (founder Standing Decision #4), rate limiting (TSP-104), any migration, any RPC change, converting inline mastery/mistake jobs to the queue (follow-up candidate once TSP-177 proves the runner path).
+
+## Architectural Decisions
+
+### A. TSP-177 — `after()` from `next/server`, not fire-and-forget fetch
+Next 15 (`^15.3.1`, installed 15.5.15) ships stable `after()`: callbacks run after the response streams, inside the same invocation, and Vercel keeps the function alive for them. This fixes the frozen-promise bug *and* gives a natural place to run jobs — no self-HTTP call, no extra secret handling, no cold start. A fire-and-forget `fetch` to `/api/jobs/run` was rejected: it reintroduces the exact frozen-promise problem it tries to solve.
+
+### B. TSP-177 — kick the runner directly with the admin client, limit 3
+After the side-effects settle (which is when the 1–2 AI jobs exist), call `runPendingJobs(createAdminClient(), workerId, 3)` guarded by `hasAdminConfig()`. Limit 3: covers this submit's analysis + plan jobs plus at most one stale retry, without risking the serverless time budget. `claim_pending_jobs` uses `FOR UPDATE SKIP LOCKED`, so concurrent submits racing the same queue is already safe — that's the mechanism working as designed, not a new risk.
+
+### C. TSP-177 — daily Vercel cron as sweeper, not primary trigger
+`vercel.json` cron `0 3 * * *` → `GET /api/jobs/run?limit=25`. Vercel automatically sends `Authorization: Bearer $CRON_SECRET` when the `CRON_SECRET` env var exists — which is exactly the check the route already performs; zero route changes. Daily-only because Hobby plan crons are once/day; the post-submit kick is the real-time path, the cron only drains backoff retries and stragglers. Document in remarks: if the project moves to Pro, tighten to `*/5 * * * *`.
+
+### D. TSP-177 — helper is non-fatal and unit-testable
+`kickJobRunnerNonFatal` swallows and logs every error (a runner failure must never break a submit response) and takes optional injected deps (`hasConfig`, `createClient`, `run`) following the existing `RunnerStore`/`LedgerWriter` DI pattern, so tests need no Supabase mocks.
+
+### E. TSP-178 — validation is a pure function in chat-service, not inline route code
+`parseChatRequest` currently lives inline in the Route Handler where it can't be unit-tested without mocking `createClient`. Move the body-shape logic to `validateChatRequestBody(body: unknown)` in `chat-service.ts` (pattern: `readContextPayload` in the same file), returning a discriminated union `{ ok: true, sessionId, examId, message } | { ok: false, error: "empty_message" | "message_too_long" | "invalid_id" }`. Route maps `ok:false` → 400 with the reason string.
+
+### F. TSP-178 — cap at 4000 chars; UUID-shape check on ids
+`MAX_CHAT_MESSAGE_CHARS = 4000` (~1000 tokens by the existing `estimateTokenCount` heuristic — generous for a study question, small against the 4096 output ceiling and context budget). UUID check: same regex shape as the three existing local `isUuid` helpers (dashboard/mistakes/test actions) — declare it locally in chat-service; consolidating the four copies into a shared util is a future simplification pass, not this slice.
+
+### G. TSP-178 — middleware prefix only; no page-level guard duplication
+`/study` added to `protectedPrefixes` gives redirect-to-login parity with `/dashboard` etc. The Route Handler keeps its own 401 (defense in depth). No changes to the page component.
+
+## Files to Create/Edit
+
+| Row | Action | Path |
+|---|---|---|
+| 177 | Create | `vercel.json` |
+| 177 | Create | `src/lib/jobs/kick.ts` |
+| 177 | Create | `src/tests/unit/job-kick.test.ts` |
+| 177 | Edit | `src/app/test/actions.ts` (side-effect block only, ~lines 379–445) |
+| 177 | Edit | `.env.example` (add `CRON_SECRET` with comment) |
+| 178 | Edit | `src/lib/chat/chat-service.ts` (add constant + validator; no existing fn changes) |
+| 178 | Edit | `src/app/api/study/chat/route.ts` (swap parse; keep everything else) |
+| 178 | Edit | `middleware.ts` (one array entry) |
+| 178 | Edit | `src/components/chat/chat-view.tsx` (`maxLength` on textarea) |
+| 178 | Create | `src/tests/unit/chat-validate.test.ts` |
+
+## Per-File Implementation Notes
+
+### `vercel.json` (new)
+```json
+{
+  "crons": [{ "path": "/api/jobs/run?limit=25", "schedule": "0 3 * * *" }]
+}
+```
+Nothing else — do not add build config that could fight the Vercel dashboard settings.
+
+### `src/lib/jobs/kick.ts` (new)
+```ts
+import { runPendingJobs } from "@/lib/jobs/runner";
+
+type KickDeps = {
+  hasConfig?: () => boolean;
+  createClient?: () => Parameters<typeof runPendingJobs>[0];
+  run?: typeof runPendingJobs;
+};
+
+export async function kickJobRunnerNonFatal(limit = 3, deps: KickDeps = {}): Promise<void>
+```
+- Dynamic-import `@/lib/supabase/admin` for the defaults (mirrors the lazy-import style already used in the submit side-effects block) so test mocks stay trivial and the admin client never loads in no-config scaffold mode.
+- Worker id: `post-submit-` + 8 random hex chars, unique per invocation.
+- Guard: if `!hasConfig()` → return silently. All thrown errors caught and logged `[job_kick]`; never rethrow.
+
+### `src/app/test/actions.ts`
+- `import { after } from "next/server";`
+- Replace `void Promise.all(sideEffects);` with:
+```ts
+after(async () => {
+  await Promise.all(sideEffects);
+  const { kickJobRunnerNonFatal } = await import("@/lib/jobs/kick");
+  await kickJobRunnerNonFatal(3);
+});
+```
+- The side-effect promise array construction is untouched — `after()` receives already-created promises plus the kick. `after()` is legal in Server Actions and must be called before the action returns.
+- **Do not touch anything else in this 858-line file.** The pipeline-extraction refactor is a separate future row.
+
+### `.env.example`
+```
+# Shared secret for the background job runner endpoint (/api/jobs/run).
+# Vercel Cron sends it automatically as Authorization: Bearer <value> when set.
+CRON_SECRET=
+```
+
+### `src/tests/unit/job-kick.test.ts` (new, ~6 tests)
+1. no config → `run` never called, resolves void
+2. config ok → `run` called with client, worker id starts with `post-submit-`, limit 3
+3. custom limit forwarded
+4. `run` throws → resolves without throwing, `console.error` called
+5. `createClient` throws → resolves without throwing
+6. default limit is 3
+
+### `src/lib/chat/chat-service.ts`
+- `export const MAX_CHAT_MESSAGE_CHARS = 4000;`
+- `export type ChatRequestValidation = { ok: true; sessionId: string | null; examId: string | null; message: string } | { ok: false; error: "empty_message" | "message_too_long" | "invalid_id" };`
+- `export function validateChatRequestBody(body: unknown): ChatRequestValidation` — narrow `unknown` exactly like `readContextPayload` does; trim message; length check **after** trim; optional ids must match UUID regex or be absent/empty (empty → null, malformed → `invalid_id`).
+
+### `src/app/api/study/chat/route.ts`
+- Delete local `parseChatRequest` + `readOptionalString` + `ChatRequestBody`; call `validateChatRequestBody(await request.json().catch(() => null))`.
+- `ok:false` → `Response.json({ error: validation.error }, { status: 400 })`.
+
+### `middleware.ts`
+- `protectedPrefixes` gains `"/study"` (append after `/mistakes`, matching existing order style).
+
+### `src/components/chat/chat-view.tsx`
+- `maxLength={4000}` on the composer `<textarea>`; import the constant only if the client bundle already imports from chat-service — otherwise hardcode with a comment referencing `MAX_CHAT_MESSAGE_CHARS` (client bundle must not pull server-only modules; check imports before deciding).
+
+### `src/tests/unit/chat-validate.test.ts` (new, ~8 tests)
+valid full body · message-only · empty message · whitespace-only · 4001 chars → too_long · exactly 4000 → ok · malformed sessionId → invalid_id · non-string message/ids → empty/null handling
+
+## What to Reuse (do not duplicate)
+- `runPendingJobs`, `createSupabaseRunnerStore` (`src/lib/jobs/runner.ts`) — the kick helper orchestrates, never reimplements claiming.
+- `createAdminClient`/`hasAdminConfig` (`src/lib/supabase/admin.ts`).
+- `readContextPayload` narrowing style in chat-service for the validator.
+- Existing 401/403/429/503 handling in the chat route — only the 400 path changes.
+
+## Out of Scope (Builder must NOT touch)
+- `checkDailyUsageCap` stub (founder Standing Decision #4)
+- `claim_pending_jobs`/`finalize_job` RPCs, any migration
+- Moving mastery/mistake/retest inline jobs onto the queue
+- The `HANDLERS` registry (no new job types)
+- Rate limiting (TSP-104), security headers (TSP-105)
+
+## Verification Gates
+
+App Build Gate (route/config changes) in the off-OneDrive clone per AGENT_WORKFLOW §8:
+1. `corepack pnpm exec vitest run src/tests/unit/job-kick.test.ts src/tests/unit/chat-validate.test.ts`
+2. `corepack pnpm typecheck` · `corepack pnpm lint` · `corepack pnpm test` (expect 335 + ~14 new) · `corepack pnpm build` (route table must still list `/api/jobs/run` and `/study/chat`)
+3. Manual probe (founder or Sanity, needs running server): submit a test → analysis panel resolves without any manual `/api/jobs/run` curl; `POST /api/study/chat` with 5000-char message → 400 `message_too_long`; anonymous `/study/chat` → redirect to `/login`.
+
+## Risks
+- `after()` requires the Next runtime to support it in Server Actions — 15.5.15 does; if the build errors, fall back to `unstable_after` and note it in remarks.
+- The post-submit kick runs AI jobs inside the submit invocation's post-response window; Vercel Hobby caps function duration (default 10s, raisable to 60). If Groq latency makes jobs exceed it, jobs fail mid-flight and the daily sweeper + backoff recovers them — acceptable, but Builder should note observed latency in remarks.
+- Two sessions submitting concurrently both kick the runner — safe by SKIP LOCKED; worker ids are unique per invocation.
+
+## Tracker update (after builder completes and gates pass)
+
+TSP-177: `Backlog/Unassigned` → `Review/Claude (Builder)`
+TSP-178: `Backlog/Unassigned` → `Review/Claude (Builder)`

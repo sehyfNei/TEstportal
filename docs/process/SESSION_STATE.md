@@ -1,7 +1,32 @@
 # Session State
 
-**Last updated:** 2026-06-18 — Session 42: TSP-020 + TSP-168 built; all 4 gates green
-**Updated by:** Claude (Architect/Builder)
+**Last updated:** 2026-07-12 — Session 49: Architect plan for TSP-177 (job-runner production trigger) + TSP-178 (chat guardrails); tracker repaired
+**Updated by:** Claude (Architect)
+
+---
+
+## Session 49 (2026-07-12) — Architect: TSP-177 + TSP-178 (audit-driven hardening)
+
+**Status:** Architect plan written to HANDOFF.md — ready for Builder
+
+**Audit findings that drove this session (full-project readiness review, 2026-07-12):**
+- All 4 gates re-verified GREEN at `f866eb9` in Test_Portal (typecheck 0 err · lint 0 err/6 warn · **test 335/335** · build clean). Test_Portal was synced 086208b → f866eb9 (stale untracked Session-48 test-file copies removed first).
+- Live DB probe (read-only): `chat_sessions`/`chat_messages` exist and `mastery_records` unique constraints are applied — the Session 42 "founder must run migrations" item is already done. All 32 migrations live.
+- **Launch-critical defect:** nothing triggers `/api/jobs/run` in production (no vercel.json cron, no post-submit kick), and `submitSessionAction` fires side-effects with `void Promise.all` which Vercel serverless freezes after response → enqueued AI analysis/plan jobs would sit pending forever. → **TSP-177** (new).
+- **Chat pre-launch gap:** no message length cap (unbounded Groq spend per request), unvalidated sessionId/examId, `/study` missing from middleware protectedPrefixes. Decision-independent of Standing Decision #4. → **TSP-178** (new).
+
+**Session 49 plan (see HANDOFF.md for full architecture):**
+- **TSP-177:** wrap submit side-effects in Next 15 `after()`, add non-fatal `kickJobRunnerNonFatal` helper (`src/lib/jobs/kick.ts`, DI pattern) running `runPendingJobs(adminClient, …, 3)` post-response, `vercel.json` daily cron sweeper (`0 3 * * *`, Hobby-compatible; Vercel sends `Bearer $CRON_SECRET` automatically — route already checks it), `CRON_SECRET` in `.env.example`, ~6 unit tests.
+- **TSP-178:** pure `validateChatRequestBody` in chat-service (`MAX_CHAT_MESSAGE_CHARS = 4000`, UUID-shape id checks) → route returns 400 `message_too_long`/`invalid_id`; `/study` added to middleware; `maxLength` on composer textarea; ~8 unit tests.
+
+**Tracker hygiene (Architect, this session):**
+- Repaired 3 malformed rows: TSP-169 (19 cells — empty cell inserted at Agent S Comments), TSP-170 (19 cells — Agent S comment split across two cells), TSP-020 (17 cells — missing Rollback Notes). Milestones restored to the Milestone column. Full file now 178 rows × 18 columns, verified.
+- Added TSP-177 + TSP-178 (both Critical, M5 AI&Workers, Backlog).
+
+**Pending (founder action, unchanged):**
+- Browser smoke for the 19 Review rows (checklist in earlier sessions) — biggest queue blocker.
+- Standing Decision #4 (per-user/day chat cost cap) before chat goes live — TSP-178 covers the decision-independent guardrails only.
+- `RESEND_API_KEY` for the M4 retention track.
 
 ---
 
@@ -517,6 +542,8 @@ Done today:
   - `student@example.com` — plain, confirmed.
 - **Anon key fix:** `NEXT_PUBLIC_SUPABASE_ANON_KEY` had the wrong project ref (`iwzb…` vs `iwzerb…`) → "Invalid API key" on login; founder replaced it with the correct anon/public key.
 - **Repo cloned OFF OneDrive** to `C:\Users\Rakesh\Documents\Test_Portal`; dev server runs there. The OneDrive copy (`…\OneDrive\Documents\Business\TEST`) stays the **canonical git repo + Builder/Architect workspace**. Test_Portal's git `origin` = the OneDrive repo; sync via `git pull` (commit in OneDrive first — pull only moves committed work). OneDrive Files-On-Demand was the root cause of the dev-server `errno -4094`.
+- **2026-07-05 smoke-runner update:** If `C:\Users\Rakesh\Documents\Test_Portal` or another helper clone is dirty and blocks `git pull`, do not stash/reset/force it unless the user explicitly asks. Create a fresh local smoke clone from the committed OneDrive repo, for example `C:\Users\Rakesh\Documents\Test_Portal_Smoke`, install with `corepack pnpm install --offline --frozen-lockfile`, then run gates and route probes there. Use `node_modules\.bin\next.CMD start -p 3000` plus `http://127.0.0.1:3000/...` probes when `next dev` or `localhost` are unreliable. Record commit SHA, clone path, route status, and server PID in `HANDOFF.md`.
+- **Do not use `C:\Users\Rakesh\Videos\TEST` as a trusted TEST gate clone** unless it is explicitly repaired first; as of 2026-07-05 it was dirty, had no upstream configured for `master`, and pointed at a HuggingFace Space remote rather than the normal TEST workflow.
 - Fixed a `"use server"` runtime error (illegal object exports in `src/app/test/actions.ts`) — committed.
 - **Seeded 18 live demo MCQs** (1 per UPSC topic) via `scripts/seed-demo-questions.js` so tests/flagging have content.
 - **TSP-028 Sanity: PASS** with blocking fix **S33-A** (ON CONFLICT arbiter predicate didn't match the partial index → would throw on every flag). Fixed in migration + re-applied live. Commit `ca7e92c`.
@@ -541,6 +568,7 @@ Done today:
 Still parked (need external inputs):
 
 - **Repair pnpm install** — the OneDrive copy still has broken top-level symlinks; the off-OneDrive Test_Portal clone got a clean `pnpm install`. Prefer Test_Portal for running.
+- **Smoke clone fallback** — if Test_Portal is dirty, prefer a fresh clone such as `C:\Users\Rakesh\Documents\Test_Portal_Smoke` over pulling into or resetting the dirty helper clone.
 - **TSP-019, TSP-024, TSP-025, TSP-026, TSP-090, TSP-040, TSP-043–049, TSP-029, TSP-030, TSP-031, TSP-036, TSP-037, TSP-038, TSP-061, TSP-028 → Done** — admin + student users now EXIST and content is seeded; these just await the manual browser-smoke pass (checklist above).
 - **TSP-068 AI analysis user-facing release** - needs founder guardrails and per-user cost-cap decision.
 - **TSP-085 reminders** â€” blocked on `RESEND_API_KEY`.
