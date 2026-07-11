@@ -1,4 +1,5 @@
 import { exportUserData } from "@/lib/profile/export-service";
+import { EXPORT_RATE_LIMIT, checkRateLimit } from "@/lib/security/rate-limit";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -15,6 +16,14 @@ export async function GET() {
 
   if (authError || !user) {
     return Response.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const rateLimit = await checkRateLimit(supabase, EXPORT_RATE_LIMIT, user.id);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: "Too many export requests. Please try again in an hour." },
+      { status: 429 }
+    );
   }
 
   try {

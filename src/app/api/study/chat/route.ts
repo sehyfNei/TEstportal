@@ -15,6 +15,7 @@ import {
 } from "@/lib/chat/chat-service";
 import { assembleContext, type ContextPayload } from "@/lib/chat/context-injector";
 import { getAiConsent } from "@/lib/profile/profile-service";
+import { CHAT_RATE_LIMIT, checkRateLimit } from "@/lib/security/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -47,6 +48,14 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     const { sessionId, examId, message } = validation;
+    const rateLimit = await checkRateLimit(supabase, CHAT_RATE_LIMIT, user.id);
+    if (!rateLimit.allowed) {
+      return Response.json(
+        { error: "Too many requests. Please wait a few minutes and try again." },
+        { status: 429 }
+      );
+    }
+
     const cap = await checkDailyUsageCap(user.id);
     if (!cap.allowed) {
       return Response.json(
