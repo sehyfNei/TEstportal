@@ -11,7 +11,11 @@ export const OPS_THRESHOLDS = {
   failedJobsAmber: 1,
   failedJobsRed: 3,
   aiSpendAmberUsd: 5,
-  aiSpendRedUsd: 15
+  aiSpendRedUsd: 15,
+  // Monthly LLM budget (TSP-142). Retune here when the founder sets a real
+  // budget; the dashboard and tests follow automatically.
+  aiBudgetMonthAmberUsd: 30,
+  aiBudgetMonthRedUsd: 60
 } as const;
 
 // Pure: metrics in, alerts out. No I/O and no clock — ages are precomputed
@@ -55,6 +59,20 @@ export function evaluateOpsAlerts(metrics: OpsMetrics): OpsAlert[] {
       id: "ai-spend",
       severity: "amber",
       message: `AI spend $${metrics.aiSpend24hUsd.toFixed(2)} in 24h is above the $${OPS_THRESHOLDS.aiSpendAmberUsd} watchline.`
+    });
+  }
+
+  if (metrics.aiSpendMonthUsd > OPS_THRESHOLDS.aiBudgetMonthRedUsd) {
+    alerts.push({
+      id: "ai-budget",
+      severity: "red",
+      message: `Monthly AI spend $${metrics.aiSpendMonthUsd.toFixed(2)} has blown the $${OPS_THRESHOLDS.aiBudgetMonthRedUsd} budget — pause AI features or raise the budget deliberately.`
+    });
+  } else if (metrics.aiSpendMonthUsd > OPS_THRESHOLDS.aiBudgetMonthAmberUsd) {
+    alerts.push({
+      id: "ai-budget",
+      severity: "amber",
+      message: `Monthly AI spend $${metrics.aiSpendMonthUsd.toFixed(2)} passed the $${OPS_THRESHOLDS.aiBudgetMonthAmberUsd} watchline.`
     });
   }
 

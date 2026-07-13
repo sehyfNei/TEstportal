@@ -60,7 +60,7 @@ export default async function AdminOpsPage() {
             <MetricCard
               label="AI spend (24h)"
               value={`$${metrics.aiSpend24hUsd.toFixed(4)}`}
-              hint={`${metrics.aiCalls24h} calls`}
+              hint={`${metrics.aiCalls24h} calls · $${metrics.aiSpendMonthUsd.toFixed(2)} this month`}
             />
             <MetricCard
               label="Submits observed (24h)"

@@ -7,6 +7,7 @@ export type OpsMetrics = {
   jobsSucceeded24h: number;
   aiSpend24hUsd: number;
   aiCalls24h: number;
+  aiSpendMonthUsd: number;
   // Submits proxied by update_mastery jobs (one enqueued per submit) because
   // test_sessions is owner-scoped RLS and not readable by the admin client.
   submitsObserved24h: number;
@@ -28,6 +29,7 @@ export async function loadOpsMetrics(supabase: SupabaseClient): Promise<OpsMetri
     jobsSucceeded24h: 0,
     aiSpend24hUsd: 0,
     aiCalls24h: 0,
+    aiSpendMonthUsd: 0,
     submitsObserved24h: 0,
     warnings,
     loadedAt: new Date(now).toISOString()
@@ -105,6 +107,25 @@ export async function loadOpsMetrics(supabase: SupabaseClient): Promise<OpsMetri
         }, 0);
       } catch (err) {
         warnings.push(`AI ledger: ${messageOf(err)}`);
+      }
+    })(),
+    (async () => {
+      try {
+        const monthStart = new Date(now);
+        monthStart.setUTCDate(1);
+        monthStart.setUTCHours(0, 0, 0, 0);
+        const { data, error } = await supabase
+          .from("llm_cost_ledger")
+          .select("cost_usd")
+          .gte("created_at", monthStart.toISOString())
+          .limit(10000);
+        if (error) throw new Error(error.message);
+        metrics.aiSpendMonthUsd = (data ?? []).reduce((sum, row) => {
+          const cost = Number(row.cost_usd);
+          return Number.isFinite(cost) ? sum + cost : sum;
+        }, 0);
+      } catch (err) {
+        warnings.push(`AI monthly spend: ${messageOf(err)}`);
       }
     })(),
     (async () => {

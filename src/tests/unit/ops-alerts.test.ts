@@ -10,6 +10,7 @@ function metrics(overrides: Partial<OpsMetrics> = {}): OpsMetrics {
     jobsSucceeded24h: 5,
     aiSpend24hUsd: 0.5,
     aiCalls24h: 10,
+    aiSpendMonthUsd: 2,
     submitsObserved24h: 3,
     warnings: [],
     loadedAt: "2026-07-13T00:00:00.000Z",
@@ -74,6 +75,26 @@ describe("evaluateOpsAlerts", () => {
 
     expect(amber).toContainEqual(expect.objectContaining({ id: "ai-spend", severity: "amber" }));
     expect(red).toContainEqual(expect.objectContaining({ id: "ai-spend", severity: "red" }));
+  });
+
+  it("does not flag monthly AI spend at exactly the budget watchline", () => {
+    const alerts = evaluateOpsAlerts(
+      metrics({ aiSpendMonthUsd: OPS_THRESHOLDS.aiBudgetMonthAmberUsd })
+    );
+
+    expect(alerts.find((alert) => alert.id === "ai-budget")).toBeUndefined();
+  });
+
+  it("escalates monthly AI budget from amber to red across the thresholds", () => {
+    const amber = evaluateOpsAlerts(
+      metrics({ aiSpendMonthUsd: OPS_THRESHOLDS.aiBudgetMonthAmberUsd + 0.01 })
+    );
+    const red = evaluateOpsAlerts(
+      metrics({ aiSpendMonthUsd: OPS_THRESHOLDS.aiBudgetMonthRedUsd + 0.01 })
+    );
+
+    expect(amber).toContainEqual(expect.objectContaining({ id: "ai-budget", severity: "amber" }));
+    expect(red).toContainEqual(expect.objectContaining({ id: "ai-budget", severity: "red" }));
   });
 
   it("flags zero submits in 24h as an amber canary", () => {
