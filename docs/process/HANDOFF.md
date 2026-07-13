@@ -16351,3 +16351,17 @@ typecheck 0 err · lint 0 err/6 pre-existing warn · test **425/425** (+7) · bu
 
 ## Tracker
 TSP-141/142/143/144 -> Review / Claude (Builder) with remarks + rollback notes. 181x18 verified. **Review queue: 41 rows. Backlog: 48** (agent-buildable remainder: runbooks 110/147/148, feature flags 111, CI yaml 146, audit viewer 094, streaks 086, pledge 087, PYQ metadata 033, templates 161, escalation doc 119; rest founder-gated or M7).
+
+---
+
+# Session 54 - Architect Plan - TSP-110 + TSP-147 + TSP-148 + TSP-111 + TSP-146 (2026-07-14)
+
+Single-agent mode. Milestone: M6. Scope and decisions:
+
+1. TSP-110: docs/runbooks/ (new dir, per TSP-147 acceptance wording) with five runbooks: submit outage, AI outage, bad question live, failed migration, reminder failure. Each: symptoms -> user impact -> triage queries/URLs -> remediation -> escalation. Reuse /admin/ops, /admin/jobs, rollback scripts, health endpoint.
+2. TSP-147: docs/runbooks/AI_PIPELINE_FAILURE.md - Groq 529/timeout during live analysis; what user sees (analysis pending panel), triage via /admin/jobs failed filter + llm_cost_ledger status, manual re-queue via retry button / retry_job RPC.
+3. TSP-148: docs/runbooks/IMPORT_FAILURE.md - non-Zod import failures (constraint violation, partial insert, timeout); import_exam_manifest is a single RPC = transactional (all-or-nothing), bulk question import loops per-question (partial possible) - inspect via created_at window, roll back via delete window + retry idempotency.
+4. TSP-111: DB-backed flags so toggling needs NO deploy (acceptance). Migration 202607140001_feature_flags.sql: feature_flags(key pk, enabled, description, updated_at), RLS select authenticated, write admin (is_admin()), seed rows: chat_enabled/ai_analysis_enabled true; fsrs/pos/peer_insights/vision_ingestion/flow_adjuster false. Apply live via postgres pkg + DATABASE_URL (same as check-rpc-grants.js). src/lib/flags.ts: isFeatureEnabled(key, default) fail-open to default on error. Wire chat_enabled into chat send action (friendly disabled message). Admin toggle list on /admin/ops (server action, requireAdminForAction). Unit tests for flag helper with mock client.
+5. TSP-146: extend .github/workflows/ci.yml - PR/push: typecheck+lint+test+build; staging deploy on main (vercel CLI) + migration note + smoke gate (BASE_URL=staging pnpm smoke:deploy, blocks); production deploy on tag v* with GitHub environment manual approval. Deploy legs are conditioned on VERCEL_TOKEN/ORG/PROJECT secrets existing - inert until founder configures; honest Review remark (cannot execute: no working GitHub remote).
+
+Order: 110 -> 147 -> 148 -> 111 -> 146. One commit per row. Gates: standard 4 + DB gate for the flags migration (probe table, seed rows, RLS).
