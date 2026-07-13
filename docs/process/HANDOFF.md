@@ -16190,3 +16190,88 @@ TSP-104, TSP-180, TSP-130, TSP-131 → `Review` (remarks + rollback notes). **TS
 ## Recommended next
 
 Founder browser-smoke of the 30-row Review queue (Session 50's middleware-activation smoke + this session's two items above are the priority), or Architect Session 52 (candidates: TSP-161 fixed templates to unlock benchmark mode; TSP-129-adjacent M6 test rows; TSP-102 prep that doesn't need founder secrets).
+
+---
+
+# Session 52 — Architect Plan — M6 closing slice: TSP-107 + TSP-113 + TSP-106 + TSP-108 + TSP-109 + TSP-132 + TSP-133 (2026-07-13)
+
+**Milestone:** M6 Hardening & Launch. Founder directive: close the remaining 7 agent-buildable M6 rows in one slice, then review everything at once. After this session the only M6 backlog left is founder-gated infra — see "Explicitly out" below.
+
+**Pre-flight verified (2026-07-13):** none of the 7 rows is secretly built. `src/tests/e2e/` holds only `home.spec.ts`; zero MFA/AAL code in `src/`; DEPLOYMENT.md has only a Vercel-level rollback note; no `docs/ops/`. Playwright 1.59.1 + `playwright.config.ts` (testDir `src/tests/e2e`, webServer `npm run dev`, baseURL localhost:3000) already exist — reuse, do not reconfigure.
+
+## Scope: 7 rows, 4 workstreams, one commit per row, build in this order
+
+| Order | Row | What ships |
+|---|---|---|
+| 1 | TSP-107 | `docs/ops/BACKUP_RESTORE.md` |
+| 2 | TSP-113 | `docs/ops/MIGRATION_ROLLBACK.md` |
+| 3 | TSP-106 | MFA (AAL2) step-up enforcement in `requireAdminForAction` + `docs/ops/ADMIN_MFA_POLICY.md` + tests |
+| 4 | TSP-108 | `/admin/ops` live-metrics dashboard + `src/lib/ops/metrics.ts` + `docs/ops/OBSERVABILITY.md` |
+| 5 | TSP-109 | `src/lib/ops/alerts.ts` pure threshold evaluator + alert banner on `/admin/ops` + unit tests |
+| 6 | TSP-132 | `src/tests/e2e/diagnostic-journey.spec.ts` + `src/tests/e2e/helpers/auth.ts` |
+| 7 | TSP-133 | `src/tests/e2e/mistake-retest-journey.spec.ts` |
+
+## Architectural decisions
+
+**A. Docs live in a new `docs/ops/` directory.** Runbook-class content (TSP-110/147/148, still backlog) will join it later. DEPLOYMENT.md stays deployment-only; link to the new docs, don't duplicate.
+
+**B. TSP-106 enforces step-up, not enrollment.** Supabase MFA enrollment is a dashboard + user action (founder-gated). Code rule: after the existing role check passes, call `supabase.auth.mfa.getAuthenticatorAssuranceLevel()`. If `nextLevel === "aal2" && currentLevel !== "aal2"` → `{ ok:false, message: "Multi-factor verification required." }`. If the call throws or the method is absent → allow (fail-open on the supplementary check; primary authz is still the app_metadata role — rationale documented in ADMIN_MFA_POLICY.md; revisit to fail-closed once founder enrolls factors). This satisfies "enforce or document": enforced when enrolled, policy doc mandates enrollment before production.
+
+**C. TSP-108 dashboards are in-app, reading the live DB.** No external vendor (that's TSP-145). `/admin/ops` is a server component mirroring `src/app/admin/jobs/page.tsx` (same requireAdmin gate, same card idiom). Metrics from existing tables only: `jobs` (pending count, oldest-pending age, failed/succeeded last 24h), `llm_cost_ledger` (24h spend + call count — see `src/lib/ai/gateway.ts:178` for the insert shape), `rate_limit_counters` (active windows), test sessions submitted last 24h (builder: confirm table/status names in `src/lib/db/schema/session.ts`). Use cheap `count`/`head:true` queries; page is `dynamic = "force-dynamic"`.
+
+**D. TSP-109 alerts are a pure evaluator, not a paging system.** `evaluateOpsAlerts(metrics): OpsAlert[]` with exported threshold constants: oldest pending job > 15 min (red), any failed job in 24h (amber; >3 red), 24h AI spend > $5 (amber) / > $15 (red), submit count 0 in 24h while sessions exist (amber — canary). Rendered as a banner atop `/admin/ops`. Real paging (email/Slack) needs RESEND_API_KEY / TSP-145 — out of scope, say so in remarks. Acceptance ("alerts trigger on test thresholds") is met by unit tests driving each threshold across its boundary.
+
+**E. E2E specs authenticate through the real login UI, creds from env.** `src/tests/e2e/helpers/auth.ts` reads `E2E_STUDENT_EMAIL` / `E2E_STUDENT_PASSWORD`; each journey spec starts with `test.skip(!process.env.E2E_STUDENT_PASSWORD, "e2e creds not set")` so the suite is green-with-skips on machines without creds. No storageState file committed. e2e is NOT added to the 4 gates — it stays `pnpm test:e2e`, CI wiring belongs to TSP-146.
+
+**F. E2E selectors by role/label only** (`getByRole`, `getByLabel`) — no CSS classes, no nth-child. If a control lacks an accessible name, add one in the component (small, allowed) rather than writing a brittle selector.
+
+## Per-file notes
+
+### 1. `docs/ops/BACKUP_RESTORE.md` (TSP-107)
+Sections: (1) What Supabase gives us — daily automated backups on Pro, PITR add-on; current project tier and what founder must enable (Settings → Backups → PITR); (2) RPO/RTO targets — propose RPO 1h with PITR / 24h without, RTO 4h; (3) What's NOT covered by DB backups — auth users export, storage buckets, Vercel env vars — and how each is backed up; (4) Restore drill procedure — step-by-step against a scratch Supabase project: restore snapshot → run gate queries (row counts on questions/test_sessions/mastery_records, `select count(*) from jobs`) → point a local .env at it → smoke login + start test; (5) Drill log table (date / operator / result) — empty, first entry is founder's staging drill. Mark clearly: **drill execution is founder-gated on TSP-102 staging**.
+
+### 2. `docs/ops/MIGRATION_ROLLBACK.md` (TSP-113)
+Sections: (1) Expand → migrate → contract convention (we already follow it — cite `202607130001_rate_limit.sql` whose rollback is two drops); (2) Rules: every future migration commit states its rollback in the commit body; destructive contracts ship ≥1 session after the expand; never edit an applied migration file; (3) Rollback recipe per class: add-table (drop table), add-column (drop column), RPC (drop function + revoke note), RLS policy (drop policy), data backfill (inverse update or restore from backup — link BACKUP_RESTORE.md); (4) Rehearsal procedure for staging (founder-gated on TSP-102); (5) Table of the last 5 applied migrations with their exact rollback SQL (rate_limit and scheduling rollbacks are already documented in HANDOFF Session 50/51 notes — copy them in). Note: full per-migration rollback scripts for all 30+ files = TSP-141, separate row, do NOT attempt here.
+
+### 3. TSP-106 — MFA step-up
+- `src/lib/auth/require-admin.ts`: after the role check succeeds, add the AAL check per decision B. Keep the function's return contract unchanged.
+- `src/tests/unit/auth-guard.test.ts`: extend `mockSupabase` with optional `mfa` input (`{ currentLevel, nextLevel }` or "throws"); add 3 tests: (a) admin + nextLevel aal2 + currentLevel aal1 → `{ok:false, "Multi-factor verification required."}`; (b) admin + currentLevel aal2 → ok; (c) admin + mfa call throws → ok (fail-open documented). Existing 8 tests must keep passing — the mock client gains `auth.mfa.getAuthenticatorAssuranceLevel` returning `{ data: { currentLevel: "aal1", nextLevel: "aal1" }, error: null }` by default.
+- `docs/ops/ADMIN_MFA_POLICY.md`: policy (all admin accounts MUST enroll TOTP before production launch), founder enrollment steps (Supabase dashboard route is fine for our single admin), enforcement behavior (step-up required once enrolled), fail-open rationale + the flip-to-fail-closed TODO.
+
+### 4. TSP-108 — `/admin/ops`
+- `src/lib/ops/metrics.ts`: `export type OpsMetrics = { jobsPending: number; oldestPendingAgeMin: number | null; jobsFailed24h: number; jobsSucceeded24h: number; aiSpend24hUsd: number; aiCalls24h: number; rateLimitActiveWindows: number; sessionsSubmitted24h: number; warnings: string[]; loadedAt: string }` + `loadOpsMetrics(supabase): Promise<OpsMetrics>`. Every query individually try/caught → metric falls back to 0/null and `warnings` collects failures (dashboard must render even if one table is missing).
+- `src/app/admin/ops/page.tsx`: server component, admin-gated exactly like `/admin/jobs`; alert banner (from TSP-109 — render `[]` until that lands) + metric cards + warnings list + "as of {loadedAt}" line. Add an "Ops" link wherever `/admin/jobs` is linked in the admin nav/layout.
+- `docs/ops/OBSERVABILITY.md`: metric → source table map; the same metrics' production homes (Vercel Analytics/Logs, Supabase Reports) once TSP-102 lands; alert threshold table (single source of truth is the code — doc links to `alerts.ts`); explicitly note error-tracking vendor = TSP-145, not this row.
+
+### 5. TSP-109 — alerts
+- `src/lib/ops/alerts.ts`: `export type OpsAlert = { id: string; severity: "red" | "amber"; message: string }`, exported `OPS_THRESHOLDS` const, pure `evaluateOpsAlerts(metrics: OpsMetrics): OpsAlert[]` (no I/O, no Date.now() — age already computed in metrics).
+- `src/tests/unit/ops-alerts.test.ts`: one boundary test per rule (at threshold → no alert / past it → alert, correct severity escalation), plus "healthy metrics → []".
+- Wire the banner into `/admin/ops` (red = destructive tone, amber = warning tone — match existing Tailwind idiom in admin pages).
+
+### 6. TSP-132 — diagnostic journey
+- `src/tests/e2e/helpers/auth.ts`: `loginAsStudent(page)` — goto `/login`, fill email/password by label, submit, expect redirect to an authed page (dashboard or tests).
+- `diagnostic-journey.spec.ts` (chromium project only — journeys don't need the Pixel run): login → goto `/tests` → start the diagnostic entry (builder: read `src/app/(app)/tests/page.tsx` + catalog component for the accessible names) → in the session shell answer at least one question (click first option) → submit → assert the result view shows a score/summary heading. Generous timeouts on submit; assert the synchronous result, NOT the async AI analysis.
+- Data dependency: live DB must have a startable diagnostic pool for `student@example.com`'s exam. If start fails due to an empty pool, fail the spec with a clear message — that's a real launch blocker, not a test bug.
+
+### 7. TSP-133 — mistake retest journey
+- `mistake-retest-journey.spec.ts`: login → goto `/mistakes` → assert notebook renders (heading + either items or the documented empty state). If ≥1 retest-eligible item: start retest → assert session shell reached. If none: assert the empty/none-eligible state renders and push a `data-gap` annotation via `test.info().annotations` — pass, don't skip silently. Remark in tracker if the data-gap path is what ran.
+
+## Reuse (do not duplicate)
+`requireAdminForAction` + its test mock pattern · `/admin/jobs/page.tsx` server-component/gate/card idiom · Supabase server client from `@/lib/supabase/server` · existing `playwright.config.ts` and `test:e2e` script · jobs / llm_cost_ledger / rate_limit_counters tables as-is (NO new tables, NO migrations this session).
+
+## Explicitly out of scope
+TSP-141 rollback scripts (own row) · TSP-145 error-monitoring vendor · TSP-146 CI/CD (e2e-in-CI belongs there) · TSP-110/147/148 incident runbooks · any paging/email delivery · `checkDailyUsageCap` (Standing Decision #4 — still founder-gated) · CSP enforcement · touching `importQuestionsAction` or session-engine internals.
+
+## Gates & verification (AGENT_WORKFLOW §8 — Test_Portal clone)
+1. Standard 4: typecheck / lint / test / build — expect **405 + ~13 new unit tests** all green.
+2. E2E gate (best-effort, not blocking Review): `corepack pnpm exec playwright install chromium` once, then `corepack pnpm test:e2e` with dev server + `E2E_STUDENT_EMAIL`/`E2E_STUDENT_PASSWORD` in `.env.local`. If founder password unavailable → suites skip by design; record that in remarks so Sanity runs them.
+3. `/admin/ops` manual probe: as admin → metrics render; as anon → redirected/denied.
+4. No DB gate — zero migrations.
+
+## Founder-gated follow-ups created by this session
+- Set `E2E_STUDENT_PASSWORD` (+ email) in Test_Portal `.env.local` so the journeys actually run.
+- Enroll TOTP on `admin@example.com` (then we flip the MFA check to fail-closed).
+- Enable PITR / confirm backup tier in Supabase; run the restore drill once staging (TSP-102) exists.
+
+## Tracker
+On plan commit: TSP-106/107/108/109/113/132/133 → `In Progress` / `Claude (Architect)`. After builder verification: → `Review` / `Claude (Builder)`, one remark per row incl. e2e skip-status. Python csv edits only; verify 180 rows × 18 cols after every write.
