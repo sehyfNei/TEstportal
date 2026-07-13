@@ -207,6 +207,19 @@ Required for UI, routing, config, and Next.js changes:
 - Standard gate.
 - `corepack pnpm build` passes.
 
+### Off-OneDrive Smoke Gate
+
+Use this when OneDrive can run static gates but Next.js dev/start or browser smoke is unreliable.
+
+- Keep `C:\Users\Rakesh\OneDrive\Documents\Business\TEST` as the canonical Builder/Architect workspace.
+- Commit the exact OneDrive work first; helper clones can only pull committed work.
+- Pull only into a clean helper clone. If Git reports modified or untracked files would be overwritten, do not stash, reset, force, or overwrite unless the orchestrator explicitly asks.
+- Prefer the known off-OneDrive helper clone at `C:\Users\Rakesh\Documents\Test_Portal` when it is clean. If it is dirty or stale, create a fresh local smoke clone from the committed OneDrive repo, for example `git clone --local C:\Users\Rakesh\OneDrive\Documents\Business\TEST C:\Users\Rakesh\Documents\Test_Portal_Smoke`.
+- Install with `corepack pnpm install --offline --frozen-lockfile` when the local pnpm store is sufficient.
+- Run the relevant gates there (`corepack pnpm typecheck`, `corepack pnpm lint`, `corepack pnpm test`, `corepack pnpm build`) and record real command output, warnings, and blockers.
+- For route smoke, use `http://127.0.0.1:<port>` if `localhost` fails. If `next dev` is unreliable but the build passes, run `node_modules\.bin\next.CMD build` and then `node_modules\.bin\next.CMD start -p <port>` for render probes.
+- Record the clone path, commit SHA, commands, route probes, and any running server PID in `docs/process/HANDOFF.md`.
+
 ### Database Gate
 
 Required for schema/migration work:

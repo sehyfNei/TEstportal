@@ -12,7 +12,10 @@
       "Bash(grep -Hm1 ^description: 'C:\\\\Users\\\\Rakesh\\\\Documents\\\\Test_Portal/.claude/skills/*/SKILL.md')",
       "Bash(git push *)",
       "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" add \"trackers/JIRA_TRACKER.csv\" \"docs/process/SESSION_STATE.md\" \"docs/process/HANDOFF.md\")",
-      "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" push)"
+      "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" push)",
+      "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" diff --name-only HEAD~1 HEAD)",
+      "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" diff --name-only HEAD~2 HEAD~1)",
+      "Bash(python -c ' *)"
     ]
   }
 }
