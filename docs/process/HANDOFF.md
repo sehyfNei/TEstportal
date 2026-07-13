@@ -16316,3 +16316,18 @@ All seven rows built per the Session 52 Architect plan. One commit per row.
 ## Tracker
 
 TSP-106/107/108/109/113/132/133 → `Review` / `Claude (Builder)` with remarks + rollback notes. 181-row CSV verified 18 cols. Review queue now **37 rows**; M6 backlog reduced to founder-gated infra + remaining confidence rows.
+
+---
+
+# Session 53 - Architect Plan - Critical safety net: TSP-142 + TSP-143 + TSP-144 + TSP-141 (2026-07-14)
+
+Single-agent mode (founder directive 2026-07-13): Architect+Builder in one session. Milestone: M6 (141/142/144) + M5 (143). These are the last Critical agent-buildable rows in the tracker.
+
+Scope and decisions:
+
+1. TSP-142 (LLM budget alerts): extend src/lib/ops/metrics.ts with aiSpendMonthUsd (llm_cost_ledger since month start UTC); OPS_THRESHOLDS gains monthly amber $30 / red $60 (constants = single source, founder can retune); new evaluateOpsAlerts rule + boundary tests. No email delivery (TSP-145/RESEND).
+2. TSP-143 (nightly job failure alerting): only decay_mastery has a live nightly handler today (HANDLERS map in runner.ts); metrics gain nightlyStale (no completed decay_mastery job in 36h) + nightlyFailed24h (failed/dead decay_mastery in 24h); red alert on either. Rule keyed to a NIGHTLY_JOB_TYPES list so future nightly handlers join by adding one string.
+3. TSP-144 (post-deploy smoke): new GET /api/health (anon-safe: exams head-count probe, returns ok/db/time, no secrets) + scripts/post-deploy-smoke.mjs hitting BASE_URL: / 200, /login 200, /api/health ok:true, anon /tests|/dashboard|/schedule -> 307 to /login, /admin -> redirect. Exit non-zero on any failure. package.json script "smoke:deploy". Node built-in fetch only.
+4. TSP-141 (rollback scripts): new supabase/rollbacks/<same-name>_down.sql for all 34 migrations, each dropping created objects in reverse dependency order; seed/data migrations get delete-scoped or documented-irreversible notes. Verification = SQL review only (no live apply); staging rehearsal stays founder-gated (MIGRATION_ROLLBACK.md).
+
+Order: 142 -> 143 -> 144 -> 141, one commit per row. Gates: standard 4 in Test_Portal (expect 418 + new tests). No DB changes.
