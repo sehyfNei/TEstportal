@@ -8,6 +8,9 @@ function metrics(overrides: Partial<OpsMetrics> = {}): OpsMetrics {
     oldestPendingAgeMin: null,
     jobsFailed24h: 0,
     jobsSucceeded24h: 5,
+    jobsDead24h: 0,
+    failedTypes24h: [],
+    nightly: [],
     aiSpend24hUsd: 0.5,
     aiCalls24h: 10,
     aiSpendMonthUsd: 2,
@@ -75,6 +78,59 @@ describe("evaluateOpsAlerts", () => {
 
     expect(amber).toContainEqual(expect.objectContaining({ id: "ai-spend", severity: "amber" }));
     expect(red).toContainEqual(expect.objectContaining({ id: "ai-spend", severity: "red" }));
+  });
+
+  it("lists failing job types in the jobs-failing message", () => {
+    const alerts = evaluateOpsAlerts(
+      metrics({ jobsFailed24h: 2, failedTypes24h: ["generate_analysis"] })
+    );
+
+    const alert = alerts.find((entry) => entry.id === "jobs-failing");
+    expect(alert?.message).toContain("generate_analysis");
+  });
+
+  it("raises red immediately for dead jobs", () => {
+    const alerts = evaluateOpsAlerts(metrics({ jobsDead24h: 1 }));
+
+    expect(alerts).toContainEqual(expect.objectContaining({ id: "jobs-dead", severity: "red" }));
+  });
+
+  it("does not flag a nightly job inside the staleness window", () => {
+    const alerts = evaluateOpsAlerts(
+      metrics({ nightly: [{ type: "decay_mastery", hoursSinceSuccess: 10, failed24h: 0 }] })
+    );
+
+    expect(alerts.find((alert) => alert.id.startsWith("nightly"))).toBeUndefined();
+  });
+
+  it("raises red when a nightly job is stale or has never completed", () => {
+    const stale = evaluateOpsAlerts(
+      metrics({
+        nightly: [
+          { type: "decay_mastery", hoursSinceSuccess: OPS_THRESHOLDS.nightlyStaleRedHours + 1, failed24h: 0 }
+        ]
+      })
+    );
+    const never = evaluateOpsAlerts(
+      metrics({ nightly: [{ type: "decay_mastery", hoursSinceSuccess: null, failed24h: 0 }] })
+    );
+
+    expect(stale).toContainEqual(
+      expect.objectContaining({ id: "nightly-stale:decay_mastery", severity: "red" })
+    );
+    expect(never).toContainEqual(
+      expect.objectContaining({ id: "nightly-stale:decay_mastery", severity: "red" })
+    );
+  });
+
+  it("raises red when a nightly job failed in the last 24h", () => {
+    const alerts = evaluateOpsAlerts(
+      metrics({ nightly: [{ type: "decay_mastery", hoursSinceSuccess: 5, failed24h: 2 }] })
+    );
+
+    expect(alerts).toContainEqual(
+      expect.objectContaining({ id: "nightly-failed:decay_mastery", severity: "red" })
+    );
   });
 
   it("does not flag monthly AI spend at exactly the budget watchline", () => {

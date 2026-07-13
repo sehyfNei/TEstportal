@@ -1,10 +1,27 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// Job types expected to complete on a nightly cadence. Empty today: the only
+// registered runner handlers (generate_analysis, generate_improvement_plan)
+// are demand-driven. When a nightly handler lands (decay_mastery,
+// weekly_digest, compute_question_stats...), add its type string here and the
+// staleness alert covers it with no further wiring.
+export const NIGHTLY_JOB_TYPES: readonly string[] = [];
+
+export type NightlyJobHealth = {
+  type: string;
+  // null = never completed
+  hoursSinceSuccess: number | null;
+  failed24h: number;
+};
+
 export type OpsMetrics = {
   jobsPending: number;
   oldestPendingAgeMin: number | null;
   jobsFailed24h: number;
   jobsSucceeded24h: number;
+  jobsDead24h: number;
+  failedTypes24h: string[];
+  nightly: NightlyJobHealth[];
   aiSpend24hUsd: number;
   aiCalls24h: number;
   aiSpendMonthUsd: number;
@@ -27,6 +44,9 @@ export async function loadOpsMetrics(supabase: SupabaseClient): Promise<OpsMetri
     oldestPendingAgeMin: null,
     jobsFailed24h: 0,
     jobsSucceeded24h: 0,
+    jobsDead24h: 0,
+    failedTypes24h: [],
+    nightly: [],
     aiSpend24hUsd: 0,
     aiCalls24h: 0,
     aiSpendMonthUsd: 0,
@@ -91,6 +111,53 @@ export async function loadOpsMetrics(supabase: SupabaseClient): Promise<OpsMetri
         warnings.push(`succeeded jobs: ${messageOf(err)}`);
       }
     })(),
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("jobs")
+          .select("type,status")
+          .in("status", ["failed", "dead"])
+          .gte("updated_at", cutoff)
+          .limit(500);
+        if (error) throw new Error(error.message);
+        const rows = data ?? [];
+        metrics.jobsDead24h = rows.filter((row) => row.status === "dead").length;
+        metrics.failedTypes24h = [...new Set(rows.map((row) => String(row.type)))].sort();
+      } catch (err) {
+        warnings.push(`failed job types: ${messageOf(err)}`);
+      }
+    })(),
+    ...NIGHTLY_JOB_TYPES.map((jobType) => async () => {
+      try {
+        const [lastSuccess, failed] = await Promise.all([
+          supabase
+            .from("jobs")
+            .select("updated_at")
+            .eq("type", jobType)
+            .eq("status", "completed")
+            .order("updated_at", { ascending: false })
+            .limit(1),
+          supabase
+            .from("jobs")
+            .select("id", { count: "exact", head: true })
+            .eq("type", jobType)
+            .in("status", ["failed", "dead"])
+            .gte("updated_at", cutoff)
+        ]);
+        if (lastSuccess.error) throw new Error(lastSuccess.error.message);
+        if (failed.error) throw new Error(failed.error.message);
+        const last = lastSuccess.data?.[0]?.updated_at as string | undefined;
+        metrics.nightly.push({
+          type: jobType,
+          hoursSinceSuccess: last
+            ? Math.max(0, Math.round((now - new Date(last).getTime()) / 3600000))
+            : null,
+          failed24h: failed.count ?? 0
+        });
+      } catch (err) {
+        warnings.push(`nightly ${jobType}: ${messageOf(err)}`);
+      }
+    }).map((fn) => fn()),
     (async () => {
       try {
         const { data, error } = await supabase
