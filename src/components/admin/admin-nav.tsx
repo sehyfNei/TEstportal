@@ -12,7 +12,8 @@ const links = [
   { href: "/admin/questions", label: "Questions", exact: true },
   { href: "/admin/ai-ratings", label: "AI ratings", exact: false },
   { href: "/admin/questions/flags", label: "Flagged", exact: false },
-  { href: "/admin/jobs", label: "Jobs", exact: false }
+  { href: "/admin/jobs", label: "Jobs", exact: false },
+  { href: "/admin/ops", label: "Ops", exact: false }
 ];
 
 export function AdminNav() {

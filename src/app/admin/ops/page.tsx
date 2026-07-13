@@ -1,0 +1,105 @@
+import { getErrorMessage } from "@/lib/errors";
+import { loadOpsMetrics, type OpsMetrics } from "@/lib/ops/metrics";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { createClient } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
+
+export default async function AdminOpsPage() {
+  let metrics: OpsMetrics | null = null;
+  let loadError: string | null = null;
+  const configured = hasSupabaseConfig();
+
+  if (configured) {
+    try {
+      const supabase = await createClient();
+      metrics = await loadOpsMetrics(supabase);
+    } catch (err: unknown) {
+      loadError = getErrorMessage(err) || "An unexpected error occurred.";
+    }
+  }
+
+  return (
+    <section className="grid gap-6">
+      <div>
+        <p className="text-sm font-medium text-primary">Observability</p>
+        <h1 className="mt-2 text-3xl font-semibold">Ops Dashboard</h1>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
+          Live health of the critical paths: background job queue, AI spend, and submit
+          throughput. Metric-to-source mapping lives in docs/ops/OBSERVABILITY.md.
+        </p>
+      </div>
+
+      {!configured && (
+        <Panel message="Supabase is not configured yet. Add Supabase keys to view live ops metrics." />
+      )}
+
+      {configured && loadError && <Panel message={`Failed to load ops metrics: ${loadError}`} />}
+
+      {metrics && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard
+              label="Pending jobs"
+              value={String(metrics.jobsPending)}
+              hint={
+                metrics.oldestPendingAgeMin === null
+                  ? "queue empty"
+                  : `oldest waiting ${metrics.oldestPendingAgeMin} min`
+              }
+            />
+            <MetricCard
+              label="Jobs failed (24h)"
+              value={String(metrics.jobsFailed24h)}
+              hint={`${metrics.jobsSucceeded24h} succeeded`}
+            />
+            <MetricCard
+              label="AI spend (24h)"
+              value={`$${metrics.aiSpend24hUsd.toFixed(4)}`}
+              hint={`${metrics.aiCalls24h} calls`}
+            />
+            <MetricCard
+              label="Submits observed (24h)"
+              value={String(metrics.submitsObserved24h)}
+              hint="via update_mastery jobs"
+            />
+          </div>
+
+          {metrics.warnings.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-5 shadow-card">
+              <h2 className="text-sm font-semibold">Metric warnings</h2>
+              <ul className="mt-2 grid gap-1 text-xs text-muted-foreground">
+                {metrics.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            As of {new Date(metrics.loadedAt).toLocaleString()} — refresh the page for current
+            numbers.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function MetricCard({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 shadow-card">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-2 text-2xl font-semibold">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
+}
+
+function Panel({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 text-sm leading-6 text-muted-foreground shadow-card">
+      {message}
+    </div>
+  );
+}
