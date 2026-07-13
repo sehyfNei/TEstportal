@@ -1,0 +1,4 @@
+-- Rollback for 202606010003_result_aggregates.sql
+-- submit_test_session replaced in place (adds aggregate computation).
+-- Restore previous definition: re-apply 202605310001_test_session_engine.sql
+-- (submit_test_session portion). No objects to drop.

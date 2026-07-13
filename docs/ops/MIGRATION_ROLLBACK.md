@@ -2,7 +2,7 @@
 
 **Owner:** Architect · **Created:** 2026-07-13 · **Status:** convention in force; staging rehearsal pending TSP-102
 
-Full per-migration rollback scripts for all applied migrations are a separate row (TSP-141). This doc is the convention, the per-class recipes, and the rollback SQL for the most recent migrations.
+Per-migration rollback scripts live in **`supabase/rollbacks/`** (one `_down.sql` per migration — TSP-141; see its README for ordering rules). This doc is the convention, the per-class recipes, and the rollback SQL for the most recent migrations.
 
 ---
 

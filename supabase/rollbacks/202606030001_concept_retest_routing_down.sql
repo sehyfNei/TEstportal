@@ -1,0 +1,4 @@
+-- Rollback for 202606030001_concept_retest_routing.sql
+-- start_test_session replaced in place (adds retest routing).
+-- Restore previous definition: re-apply 202606010002_benchmark_selection.sql.
+-- No objects to drop.
