@@ -16331,3 +16331,23 @@ Scope and decisions:
 4. TSP-141 (rollback scripts): new supabase/rollbacks/<same-name>_down.sql for all 34 migrations, each dropping created objects in reverse dependency order; seed/data migrations get delete-scoped or documented-irreversible notes. Verification = SQL review only (no live apply); staging rehearsal stays founder-gated (MIGRATION_ROLLBACK.md).
 
 Order: 142 -> 143 -> 144 -> 141, one commit per row. Gates: standard 4 in Test_Portal (expect 418 + new tests). No DB changes.
+
+---
+
+# Session 53 - Builder Handoff - TSP-142 + TSP-143 + TSP-144 + TSP-141 (2026-07-14)
+
+All four rows built per plan, one commit per row: `8a5411c` (TSP-142 monthly LLM budget alerts), `53137a7` (TSP-143 per-type/dead-job alerting + nightly staleness machinery), `0097c6d` (TSP-144 /api/health + scripts/post-deploy-smoke.mjs + pnpm smoke:deploy), `7bf1953` (TSP-141 supabase/rollbacks/ 34 down scripts + README).
+
+## Verification (Test_Portal @ 7bf1953, 2026-07-14)
+typecheck 0 err · lint 0 err/6 pre-existing warn · test **425/425** (+7) · build clean, `/api/health` route present, Middleware 88.5 kB. No DB changes (rollback scripts are files, not applied).
+
+## Findings
+1. **No nightly handlers actually run today** — HANDLERS in runner.ts registers only generate_analysis + generate_improvement_plan; decay_mastery etc. are type-defined but handler-less. TSP-143's NIGHTLY_JOB_TYPES list ships empty with the staleness alert machinery live; add the type string when a nightly handler lands. This also means TSP-057 forgetting-decay is not actually executing nightly — flagging for roadmap honesty (decay job handler is an open gap, likely belongs with M4/M5 leftovers).
+2. Rollback of function-replacing migrations = re-apply the previous file (documented per script); drop-only would delete start/submit capability.
+
+## Remaining smoke (Sanity/founder)
+- `pnpm smoke:deploy` against a running build (expects 7/7 green; anon redirects need middleware, so run against `pnpm start`, not static).
+- /admin/ops: AI-spend card now shows month-to-date; nightly alerts appear only when NIGHTLY_JOB_TYPES gains entries.
+
+## Tracker
+TSP-141/142/143/144 -> Review / Claude (Builder) with remarks + rollback notes. 181x18 verified. **Review queue: 41 rows. Backlog: 48** (agent-buildable remainder: runbooks 110/147/148, feature flags 111, CI yaml 146, audit viewer 094, streaks 086, pledge 087, PYQ metadata 033, templates 161, escalation doc 119; rest founder-gated or M7).
