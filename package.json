@@ -11,7 +11,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:deploy": "node scripts/post-deploy-smoke.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",
