@@ -28,6 +28,10 @@ export async function requireAdmin(): Promise<void> {
   if (getUserRole(user, sessionData.session?.access_token) !== "admin") {
     redirect("/?error=unauthorized");
   }
+
+  if (await needsMfaStepUp(supabase)) {
+    redirect("/?error=mfa_required");
+  }
 }
 
 // Server Actions return typed state instead of redirecting so form result flows
@@ -52,7 +56,39 @@ export async function requireAdminForAction(): Promise<AdminCheckResult> {
     return { ok: false, message: "Admin access required." };
   }
 
+  if (await needsMfaStepUp(supabase)) {
+    return { ok: false, message: "Multi-factor verification required." };
+  }
+
   return { ok: true, userId: user.id };
+}
+
+type MfaCapableClient = {
+  auth: {
+    mfa?: {
+      getAuthenticatorAssuranceLevel: () => Promise<{
+        data: { currentLevel: string | null; nextLevel: string | null } | null;
+        error: { message: string } | null;
+      }>;
+    };
+  };
+};
+
+// MFA step-up: admins who have enrolled a factor must verify it this session
+// (aal2). Admins with no enrolled factor pass — enrollment is enforced by
+// policy (docs/ops/ADMIN_MFA_POLICY.md), not code, until the founder enrolls;
+// errors fail open because role authz above remains the primary gate.
+async function needsMfaStepUp(supabase: MfaCapableClient): Promise<boolean> {
+  try {
+    const result = await supabase.auth.mfa?.getAuthenticatorAssuranceLevel();
+    if (!result || result.error || !result.data) {
+      return false;
+    }
+
+    return result.data.nextLevel === "aal2" && result.data.currentLevel !== "aal2";
+  } catch {
+    return false;
+  }
 }
 
 function getUserRole(user: RoleCarrier, accessToken?: string) {

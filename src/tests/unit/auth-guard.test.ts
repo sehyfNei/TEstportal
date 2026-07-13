@@ -117,6 +117,42 @@ describe("requireAdminForAction", () => {
       userId: "admin-3"
     });
   });
+
+  it("requires MFA step-up when a factor is enrolled but not verified", async () => {
+    mockSupabase({
+      user: { id: "admin-1", app_metadata: { user_role: "admin" } },
+      mfa: { currentLevel: "aal1", nextLevel: "aal2" }
+    });
+
+    await expect(requireAdminForAction()).resolves.toEqual({
+      ok: false,
+      message: "Multi-factor verification required."
+    });
+  });
+
+  it("accepts an admin whose session is already aal2", async () => {
+    mockSupabase({
+      user: { id: "admin-1", app_metadata: { user_role: "admin" } },
+      mfa: { currentLevel: "aal2", nextLevel: "aal2" }
+    });
+
+    await expect(requireAdminForAction()).resolves.toEqual({
+      ok: true,
+      userId: "admin-1"
+    });
+  });
+
+  it("fails open when the MFA assurance check throws", async () => {
+    mockSupabase({
+      user: { id: "admin-1", app_metadata: { user_role: "admin" } },
+      mfa: "throws"
+    });
+
+    await expect(requireAdminForAction()).resolves.toEqual({
+      ok: true,
+      userId: "admin-1"
+    });
+  });
 });
 
 type MockUser = {
@@ -129,6 +165,7 @@ function mockSupabase(input: {
   user: MockUser;
   userError?: { message: string } | null;
   accessToken?: string | null;
+  mfa?: { currentLevel: string; nextLevel: string } | "throws";
 }) {
   const client = {
     auth: {
@@ -140,7 +177,19 @@ function mockSupabase(input: {
         data: {
           session: input.accessToken ? { access_token: input.accessToken } : null
         }
-      })
+      }),
+      mfa: {
+        getAuthenticatorAssuranceLevel: vi.fn().mockImplementation(async () => {
+          if (input.mfa === "throws") {
+            throw new Error("mfa unavailable");
+          }
+
+          return {
+            data: input.mfa ?? { currentLevel: "aal1", nextLevel: "aal1" },
+            error: null
+          };
+        })
+      }
     }
   };
 
