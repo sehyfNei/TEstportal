@@ -1,5 +1,7 @@
 import { getErrorMessage } from "@/lib/errors";
+import { evaluateOpsAlerts, type OpsAlert } from "@/lib/ops/alerts";
 import { loadOpsMetrics, type OpsMetrics } from "@/lib/ops/metrics";
+import { cn } from "@/lib/utils";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -38,6 +40,8 @@ export default async function AdminOpsPage() {
 
       {metrics && (
         <>
+          <AlertBanner alerts={evaluateOpsAlerts(metrics)} />
+
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard
               label="Pending jobs"
@@ -83,6 +87,34 @@ export default async function AdminOpsPage() {
         </>
       )}
     </section>
+  );
+}
+
+function AlertBanner({ alerts }: { alerts: OpsAlert[] }) {
+  if (alerts.length === 0) {
+    return (
+      <div className="rounded-xl border border-emerald-600/20 bg-emerald-50 p-4 text-sm text-emerald-700">
+        All ops checks healthy.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2" role="alert">
+      {alerts.map((alert) => (
+        <div
+          className={cn(
+            "rounded-xl border p-4 text-sm",
+            alert.severity === "red"
+              ? "border-red-600/20 bg-red-50 text-red-700"
+              : "border-amber-600/20 bg-amber-50 text-amber-700"
+          )}
+          key={alert.id}
+        >
+          <span className="font-semibold uppercase">{alert.severity}</span> — {alert.message}
+        </div>
+      ))}
+    </div>
   );
 }
 
