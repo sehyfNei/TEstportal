@@ -14,6 +14,7 @@ import {
   writeChatCostLedger
 } from "@/lib/chat/chat-service";
 import { assembleContext, type ContextPayload } from "@/lib/chat/context-injector";
+import { isFeatureEnabled } from "@/lib/flags";
 import { getAiConsent } from "@/lib/profile/profile-service";
 import { CHAT_RATE_LIMIT, checkRateLimit } from "@/lib/security/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -40,6 +41,13 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     if (!user) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!(await isFeatureEnabled(supabase, "chat_enabled"))) {
+      return Response.json(
+        { error: "Chat is temporarily disabled. Please try again later." },
+        { status: 503 }
+      );
     }
 
     const validation = validateChatRequestBody(await request.json().catch(() => null));

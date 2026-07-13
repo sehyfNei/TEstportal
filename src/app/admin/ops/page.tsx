@@ -1,7 +1,9 @@
 import { getErrorMessage } from "@/lib/errors";
+import { listFeatureFlags, type FeatureFlagRow } from "@/lib/flags";
 import { evaluateOpsAlerts, type OpsAlert } from "@/lib/ops/alerts";
 import { loadOpsMetrics, type OpsMetrics } from "@/lib/ops/metrics";
 import { cn } from "@/lib/utils";
+import { toggleFeatureFlagAction } from "./actions";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -9,13 +11,14 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminOpsPage() {
   let metrics: OpsMetrics | null = null;
+  let flags: FeatureFlagRow[] = [];
   let loadError: string | null = null;
   const configured = hasSupabaseConfig();
 
   if (configured) {
     try {
       const supabase = await createClient();
-      metrics = await loadOpsMetrics(supabase);
+      [metrics, flags] = await Promise.all([loadOpsMetrics(supabase), listFeatureFlags(supabase)]);
     } catch (err: unknown) {
       loadError = getErrorMessage(err) || "An unexpected error occurred.";
     }
@@ -79,6 +82,52 @@ export default async function AdminOpsPage() {
               </ul>
             </div>
           )}
+
+          <div className="rounded-xl border border-border bg-card p-5 shadow-card">
+            <h2 className="text-sm font-semibold">Feature flags</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              DB-backed — toggling takes effect immediately, no deploy needed.
+            </p>
+            {flags.length === 0 ? (
+              <p className="mt-3 text-sm text-muted-foreground">
+                No flags found — has the feature_flags migration been applied?
+              </p>
+            ) : (
+              <ul className="mt-3 grid gap-2">
+                {flags.map((flag) => (
+                  <li
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted px-3 py-2"
+                    key={flag.key}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium font-mono">{flag.key}</p>
+                      <p className="text-xs text-muted-foreground">{flag.description}</p>
+                    </div>
+                    <form action={toggleFeatureFlagAction} className="flex items-center gap-3">
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+                          flag.enabled
+                            ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                            : "bg-slate-50 text-slate-700 ring-slate-600/20"
+                        )}
+                      >
+                        {flag.enabled ? "on" : "off"}
+                      </span>
+                      <input name="key" type="hidden" value={flag.key} />
+                      <input name="enabled" type="hidden" value={String(!flag.enabled)} />
+                      <button
+                        className="rounded bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+                        type="submit"
+                      >
+                        {flag.enabled ? "Disable" : "Enable"}
+                      </button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <p className="text-xs text-muted-foreground">
             As of {new Date(metrics.loadedAt).toLocaleString()} — refresh the page for current
