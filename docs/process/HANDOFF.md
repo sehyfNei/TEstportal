@@ -16275,3 +16275,44 @@ TSP-141 rollback scripts (own row) · TSP-145 error-monitoring vendor · TSP-146
 
 ## Tracker
 On plan commit: TSP-106/107/108/109/113/132/133 → `In Progress` / `Claude (Architect)`. After builder verification: → `Review` / `Claude (Builder)`, one remark per row incl. e2e skip-status. Python csv edits only; verify 180 rows × 18 cols after every write.
+
+---
+
+# Session 52 — Builder Handoff — TSP-107 + TSP-113 + TSP-106 + TSP-108 + TSP-109 + TSP-132 + TSP-133 (2026-07-13)
+
+All seven rows built per the Session 52 Architect plan. One commit per row.
+
+## Commits
+
+- `1065209` — **TSP-107**: docs/ops/BACKUP_RESTORE.md (policy, RPO/RTO, drill procedure + log)
+- `eb517f8` — **TSP-113**: docs/ops/MIGRATION_ROLLBACK.md (convention, per-class recipes, rollback SQL for last 5 migrations)
+- `6b62379` — **TSP-106**: MFA step-up in require-admin (both requireAdmin and requireAdminForAction) + ADMIN_MFA_POLICY.md + 3 unit tests
+- `a21b3b5` — **TSP-108**: /admin/ops dashboard + src/lib/ops/metrics.ts + OBSERVABILITY.md + nav link
+- `7365036` — **TSP-109**: src/lib/ops/alerts.ts + 10 boundary unit tests + red/amber banner
+- `001934a` — **TSP-132**: diagnostic-journey.spec.ts + e2e/helpers/auth.ts
+- `3b2d71b` — **TSP-133**: mistake-retest-journey.spec.ts
+
+## Verification (Test_Portal clone @ `3b2d71b`, 2026-07-14)
+
+- typecheck ✅ 0 errors · lint ✅ 0 errors / 6 pre-existing warnings
+- test ✅ **418/418** (was 405; +13: 3 MFA + 10 ops-alerts)
+- build ✅ clean; `ƒ Middleware 88.5 kB` still present
+- No DB gate — zero migrations this session.
+- **E2E NOT run**: `E2E_STUDENT_PASSWORD` not available; both journey specs skip cleanly by design. Founder/Sanity: set creds in Test_Portal `.env.local`, run `corepack pnpm exec playwright install chromium` once, then `corepack pnpm test:e2e` with the dev server up.
+
+## Plan deviations
+
+1. **TSP-106 applied to `requireAdmin` too** (pages), not just the action guard — otherwise admin pages would render while actions block. Redirect target `/?error=mfa_required`.
+2. **TSP-108 dropped the rate-limit metric**: `rate_limit_counters` is RLS-on with zero policies (RPC-only, by TSP-104 design) — unreadable from any client; documented in OBSERVABILITY.md instead of surfacing a permanently-zero card.
+3. **Submits proxied by `update_mastery` job count** — `test_sessions` is owner-scoped RLS, so the admin client cannot count all submits directly.
+4. **TSP-133 retests start from /dashboard** (Due-retests card), not /mistakes — the spec covers notebook render + dashboard start, matching where the engine actually puts the entry point.
+
+## Remaining smoke (Sanity/founder)
+
+1. `/admin/ops` as admin → 4 metric cards + banner render; as anon → redirected.
+2. Run both e2e journeys with real creds (above).
+3. After founder enrolls TOTP on the admin account: verify admin is blocked until MFA verify, then flip fail-open branches to fail-closed (tracked in ADMIN_MFA_POLICY.md).
+
+## Tracker
+
+TSP-106/107/108/109/113/132/133 → `Review` / `Claude (Builder)` with remarks + rollback notes. 181-row CSV verified 18 cols. Review queue now **37 rows**; M6 backlog reduced to founder-gated infra + remaining confidence rows.
