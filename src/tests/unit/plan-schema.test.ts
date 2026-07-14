@@ -106,6 +106,6 @@ describe("buildPlanMessages", () => {
 
   it("exposes stable schema and prompt version constants", () => {
     expect(PLAN_SCHEMA_VERSION).toBe("1.0.0");
-    expect(PLAN_PROMPT_VERSION).toBe("improvement_plan@1.0.0");
+    expect(PLAN_PROMPT_VERSION).toBe("improvement_plan@1.1.0");
   });
 });
