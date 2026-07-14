@@ -101,6 +101,17 @@ export function TestRunner({
     questions[0] ? { [questions[0].questionId]: 1 } : {}
   );
   const submittedRef = useRef(Boolean(initialResult || initialStatus === "scored"));
+  const resultPanelRef = useRef<HTMLDivElement | null>(null);
+  const initialResultRef = useRef(Boolean(initialResult));
+
+  // After a fresh submit the user is still parked on the last question —
+  // bring the score into view so the result isn't missed (founder smoke
+  // 2026-07-14). Skip on revisits that load with a result already present.
+  useEffect(() => {
+    if (result && !initialResultRef.current) {
+      resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [result]);
 
   const currentQuestion = questions[currentIndex];
   const currentQuestionState = currentQuestion
@@ -489,7 +500,11 @@ export function TestRunner({
         states={navigatorStates}
       />
 
-      {result ? <ResultPanel result={result} /> : null}
+      {result ? (
+        <div ref={resultPanelRef}>
+          <ResultPanel result={result} />
+        </div>
+      ) : null}
 
       {result ? (
         <AnalysisPanel

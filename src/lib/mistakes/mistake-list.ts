@@ -62,6 +62,7 @@ export async function fetchMistakeItems(
   const topicIds = Array.from(new Set(data.map(d => d.topic_id).filter(Boolean))) as string[];
   const conceptIds = Array.from(new Set(data.map(d => d.concept_id).filter(Boolean))) as string[];
   const sessionIds = Array.from(new Set(data.map(d => d.session_id).filter(Boolean))) as string[];
+  const questionIds = Array.from(new Set(data.map(d => d.question_id).filter(Boolean))) as string[];
 
   const topicMap = new Map<string, string>();
   const conceptMap = new Map<string, string>();
@@ -100,10 +101,15 @@ export async function fetchMistakeItems(
   // Fetch stems best-effort from session_questions.prompt_snapshot
   if (sessionIds.length > 0) {
     try {
+      // Filter by question_id too: without it this pulled the full
+      // prompt_snapshot JSONB for EVERY question of every session that ever
+      // produced a mistake — the payload made /mistakes slow and could crash
+      // the serverless render (founder smoke 2026-07-14).
       const { data: sessionQuestionsData } = await supabase
         .from("session_questions")
         .select("session_id,question_id,prompt_snapshot")
-        .in("session_id", sessionIds);
+        .in("session_id", sessionIds)
+        .in("question_id", questionIds);
       if (sessionQuestionsData) {
         const { extractStem } = await import("@/lib/ai/jobs/question-context");
         sessionQuestionsData.forEach(sq => {
