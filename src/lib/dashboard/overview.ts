@@ -182,7 +182,9 @@ async function loadWeakTopics(
   return { weakTopics: buildWeakTopics(topics, masteryByTopicId) };
 }
 
-async function loadDueRetests(
+// Exported for reuse on /mistakes (TSP-186) — retests are due-date gated and
+// this is the single source for what is startable right now.
+export async function loadDueRetests(
   supabase: SupabaseClient,
   userId: string,
   examId: string

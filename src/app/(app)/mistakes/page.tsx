@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { DueRetests } from "@/components/dashboard/due-retests";
 import { MistakeItemRow } from "@/components/mistakes/mistake-item-row";
+import { loadDueRetests, type DueRetest } from "@/lib/dashboard/overview";
 import {
   fetchMistakeDetails,
   fetchMistakeItems,
@@ -85,6 +87,16 @@ export default async function MistakesPage({
             ))}
           </div>
         ) : null}
+      </div>
+
+      {/* Retest entry (TSP-186): retests unlock on their due date; this is the
+          same startable list as the dashboard card. */}
+      <div className="grid gap-2">
+        <DueRetests examId={examId} retests={data.dueRetests} />
+        <p className="text-xs text-muted-foreground">
+          Retests unlock on their scheduled date (spaced repetition). Mistakes you record here feed
+          the retest queue automatically.
+        </p>
       </div>
 
       {/* Filter controls */}
@@ -190,6 +202,7 @@ type MistakesData =
       exams: Exam[];
       mistakes: Awaited<ReturnType<typeof fetchMistakeItems>>;
       answerViews: Map<string, MistakeAnswerView>;
+      dueRetests: DueRetest[];
     };
 
 async function loadMistakesData(
@@ -233,7 +246,14 @@ async function loadMistakesData(
     mistakes.map((mistake) => mistake.id)
   );
 
-  return { configured: true, authed: true, examId, exams, mistakes, answerViews };
+  let dueRetests: DueRetest[] = [];
+  try {
+    dueRetests = (await loadDueRetests(supabase, user.id, examId)).dueRetests;
+  } catch (e) {
+    console.error("[mistakes] failed to load due retests", e);
+  }
+
+  return { configured: true, authed: true, examId, exams, mistakes, answerViews, dueRetests };
 }
 
 function isValidExamId(param: string | undefined, exams: Exam[]): param is string {

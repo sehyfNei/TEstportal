@@ -45,7 +45,7 @@ export function TestCatalog({ exams, topics, preselect }: TestCatalogProps) {
         >
           <p className="text-sm font-semibold">Mistake retest</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Re-attempt concepts you got wrong, from your mistake notebook.
+            Review your notebook and start due retests — they unlock on their scheduled date.
           </p>
         </Link>
       </div>
