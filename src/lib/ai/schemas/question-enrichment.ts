@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AiMessage } from "@/lib/ai/types";
 
 export const ENRICHMENT_SCHEMA_VERSION = "1.0.0";
-export const ENRICHMENT_PROMPT_VERSION = "question_enrichment@1.0.0";
+export const ENRICHMENT_PROMPT_VERSION = "question_enrichment@1.1.0";
 
 const difficultySchema = z.enum(["easy", "medium", "hard"]);
 
@@ -44,7 +44,11 @@ export function buildEnrichmentMessages(input: EnrichmentInput): AiMessage[] {
         "Generate a brief explanation under 80 words only when hasExplanation is false.",
         "When hasExplanation is true, set suggestedExplanation to null.",
         "Do not change answers, options, stems, topics, sources, or any fields outside difficulty and explanation.",
-        "Return only a JSON object matching the requested enrichment schema."
+        // Explicit shape required: naming "the requested schema" without
+        // spelling it out makes the model guess field names (validation_failed
+        // root cause seen in the analysis/plan prompts in production).
+        'Return ONLY a JSON object with exactly this shape: {"questions": [{"rowIndex": 0, "suggestedDifficulty": "easy|medium|hard", "suggestedExplanation": "string or null", "reasoning": "string"}]}.',
+        "Include one questions entry per supplied question, keeping rowIndex values exactly."
       ].join(" ")
     },
     {

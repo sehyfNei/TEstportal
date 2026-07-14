@@ -78,6 +78,12 @@ export default async function AdminQuestionsPage({ searchParams }: AdminQuestion
               >
                 Bulk import
               </Link>
+              <Link
+                className="rounded-md border border-border px-3 py-2 text-sm font-medium text-primary"
+                href="/admin/questions/backfill"
+              >
+                AI explanations
+              </Link>
               <span className="text-sm text-muted-foreground">
                 {data.total} question{data.total === 1 ? "" : "s"}
               </span>
