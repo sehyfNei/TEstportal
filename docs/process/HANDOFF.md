@@ -16426,3 +16426,33 @@ Commits: `75fc2d1` (TSP-185), `48c4a40` (TSP-186). Gates @ Test_Portal: typechec
 Facts: explanation lives on question_versions (via questions.current_version_id), NOT on questions — snapshots are answer-stripped by design, hence the RPC. Retests start-control was dashboard-only; /mistakes now embeds the same DueRetests card (loadDueRetests exported from overview.ts).
 
 Founder smoke: /mistakes -> expand "Show answer & explanation" on any mistake (your answer red/green vs correct + explanation); Due-retests card at top -> Start when due; catalog Mistake-retest card copy no longer promises instant retests.
+
+---
+
+# Session 56 - Architect Plan - TSP-182 + TSP-181 + TSP-187 (2026-07-14)
+
+Single-agent mode. Milestone M2 (Admin And Content Ops). Founder go received for S56+S57. Admin-redesign sequencing shifted one session (55 went to the mistake loop): **S56 = 182 upload + 181 composer + 187 backfill; S57 = 183 manifest builder + 184 admin home.**
+
+1. **TSP-182 - friendly bulk import.** Three parts, all backward compatible:
+   - `bulk-question-import.ts`: new **simple CSV format** - headers `question,option_a..option_f,correct_option,explanation,difficulty` (no UUIDs, no embedded JSON). Detected per-row by a non-empty `question` field without content/content_json. correct_option accepts letters (A-F) or 1-based numbers, multi-answer via comma/space -> auto-type msq. `parseBulkQuestionImportPayload(payload, format, defaults?)` gains optional `{examId, topicId}` defaults injected when a row omits them (wizard step 1 supplies both).
+   - Wizard compose step: **Upload file** input (.csv/.json read client-side via FileReader, format auto-set from extension) + **Download CSV template** button (Blob, example rows, no IDs needed).
+   - Wizard forms pass hidden examId/topicId; `importQuestionsAction` forwards them as parser defaults. Enrichment/override flow untouched (parsed rows carry resolved IDs).
+2. **TSP-181 - form composer.** `question-editor.tsx`: content-JSON textarea replaced by structured composer for mcq/msq/statement/assertion (stem textarea, 2-6 option rows add/remove, radio [single]/checkbox [multi] correct picker) and integer (numeric answer field). Composer assembles content JSON into a hidden `content` input - server contract unchanged. **Advanced JSON** toggle keeps raw editing; edit-mode content that doesn't fit the simple shape (pairs/images/match) opens in advanced mode automatically. Pure builder/parser helpers in new `src/lib/question-bank/question-content-form.ts` for unit tests.
+3. **TSP-187 - AI explanation backfill.** New `/admin/questions/backfill`: counts questions whose CURRENT version has empty explanation (live DB: 90 of 108), button "Generate for next 10". Server action loads batch (question metadata + current version content), one batched Groq call reusing the question_enrichment schema, writes each explanation via existing `update_admin_question` secdef RPC (new audited version, answers untouched). Per-question results listed; failures skip, never block the batch.
+
+No migrations. Gates: standard 4 in Test_Portal + unit tests for simple-CSV parser and composer helpers.
+
+---
+
+# Session 56 - Builder Handoff - TSP-182 + TSP-181 + TSP-187 (2026-07-14)
+
+Commits: `f0c9828` (182), `62c17f2` (181), `1093222` (187). Gates @ Test_Portal: typecheck 0 / lint 0 err + 8 warn / **451/451** (+14) / build clean.
+
+Facts worth keeping:
+- Simple CSV rows are detected by a non-empty `question` column (no content/content_json); exam/topic UUIDs come from wizard step 1 via parser `defaults` and hidden defaultExamId/defaultTopicId form fields. Multi-answer correct_option (e.g. "A,C") auto-types the row msq.
+- Composer writes content JSON into the same `content` form field - create/update server actions and RPCs untouched. Round-trip guard: content with pairs/images/custom keys opens in JSON mode instead of silently dropping fields.
+- Backfill uses `update_admin_question`, so every AI explanation is a NEW question version (reviewer note "AI explanation backfill."), rollback = retire/edit per question. Batch = 10 per click, one Groq call per batch, ~90 questions to cover.
+- question_enrichment prompt had the same "match the requested schema" bug as analysis/plan; now states the exact JSON shape (1.1.0). No test pins on this version string.
+- Vitest emits NO output when run in the OneDrive repo (exit 0, empty stdout) - run tests only in Test_Portal.
+
+Founder smoke (S56): /admin/questions/import -> download template, fill 2 rows in Excel, upload, validate, import; /admin/questions -> create a question with the new form (no JSON visible); /admin/questions/backfill -> Generate for next 10 -> expect ~10 updated cards, then /mistakes shows explanations for those questions.
