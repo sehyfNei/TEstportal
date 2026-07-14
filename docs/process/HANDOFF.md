@@ -16387,3 +16387,19 @@ typecheck 0 err · lint 0/6 pre-existing · test **430/430** (+5) · build clean
 
 ## Tracker
 TSP-110/111/146/147/148 -> Review / Claude (Builder). 181x18 verified. **Review queue: 46. Backlog: 43.** Agent-buildable remainder: TSP-094 audit viewer, TSP-086 streaks, TSP-087 pledge, TSP-033 PYQ metadata, TSP-161 fixed templates, TSP-119 escalation doc. Everything else founder-gated or M7.
+
+---
+
+# Admin UX Redesign - Founder directive + Architect scoping (2026-07-14)
+
+Founder review verdict: adding a question, bulk import, and manifest creation are unusable for a non-technical admin. Root causes confirmed in code: question editor exposes a raw content-JSON textarea; import wizard step 2 is paste-only (no file upload); manifest page is a bare JSON textarea.
+
+New tracker rows (Epic: Admin And Content Ops, M2):
+- **TSP-182 (Critical)** file upload + downloadable CSV template in the import wizard - founder's explicit ask, smallest slice, ships first.
+- **TSP-181 (Critical)** form-based question composer - stem field, option rows with add/remove, correct-answer radio/checkbox picker, explanation; assembles content JSON internally; Advanced JSON toggle for power use.
+- **TSP-183 (High)** guided manifest builder - exam fields + topic tree editor + marking scheme inputs; validates via existing manifest validator before submit.
+- **TSP-184 (Medium)** task-oriented /admin home - plain-language action cards, jargon out of the primary nav.
+
+Sequencing: Session 55 = TSP-182 + TSP-181 (question entry end to end). Session 56 = TSP-183 + TSP-184. Reuse contracts as-is: parseBulkQuestionImportPayload, adminQuestionFormSchema, create/update_admin_question RPCs, import_exam_manifest RPC - UI-only abstraction, no schema or RPC changes.
+
+Also repaired TSP-167's polluted Milestone cell (was "test 302/302").
