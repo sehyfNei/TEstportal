@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchReadinessScore } from "@/lib/scoring/readiness-query";
 import type { ReadinessScore } from "@/lib/scoring/readiness";
+import { loadStreakSummary, type StreakSummary } from "@/lib/dashboard/streaks";
 
 export type WeakTopic = {
   topicId: string;
@@ -46,6 +47,7 @@ export type DashboardOverview = {
   recentSessions: RecentSession[];
   unresolvedMistakeCount: number;
   strategyMetrics: StrategyMetrics | null;
+  streak: StreakSummary;
 };
 
 type TopicRow = {
@@ -116,14 +118,21 @@ export async function fetchDashboardOverview(
   userId: string,
   examId: string
 ): Promise<DashboardOverview> {
-  const [readinessResult, weakTopicsResult, retestsResult, sessionsResult, mistakeCountResult] =
-    await Promise.allSettled([
-      fetchReadinessScore(supabase, userId, examId),
-      loadWeakTopics(supabase, userId, examId),
-      loadDueRetests(supabase, userId, examId),
-      loadRecentSessions(supabase, userId, examId),
-      loadUnresolvedMistakeCount(supabase, userId, examId)
-    ]);
+  const [
+    readinessResult,
+    weakTopicsResult,
+    retestsResult,
+    sessionsResult,
+    mistakeCountResult,
+    streakResult
+  ] = await Promise.allSettled([
+    fetchReadinessScore(supabase, userId, examId),
+    loadWeakTopics(supabase, userId, examId),
+    loadDueRetests(supabase, userId, examId),
+    loadRecentSessions(supabase, userId, examId),
+    loadUnresolvedMistakeCount(supabase, userId, examId),
+    loadStreakSummary(supabase, userId)
+  ]);
 
   return {
     examId,
@@ -137,7 +146,11 @@ export async function fetchDashboardOverview(
     unresolvedMistakeCount:
       mistakeCountResult.status === "fulfilled" ? mistakeCountResult.value : 0,
     strategyMetrics:
-      sessionsResult.status === "fulfilled" ? sessionsResult.value.strategyMetrics : null
+      sessionsResult.status === "fulfilled" ? sessionsResult.value.strategyMetrics : null,
+    streak:
+      streakResult.status === "fulfilled"
+        ? streakResult.value
+        : { current: 0, longest: 0, lastActiveDay: null }
   };
 }
 

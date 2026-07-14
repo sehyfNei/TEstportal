@@ -4,6 +4,7 @@ import { NextActionCard } from "@/components/dashboard/next-action-card";
 import { ProgressTimeline } from "@/components/dashboard/progress-timeline";
 import { ReadinessCard } from "@/components/dashboard/readiness-card";
 import { StrategyMetricsCard } from "@/components/dashboard/strategy-metrics";
+import { StreakCard } from "@/components/dashboard/streak-card";
 import { WeakTopics } from "@/components/dashboard/weak-topics";
 import { fetchDashboardOverview } from "@/lib/dashboard/overview";
 import { fetchProgressTimeline, type TimelinePoint } from "@/lib/dashboard/timeline";
@@ -78,8 +79,10 @@ export default async function DashboardPage({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <ReadinessCard readiness={overview.readiness} />
-        <WeakTopics examId={examId} topics={overview.weakTopics} />
+        <StreakCard streak={overview.streak} />
       </div>
+
+      <WeakTopics examId={examId} topics={overview.weakTopics} />
 
       <DueRetests examId={examId} retests={overview.dueRetests} />
 
