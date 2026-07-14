@@ -17,6 +17,9 @@ type ReviewQuestionRow = {
   source: string;
   quality_tier: string;
   flag_count: number;
+  is_contested: boolean;
+  source_reference: string | null;
+  source_year: number | null;
   created_at: string;
   exams?: { name?: string | null; slug?: string | null } | null;
   topic?: { name?: string | null; slug?: string | null } | null;
@@ -123,8 +126,19 @@ function ReviewQuestionCard({
               </p>
               <h2 className="mt-2 text-base font-semibold leading-6">{text}</h2>
             </div>
-            <StatusPill status={question.status} />
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {question.is_contested ? <ContestedBadge /> : null}
+              <StatusPill status={question.status} />
+            </div>
           </div>
+
+          {question.is_contested ? (
+            <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-900/80">
+              Contested source or answer key — verify the explanation justifies the marked answer
+              before approving.
+              {contestedSource(question) ? ` Source: ${contestedSource(question)}.` : ""}
+            </p>
+          ) : null}
 
           <dl className="mt-4 grid gap-3 text-xs text-muted-foreground sm:grid-cols-5">
             <Meta label="Type" value={question.type} />
@@ -179,6 +193,20 @@ function StatusHistory({ events }: { events: StatusEventRow[] }) {
   );
 }
 
+function ContestedBadge() {
+  return (
+    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-800">
+      Contested
+    </span>
+  );
+}
+
+function contestedSource(question: ReviewQuestionRow): string {
+  return [question.source_reference, question.source_year ? String(question.source_year) : null]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function StatusPill({ status }: { status: QuestionStatus }) {
   return (
     <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground">
@@ -210,7 +238,7 @@ async function loadReviewData() {
   const questionsResult = await supabase
     .from("questions")
     .select(
-      "id,status,type,difficulty,source,quality_tier,flag_count,created_at,exams(name,slug),topic:topics!questions_topic_id_fkey(name,slug),current_version:question_versions!questions_current_version_fk(version,content,reviewer_notes)"
+      "id,status,type,difficulty,source,quality_tier,flag_count,is_contested,source_reference,source_year,created_at,exams(name,slug),topic:topics!questions_topic_id_fkey(name,slug),current_version:question_versions!questions_current_version_fk(version,content,reviewer_notes)"
     )
     .in("status", Array.from(REVIEW_STATUSES))
     .order("created_at", { ascending: false })

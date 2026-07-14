@@ -103,6 +103,13 @@ export default async function AdminQuestionDetailPage({
           <Meta label="Difficulty" value={data.question.difficulty} />
           <Meta label="Flags" value={String(data.question.flag_count)} />
         </dl>
+
+        {data.question.is_contested ? (
+          <ContestedNote
+            sourceReference={data.question.source_reference}
+            sourceYear={data.question.source_year}
+          />
+        ) : null}
       </div>
 
       <div className="rounded-xl border border-border bg-card shadow-card p-5">
@@ -137,6 +144,29 @@ function Meta({ label, value }: { label: string; value: string }) {
     <div>
       <dt>{label}</dt>
       <dd className="mt-1 font-medium text-foreground">{value.replaceAll("_", " ")}</dd>
+    </div>
+  );
+}
+
+function ContestedNote({
+  sourceReference,
+  sourceYear
+}: {
+  sourceReference: string | null;
+  sourceYear: number | null;
+}) {
+  const source = [sourceReference, sourceYear ? String(sourceYear) : null]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="mt-5 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm leading-6">
+      <p className="font-semibold text-amber-800">Contested source or answer key</p>
+      <p className="mt-1 text-amber-900/80">
+        The official key for this question is disputed. Review the explanation carefully before
+        approving, and prefer a clear justification in the explanation.
+        {source ? ` Source: ${source}.` : ""}
+      </p>
     </div>
   );
 }
