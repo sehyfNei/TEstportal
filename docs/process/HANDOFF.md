@@ -16365,3 +16365,25 @@ Single-agent mode. Milestone: M6. Scope and decisions:
 5. TSP-146: extend .github/workflows/ci.yml - PR/push: typecheck+lint+test+build; staging deploy on main (vercel CLI) + migration note + smoke gate (BASE_URL=staging pnpm smoke:deploy, blocks); production deploy on tag v* with GitHub environment manual approval. Deploy legs are conditioned on VERCEL_TOKEN/ORG/PROJECT secrets existing - inert until founder configures; honest Review remark (cannot execute: no working GitHub remote).
 
 Order: 110 -> 147 -> 148 -> 111 -> 146. One commit per row. Gates: standard 4 + DB gate for the flags migration (probe table, seed rows, RLS).
+
+---
+
+# Session 54 - Builder Handoff - TSP-110 + TSP-147 + TSP-148 + TSP-111 + TSP-146 (2026-07-14)
+
+Commits: runbooks (TSP-110 five files, TSP-147 `AI_PIPELINE_FAILURE`, TSP-148 `IMPORT_FAILURE` at f4d11d0), `0bafaef` TSP-111 feature flags, `3df6541` TSP-146 CI.
+
+## Verification (Test_Portal @ 3df6541)
+typecheck 0 err · lint 0/6 pre-existing · test **430/430** (+5) · build clean.
+**DB gate (TSP-111)**: migration `202607140001_feature_flags.sql` applied to LIVE DB via postgres pkg + DATABASE_URL; probed: 7 seed rows, RLS enabled, policies feature_flags_read + feature_flags_admin_write present. Rollback file in supabase/rollbacks/.
+
+## Notes
+- Flags are DB-backed: /admin/ops toggle takes effect immediately, no deploy (TSP-111 acceptance). chat_enabled wired as chat kill-switch (503). ai_analysis_enabled exists but is NOT yet wired into the analysis job path — wire when needed (one isFeatureEnabled call in the analysis enqueue or runner).
+- OneDrive node_modules cannot resolve dotenv from eval (used manual .env parse); Test_Portal unaffected.
+- CI deploy legs skip until founder sets VERCEL_TOKEN/ORG/PROJECT secrets + STAGING_URL/PRODUCTION_URL vars; production tag deploys need a required reviewer on the GitHub 'production' environment. Cannot execute at all until the GitHub PAT/remote is restored.
+
+## Remaining smoke (Sanity/founder)
+1. /admin/ops -> Feature flags section: toggle chat_enabled off -> chat POST returns 503 with friendly message -> toggle back on.
+2. Read the 7 runbooks once (acceptance requires review before launch).
+
+## Tracker
+TSP-110/111/146/147/148 -> Review / Claude (Builder). 181x18 verified. **Review queue: 46. Backlog: 43.** Agent-buildable remainder: TSP-094 audit viewer, TSP-086 streaks, TSP-087 pledge, TSP-033 PYQ metadata, TSP-161 fixed templates, TSP-119 escalation doc. Everything else founder-gated or M7.
