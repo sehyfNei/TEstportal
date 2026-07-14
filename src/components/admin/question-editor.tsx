@@ -16,10 +16,8 @@ import {
   QUESTION_STATUSES,
   QUESTION_TYPES
 } from "@/lib/db/schema/question";
-import {
-  defaultQuestionContent,
-  initialAdminQuestionActionState
-} from "@/lib/question-bank/admin-question-schema";
+import { initialAdminQuestionActionState } from "@/lib/question-bank/admin-question-schema";
+import { QuestionContentComposer } from "@/components/admin/question-content-composer";
 
 export type QuestionSelectOption = {
   id: string;
@@ -74,11 +72,8 @@ export function QuestionEditor({ mode, exams, topics, initialValue }: QuestionEd
   );
   const [qualityTier, setQualityTier] = useState(initialValue?.qualityTier ?? "bronze");
   const [exposurePolicy, setExposurePolicy] = useState(initialValue?.exposurePolicy ?? "practice");
+  const [questionType, setQuestionType] = useState(initialValue?.type ?? "mcq");
   const questionId = initialValue?.questionId ?? "";
-
-  const content = initialValue?.content
-    ? JSON.stringify(initialValue.content, null, 2)
-    : defaultQuestionContent();
 
   return (
     <div className="grid gap-5">
@@ -106,11 +101,12 @@ export function QuestionEditor({ mode, exams, topics, initialValue }: QuestionEd
             options={topics}
             value={initialValue?.subtopicId ?? undefined}
           />
-          <EnumField
+          <ControlledEnumField
             label="Question type"
             name="type"
+            onChange={setQuestionType}
             options={QUESTION_TYPES}
-            value={initialValue?.type ?? "mcq"}
+            value={questionType}
           />
           <EnumField
             label="Difficulty"
@@ -178,15 +174,7 @@ export function QuestionEditor({ mode, exams, topics, initialValue }: QuestionEd
           Contested source/key
         </label>
 
-        <label className="grid gap-2 text-sm font-medium">
-          Version content JSON
-          <textarea
-            className="min-h-[320px] rounded-md border border-border bg-background p-3 font-mono text-sm outline-none focus:border-primary"
-            defaultValue={content}
-            name="content"
-            spellCheck={false}
-          />
-        </label>
+        <QuestionContentComposer initialContent={initialValue?.content} type={questionType} />
 
         <label className="grid gap-2 text-sm font-medium">
           Explanation
