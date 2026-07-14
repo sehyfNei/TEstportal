@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -32,3 +34,59 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Build
+        run: pnpm build
+
+  # Staging: auto-deploy on merge to main, then smoke-gate. Requires secrets
+  # VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID and a STAGING_URL var —
+  # inert (skipped) until the founder configures them (TSP-102).
+  deploy-staging:
+    needs: quality
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.STAGING_URL != ''
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Vercel (staging)
+        run: |
+          npx vercel deploy --prebuilt=false --token "$VERCEL_TOKEN" --yes \
+            --scope "$VERCEL_ORG_ID" > deploy-url.txt || npx vercel deploy --token "$VERCEL_TOKEN" --yes > deploy-url.txt
+          echo "Deployed: $(cat deploy-url.txt)"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      # Migrations are applied manually per docs/ops/MIGRATION_ROLLBACK.md
+      # (expand -> migrate -> contract, with per-file rollback scripts).
+      # Automating them here needs a staging DATABASE_URL secret — deliberate
+      # founder decision, do not add silently.
+      - name: Migration reminder
+        run: echo "Apply pending supabase/migrations against STAGING before relying on this deploy (see docs/ops/MIGRATION_ROLLBACK.md)."
+
+      - name: Post-deploy smoke gate (blocks on failure)
+        run: BASE_URL="${{ vars.STAGING_URL }}" node scripts/post-deploy-smoke.mjs
+
+  # Production: tag-triggered (v*), gated by the 'production' GitHub
+  # environment — configure a required reviewer on that environment for the
+  # manual approval step.
+  deploy-production:
+    needs: quality
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PRODUCTION_URL != ''
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Vercel (production)
+        run: npx vercel deploy --prod --token "$VERCEL_TOKEN" --yes
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Post-deploy smoke gate (blocks on failure)
+        run: BASE_URL="${{ vars.PRODUCTION_URL }}" node scripts/post-deploy-smoke.mjs
