@@ -16403,3 +16403,14 @@ New tracker rows (Epic: Admin And Content Ops, M2):
 Sequencing: Session 55 = TSP-182 + TSP-181 (question entry end to end). Session 56 = TSP-183 + TSP-184. Reuse contracts as-is: parseBulkQuestionImportPayload, adminQuestionFormSchema, create/update_admin_question RPCs, import_exam_manifest RPC - UI-only abstraction, no schema or RPC changes.
 
 Also repaired TSP-167's polluted Milestone cell (was "test 302/302").
+
+---
+
+# Session 55 - Architect Plan - TSP-185 + TSP-186 (2026-07-14)
+
+Single-agent mode. Milestone M4 (mistake recovery loop), driven by founder review.
+
+1. **TSP-185**: migration `202607140002_mistake_details.sql` - security-definer RPC `get_mistake_details(p_mistake_ids uuid[])` returning (mistake_id, question_type, options jsonb, correct_options jsonb, selected_answer jsonb, explanation text) ONLY for mistake_items rows owned by auth.uid() (join questions->current version content + session_answers for the user's pick). Revoke public/anon, grant authenticated. Apply live + rollback file. Server-side: `fetchMistakeDetails` in mistake-list.ts (batched, never throws); page passes details into MistakeItemRow; UI: native <details> "Show answer & explanation" per row - your answer vs correct answer (option text, red/green), explanation paragraph. Unit tests for the pure index->text mapper.
+2. **TSP-186**: /mistakes gains the dashboard's DueRetests card (client component reuse, needs examId + DueRetest[] via loadDueRetests-equivalent fetch in the page) + one-line copy "Retests unlock on their due date". Catalog card copy updated to say retests start from here when due.
+
+Order: 185 -> 186. Gates: standard 4 + DB gate (RPC exists, anon revoked, owner isolation probed with the two test users).
