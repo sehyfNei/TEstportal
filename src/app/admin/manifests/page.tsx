@@ -1,3 +1,4 @@
+import { ManifestBuilder } from "@/components/admin/manifest-builder";
 import { ManifestValidator } from "@/components/admin/manifest-validator";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
@@ -27,15 +28,28 @@ export default async function AdminManifestsPage() {
   return (
     <section className="grid gap-8">
       <div>
-        <p className="text-sm font-medium text-primary">Exam Template Store</p>
-        <h1 className="mt-2 text-3xl font-semibold">Manifest import</h1>
+        <p className="text-sm font-medium text-primary">Exams</p>
+        <h1 className="mt-2 text-3xl font-semibold">Set up an exam</h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-          Paste an exam manifest to validate the schema and import the exam hierarchy. This keeps
-          new exams configurable through JSON instead of code changes.
+          Fill in the exam basics and its topics; the portal builds and checks everything else for
+          you. Once the exam exists, add questions to its topics from the Question Bank.
         </p>
       </div>
 
-      <ManifestValidator />
+      <ManifestBuilder />
+
+      <details className="rounded-xl border border-border bg-card shadow-card p-5">
+        <summary className="cursor-pointer text-sm font-semibold">
+          Advanced: import a full manifest as JSON
+        </summary>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          For sections, subtopics, concepts, and historical cutoffs, paste a complete manifest
+          here. The guided form above covers the common case.
+        </p>
+        <div className="mt-4">
+          <ManifestValidator />
+        </div>
+      </details>
 
       {manifests.length > 0 ? (
         <section className="grid gap-4">
