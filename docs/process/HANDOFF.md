@@ -16414,3 +16414,15 @@ Single-agent mode. Milestone M4 (mistake recovery loop), driven by founder revie
 2. **TSP-186**: /mistakes gains the dashboard's DueRetests card (client component reuse, needs examId + DueRetest[] via loadDueRetests-equivalent fetch in the page) + one-line copy "Retests unlock on their due date". Catalog card copy updated to say retests start from here when due.
 
 Order: 185 -> 186. Gates: standard 4 + DB gate (RPC exists, anon revoked, owner isolation probed with the two test users).
+
+---
+
+# Session 55 - Builder Handoff - TSP-185 + TSP-186 (2026-07-14)
+
+Commits: `75fc2d1` (TSP-185), `48c4a40` (TSP-186). Gates @ Test_Portal: typecheck 0 / lint 0+6warn / **437/437** (+7) / build clean.
+
+**DB gate**: `202607140002_mistake_details.sql` applied LIVE — get_mistake_details is security definer, exec granted to authenticated only, called with null auth returns 0 rows (owner isolation), data-shape probe confirmed options/correct_options/selected_answer join. Rollback file present.
+
+Facts: explanation lives on question_versions (via questions.current_version_id), NOT on questions — snapshots are answer-stripped by design, hence the RPC. Retests start-control was dashboard-only; /mistakes now embeds the same DueRetests card (loadDueRetests exported from overview.ts).
+
+Founder smoke: /mistakes -> expand "Show answer & explanation" on any mistake (your answer red/green vs correct + explanation); Due-retests card at top -> Start when due; catalog Mistake-retest card copy no longer promises instant retests.
