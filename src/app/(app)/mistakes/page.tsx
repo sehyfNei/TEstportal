@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { MistakeItemRow } from "@/components/mistakes/mistake-item-row";
-import { fetchMistakeItems, MISTAKE_TYPE_LABELS } from "@/lib/mistakes/mistake-list";
+import {
+  fetchMistakeDetails,
+  fetchMistakeItems,
+  MISTAKE_TYPE_LABELS,
+  type MistakeAnswerView
+} from "@/lib/mistakes/mistake-list";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -159,7 +164,11 @@ export default async function MistakesPage({
               </h2>
               <ul className="grid gap-4">
                 {items.map((mistake) => (
-                  <MistakeItemRow key={mistake.id} mistake={mistake} />
+                  <MistakeItemRow
+                    answerView={data.answerViews.get(mistake.id) ?? null}
+                    key={mistake.id}
+                    mistake={mistake}
+                  />
                 ))}
               </ul>
             </div>
@@ -180,6 +189,7 @@ type MistakesData =
       examId: string;
       exams: Exam[];
       mistakes: Awaited<ReturnType<typeof fetchMistakeItems>>;
+      answerViews: Map<string, MistakeAnswerView>;
     };
 
 async function loadMistakesData(
@@ -218,8 +228,12 @@ async function loadMistakesData(
     status: statusParam === "all" ? undefined : statusParam,
     mistakeType: typeParam
   });
+  const answerViews = await fetchMistakeDetails(
+    supabase,
+    mistakes.map((mistake) => mistake.id)
+  );
 
-  return { configured: true, authed: true, examId, exams, mistakes };
+  return { configured: true, authed: true, examId, exams, mistakes, answerViews };
 }
 
 function isValidExamId(param: string | undefined, exams: Exam[]): param is string {

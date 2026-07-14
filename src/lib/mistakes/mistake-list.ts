@@ -30,6 +30,90 @@ export type MistakeListItem = {
 
 export type MistakeFilters = { status?: string; mistakeType?: string };
 
+// Raw row from the get_mistake_details RPC (owner-checked, security definer —
+// snapshots are answer-stripped so this is the only student-safe source of
+// correct answers and explanations).
+export type MistakeDetailRow = {
+  mistake_id: string;
+  question_type: string | null;
+  options: unknown;
+  correct_options: unknown;
+  selected_answer: unknown;
+  explanation: string | null;
+};
+
+export type MistakeAnswerView = {
+  yourAnswers: string[];
+  correctAnswers: string[];
+  wasCorrect: boolean;
+  explanation: string | null;
+};
+
+export async function fetchMistakeDetails(
+  supabase: SupabaseClient,
+  mistakeIds: string[]
+): Promise<Map<string, MistakeAnswerView>> {
+  const views = new Map<string, MistakeAnswerView>();
+  if (mistakeIds.length === 0) {
+    return views;
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("get_mistake_details", {
+      p_mistake_ids: mistakeIds
+    });
+    if (error || !Array.isArray(data)) {
+      return views;
+    }
+
+    for (const row of data as MistakeDetailRow[]) {
+      views.set(row.mistake_id, buildAnswerView(row));
+    }
+  } catch (e) {
+    console.error("[mistake-list] failed to fetch mistake details", e);
+  }
+
+  return views;
+}
+
+// Pure: maps option indices to option text. Exported for unit tests.
+export function buildAnswerView(row: MistakeDetailRow): MistakeAnswerView {
+  const options = Array.isArray(row.options)
+    ? row.options.map((option) => String(option))
+    : [];
+
+  const correctIdx = toIndexArray(row.correct_options);
+  const selected = row.selected_answer as { options?: unknown } | null;
+  const yourIdx = toIndexArray(selected?.options);
+
+  const label = (index: number) =>
+    options[index] !== undefined ? options[index] : `Option ${index + 1}`;
+
+  const correctAnswers = correctIdx.map(label);
+  const yourAnswers = yourIdx.map(label);
+  const wasCorrect =
+    yourIdx.length > 0 &&
+    yourIdx.length === correctIdx.length &&
+    yourIdx.every((index) => correctIdx.includes(index));
+
+  return {
+    yourAnswers,
+    correctAnswers,
+    wasCorrect,
+    explanation: row.explanation?.trim() ? row.explanation.trim() : null
+  };
+}
+
+function toIndexArray(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry >= 0);
+}
+
 // Returns the user's mistakes for one exam, newest first, with topic/concept
 // names joined and a best-effort answer-stripped stem. Never throws on a bad
 // optional join — degrades to null labels.

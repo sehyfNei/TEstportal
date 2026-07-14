@@ -3,15 +3,20 @@
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { resolveMistakeAction, type ResolveMistakeState } from "@/app/mistakes/actions";
-import { MISTAKE_TYPE_LABELS, type MistakeListItem } from "@/lib/mistakes/mistake-list";
+import {
+  MISTAKE_TYPE_LABELS,
+  type MistakeAnswerView,
+  type MistakeListItem
+} from "@/lib/mistakes/mistake-list";
 
 const initialResolveMistakeState: ResolveMistakeState = { ok: false, message: "" };
 
 type Props = {
   mistake: MistakeListItem;
+  answerView?: MistakeAnswerView | null;
 };
 
-export function MistakeItemRow({ mistake }: Props) {
+export function MistakeItemRow({ mistake, answerView }: Props) {
   const router = useRouter();
   const [stateReviewed, formActionReviewed, isPendingReviewed] = useActionState(
     resolveMistakeAction,
@@ -84,6 +89,41 @@ export function MistakeItemRow({ mistake }: Props) {
             </span>
           ) : null}
         </div>
+
+        {answerView ? (
+          <details className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-primary">
+              Show answer &amp; explanation
+            </summary>
+            <div className="mt-2 grid gap-2 text-sm leading-6">
+              <p>
+                <span className="font-medium">Your answer:</span>{" "}
+                {answerView.yourAnswers.length > 0 ? (
+                  <span className={answerView.wasCorrect ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}>
+                    {answerView.yourAnswers.join(", ")}
+                  </span>
+                ) : (
+                  <span className="italic text-muted-foreground">Not attempted</span>
+                )}
+              </p>
+              <p>
+                <span className="font-medium">Correct answer:</span>{" "}
+                <span className="text-emerald-700 dark:text-emerald-400">
+                  {answerView.correctAnswers.length > 0
+                    ? answerView.correctAnswers.join(", ")
+                    : "Unavailable"}
+                </span>
+              </p>
+              {answerView.explanation ? (
+                <p className="text-muted-foreground">
+                  <span className="font-medium text-foreground">Why:</span> {answerView.explanation}
+                </p>
+              ) : (
+                <p className="italic text-muted-foreground">No explanation added yet for this question.</p>
+              )}
+            </div>
+          </details>
+        ) : null}
 
         {!state.ok && state.message ? (
           <p className="mt-2 text-xs text-red-600 font-medium">{state.message}</p>
