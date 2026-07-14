@@ -1,118 +1,118 @@
 import Link from "next/link";
 
-type SectionStatus = "live" | "phase-1" | "phase-1.5";
-
-const sections: {
-  title: string;
+type TaskLink = {
+  label: string;
   description: string;
-  href?: string;
-  linkLabel?: string;
-  status: SectionStatus;
-}[] = [
+  href: string;
+};
+
+type TaskGroup = {
+  title: string;
+  intro: string;
+  links: TaskLink[];
+};
+
+const taskGroups: TaskGroup[] = [
   {
-    title: "Exam manifest engine",
-    description:
-      "Import syllabus, topics, concepts, marking rules, and historical cutoffs via JSON manifest.",
-    href: "/admin/manifests",
-    linkLabel: "Open manifest validator",
-    status: "live"
+    title: "Add questions",
+    intro: "Grow the question bank — one at a time or in bulk.",
+    links: [
+      {
+        label: "Write a question",
+        description: "A simple form: question, options, tick the right answer, explanation.",
+        href: "/admin/questions"
+      },
+      {
+        label: "Import many questions",
+        description: "Download the spreadsheet template, fill it, upload it back. No coding.",
+        href: "/admin/questions/import"
+      },
+      {
+        label: "Fill in missing explanations with AI",
+        description: "Generates explanations for imported questions that have none, ten at a time.",
+        href: "/admin/questions/backfill"
+      }
+    ]
   },
   {
-    title: "Question CRUD",
-    description: "Create, edit, and retire individual questions while preserving full version history.",
-    href: "/admin/questions",
-    linkLabel: "Open question CRUD",
-    status: "live"
+    title: "Set up an exam",
+    intro: "Create a new exam or change its topics and marking rules.",
+    links: [
+      {
+        label: "Create or update an exam",
+        description: "Guided form: name, duration, marking, topics. The portal handles the rest.",
+        href: "/admin/manifests"
+      }
+    ]
   },
   {
-    title: "Bulk question import",
-    description: "Upload questions in bulk via JSON or CSV with per-row validation and error reports.",
-    href: "/admin/questions/import",
-    linkLabel: "Open bulk import",
-    status: "live"
+    title: "Review quality",
+    intro: "Approve new questions and act on what students report.",
+    links: [
+      {
+        label: "Approve draft questions",
+        description: "Only approved questions appear in student tests.",
+        href: "/admin/questions/review"
+      },
+      {
+        label: "Questions students flagged",
+        description: "Reported errors and bad questions; 3 flags auto-quarantines a question.",
+        href: "/admin/questions/flags"
+      },
+      {
+        label: "AI answers students disliked",
+        description: "AI explanations rated unhelpful, with a link to the session for context.",
+        href: "/admin/ai-ratings"
+      }
+    ]
   },
   {
-    title: "Review and approval workflow",
-    description: "Approve, reject, and publish draft questions. Only approved questions appear in tests.",
-    href: "/admin/questions/review",
-    linkLabel: "Open review queue",
-    status: "live"
-  },
-  {
-    title: "Flagged content queue",
-    description: "Review AI explanations users reported as unhelpful, then open the session for context.",
-    href: "/admin/ai-ratings",
-    linkLabel: "Open flagged queue",
-    status: "live"
-  },
-  {
-    title: "Jobs monitor",
-    description: "Inspect failed, pending, and dead background jobs. Retry important jobs from this view.",
-    href: "/admin/jobs",
-    linkLabel: "Open jobs monitor",
-    status: "live"
-  },
-  {
-    title: "Question flag queue",
-    description: "Review user-reported question flags. Auto-quarantine triggers at 3 distinct open flags per question.",
-    href: "/admin/questions/flags",
-    linkLabel: "Open flag queue",
-    status: "live"
-  },
-  {
-    title: "Audit log",
-    description: "View admin actions, role changes, question approvals, and manifest imports with filters.",
-    status: "phase-1"
-  },
-  {
-    title: "Question quality analytics",
-    description: "Track difficulty index, discrimination, flag spikes, and quality tier distribution per exam.",
-    status: "phase-1.5"
+    title: "Keep it running",
+    intro: "Health checks for the platform — worth a daily glance.",
+    links: [
+      {
+        label: "Health dashboard",
+        description: "Queue, failures, AI spend, and feature switches (turn AI features on/off).",
+        href: "/admin/ops"
+      },
+      {
+        label: "Background jobs",
+        description: "AI analysis and other jobs; retry anything that failed.",
+        href: "/admin/jobs"
+      }
+    ]
   }
 ];
-
-const statusLabel: Record<SectionStatus, string> = {
-  live: "Live",
-  "phase-1": "Phase 1",
-  "phase-1.5": "Phase 1.5"
-};
-
-const statusClass: Record<SectionStatus, string> = {
-  live: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  "phase-1": "bg-blue-50 text-blue-700 ring-blue-600/20",
-  "phase-1.5": "bg-slate-100 text-slate-600 ring-slate-500/20"
-};
 
 export default function AdminPage() {
   return (
     <section className="grid gap-6">
       <div>
         <p className="text-sm font-medium text-primary">Admin console</p>
-        <h1 className="mt-2 text-3xl font-semibold">Overview</h1>
+        <h1 className="mt-2 text-3xl font-semibold">What would you like to do?</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Content operations and platform management for the Test Series Portal.
+          Everything here is grouped by task. The most common day-to-day job is adding questions
+          and approving them so they reach students.
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {sections.map((section) => (
-          <div className="rounded-xl border border-border bg-card shadow-card p-5" key={section.title}>
-            <div className="flex items-start justify-between gap-3">
-              <h2 className="text-sm font-semibold leading-5">{section.title}</h2>
-              <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
-                  statusClass[section.status]
-                }`}
-              >
-                {statusLabel[section.status]}
-              </span>
+      <div className="grid gap-4 md:grid-cols-2">
+        {taskGroups.map((group) => (
+          <div className="rounded-xl border border-border bg-card shadow-card p-5" key={group.title}>
+            <h2 className="text-lg font-semibold">{group.title}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{group.intro}</p>
+            <div className="mt-4 grid gap-3">
+              {group.links.map((link) => (
+                <Link
+                  className="rounded-md border border-border bg-background p-3 transition hover:border-primary"
+                  href={link.href}
+                  key={link.href}
+                >
+                  <p className="text-sm font-semibold text-primary">{link.label}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{link.description}</p>
+                </Link>
+              ))}
             </div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">{section.description}</p>
-            {section.href && section.linkLabel ? (
-              <Link className="mt-4 inline-flex text-xs font-medium text-primary" href={section.href}>
-                {section.linkLabel}
-              </Link>
-            ) : null}
           </div>
         ))}
       </div>

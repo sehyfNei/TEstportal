@@ -5,15 +5,15 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const links = [
-  { href: "/admin", label: "Overview", exact: true },
-  { href: "/admin/manifests", label: "Manifests", exact: false },
+  { href: "/admin", label: "Home", exact: true },
+  { href: "/admin/manifests", label: "Exams", exact: false },
   { href: "/admin/questions/review", label: "Review", exact: false },
   { href: "/admin/questions/import", label: "Import", exact: true },
   { href: "/admin/questions", label: "Questions", exact: true },
   { href: "/admin/ai-ratings", label: "AI ratings", exact: false },
   { href: "/admin/questions/flags", label: "Flagged", exact: false },
   { href: "/admin/jobs", label: "Jobs", exact: false },
-  { href: "/admin/ops", label: "Ops", exact: false }
+  { href: "/admin/ops", label: "Health", exact: false }
 ];
 
 export function AdminNav() {
