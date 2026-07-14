@@ -16456,3 +16456,29 @@ Facts worth keeping:
 - Vitest emits NO output when run in the OneDrive repo (exit 0, empty stdout) - run tests only in Test_Portal.
 
 Founder smoke (S56): /admin/questions/import -> download template, fill 2 rows in Excel, upload, validate, import; /admin/questions -> create a question with the new form (no JSON visible); /admin/questions/backfill -> Generate for next 10 -> expect ~10 updated cards, then /mistakes shows explanations for those questions.
+
+---
+
+# Session 57 - Architect Plan - TSP-183 + TSP-184 (2026-07-14)
+
+Single-agent mode, founder go received with S56. Milestone M2.
+
+1. **TSP-183 - guided manifest builder.** Pure lib `src/lib/exam/manifest-builder.ts`: form value (exam name, duration, total questions, marks per correct, negative-marking choice, topic rows name+optional weight) -> full manifest object (slug auto-derived + deduped, single "general" section, schemaVersion 1.0, all six question types) validated through the EXISTING createManifestImportPlan. Client `manifest-builder.tsx`: plain-language fields, add/remove topic rows, live validation summary, submits JSON via hidden `manifest` field to the untouched importManifestAction. /admin/manifests: builder first, raw-JSON validator kept under a details fold for power users.
+2. **TSP-184 - task-oriented admin home.** /admin overview cards regrouped by admin JOB (Add questions / Set up an exam / Review quality / Keep it running) with plain-language copy and direct links incl. new backfill page; roadmap-status chips dropped. Admin nav relabelled (Home, Exams, ...).
+
+No schema/RPC/action changes. Gates: standard 4 + manifest-builder unit tests.
+
+---
+
+# Session 57 - Builder Handoff - TSP-183 + TSP-184 (2026-07-14)
+
+Commits: `bacf524` (183), `40b3275` (184). Gates @ Test_Portal: typecheck 0 / lint 0 err + 8 warn / **456/456** (+5) / build clean.
+
+Facts worth keeping:
+- The builder emits supportedQuestionTypes = all six types and a single "general" section sized to totalQuestions; sections/subtopics/concepts/cutoffs remain JSON-only (Advanced fold on /admin/manifests).
+- buildManifestFromForm runs createManifestImportPlan client-side, so builder output can never fail the importer's schema/reference checks; re-importing an existing slug bumps the manifest version (existing RPC semantics).
+- Admin nav labels changed (Home/Exams/Health) - screenshots in older docs may show the old names.
+
+Founder smoke (S57): /admin -> task cards navigate correctly; /admin/manifests -> create a small test exam (2 topics) via the form -> it appears under Existing manifests and in the student catalog exam dropdown; Advanced fold still validates/imports raw JSON.
+
+**Admin UX redesign (TSP-181-184) is now fully built.** With TSP-187, the founder content path is: create exam via form -> download CSV template -> fill in Excel -> upload -> AI-enrich/import -> backfill explanations -> approve in review queue.
