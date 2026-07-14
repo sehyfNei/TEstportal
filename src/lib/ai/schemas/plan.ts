@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AiMessage } from "@/lib/ai/types";
 
 export const PLAN_SCHEMA_VERSION = "1.0.0";
-export const PLAN_PROMPT_VERSION = "improvement_plan@1.0.0";
+export const PLAN_PROMPT_VERSION = "improvement_plan@1.1.0";
 
 export const planWeakTopicInputSchema = z.object({
   topicName: z.string(),
@@ -66,7 +66,11 @@ export function buildPlanMessages(input: PlanInput): AiMessage[] {
         "Do not recompute any score and do not invent topics: base prioritizedTopics only on the supplied weakTopics, keeping their topicName values exactly.",
         "Order prioritizedTopics from most to least urgent, consistent with the supplied priority values.",
         "Write concrete, study-focused rationales and focus actions grounded only in the supplied data.",
-        "Return only a JSON object matching the requested plan schema."
+        // The model must be told the exact output shape: omitting it caused
+        // recurring validation_failed (overallStrategy/nextActions Required)
+        // in production — the model guessed field names.
+        'Return ONLY a JSON object with exactly this shape: {"overallStrategy": "one-paragraph strategy string", "prioritizedTopics": [{"topicName": "exact supplied topic name", "rationale": "why this topic first", "focusActions": ["specific study action", "..."]}], "nextActions": ["immediate next step", "..."]}.',
+        "All three top-level keys are required; prioritizedTopics and nextActions must be non-empty arrays; every prioritizedTopics entry needs all three keys."
       ].join(" ")
     },
     {

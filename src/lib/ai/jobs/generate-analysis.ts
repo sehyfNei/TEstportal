@@ -279,7 +279,10 @@ export function createSupabaseAnalysisStore(supabase: SupabaseClient): AnalysisJ
     const { data: sessionQuestions, error: sessionQuestionsError } = await supabase
       .from("session_questions")
       .select(
-        "question_id,sequence,prompt_snapshot,questions(type,topic_id,topics(name)),question_versions(content)"
+        // topics must be disambiguated: questions has two FKs into topics
+        // (topic_id and subtopic_id) and PostgREST rejects a bare topics()
+        // embed ("more than one relationship was found").
+        "question_id,sequence,prompt_snapshot,questions(type,topic_id,topics!questions_topic_id_fkey(name)),question_versions(content)"
       )
       .eq("session_id", resultRow.session_id)
       .order("sequence");
