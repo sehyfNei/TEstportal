@@ -13,7 +13,8 @@ import {
 import {
   type BulkQuestionImportFormat,
   type BulkQuestionImportInput,
-  parseBulkQuestionImportPayload
+  parseBulkQuestionImportPayload,
+  SIMPLE_QUESTION_CSV_TEMPLATE
 } from "@/lib/question-bank/bulk-question-import";
 
 type ExamOption = {
@@ -49,7 +50,7 @@ const emptyValidation: ClientValidation = {
   totalRows: 0,
   validRows: 0,
   errors: 0,
-  message: "Paste JSON or CSV rows to preview validation."
+  message: "Upload a file or paste rows to preview validation."
 };
 
 const selectClass =
@@ -65,6 +66,7 @@ export function QuestionImportWizard({ exams }: QuestionImportWizardProps) {
   const [topicLoadError, setTopicLoadError] = useState("");
   const [format, setFormat] = useState<BulkQuestionImportFormat>("json");
   const [payload, setPayload] = useState("");
+  const [uploadNotice, setUploadNotice] = useState("");
   const [clientValidation, setClientValidation] = useState<ClientValidation>(emptyValidation);
   const validationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topicRequestId = useRef(0);
@@ -87,7 +89,10 @@ export function QuestionImportWizard({ exams }: QuestionImportWizardProps) {
         return;
       }
 
-      const plan = parseBulkQuestionImportPayload(trimmedPayload, format);
+      const plan = parseBulkQuestionImportPayload(trimmedPayload, format, {
+        examId: examId || undefined,
+        topicId: topicId || undefined
+      });
       const totalRows = plan.questions.length + plan.errors.length;
 
       setClientValidation({
@@ -105,7 +110,7 @@ export function QuestionImportWizard({ exams }: QuestionImportWizardProps) {
         clearTimeout(validationTimer.current);
       }
     };
-  }, [format, payload]);
+  }, [examId, format, payload, topicId]);
 
   function handleExamChange(nextExamId: string) {
     const requestId = topicRequestId.current + 1;
@@ -152,6 +157,36 @@ export function QuestionImportWizard({ exams }: QuestionImportWizardProps) {
 
     setPayload((currentPayload) => (currentPayload.trim() ? currentPayload : nextTemplate));
     setStep("compose");
+  }
+
+  function handleFileUpload(file: File | undefined) {
+    if (!file) return;
+
+    const nextFormat: BulkQuestionImportFormat = file.name.toLowerCase().endsWith(".json")
+      ? "json"
+      : "csv";
+
+    void file
+      .text()
+      .then((text) => {
+        setFormat(nextFormat);
+        setPayload(text);
+        setUploadNotice(`Loaded ${file.name} (${nextFormat.toUpperCase()}).`);
+      })
+      .catch(() => {
+        setUploadNotice("The file could not be read. Try again or paste the rows instead.");
+      });
+  }
+
+  function handleDownloadTemplate() {
+    const blob = new Blob([SIMPLE_QUESTION_CSV_TEMPLATE], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = "question-import-template.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -233,9 +268,10 @@ export function QuestionImportWizard({ exams }: QuestionImportWizardProps) {
         <section className="rounded-xl border border-border bg-card shadow-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h2 className="text-lg font-semibold">Compose payload</h2>
+              <h2 className="text-lg font-semibold">Add your questions</h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Use the pre-filled template or paste a larger batch for the selected exam and topic.
+                Easiest path: download the CSV template, fill it in a spreadsheet, and upload the
+                file. You can also paste rows directly below.
               </p>
             </div>
             <div className="flex rounded-md border border-border p-1">
@@ -256,9 +292,45 @@ export function QuestionImportWizard({ exams }: QuestionImportWizardProps) {
             </div>
           </div>
 
-          <details className="mt-5 rounded-xl border border-border bg-background p-4" open>
+          <div className="mt-5 grid gap-3 rounded-xl border border-border bg-background p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                className={`${buttonBase} border border-border text-primary hover:border-primary`}
+                type="button"
+                onClick={handleDownloadTemplate}
+              >
+                Download CSV template
+              </button>
+              <label
+                className={`${buttonBase} inline-flex cursor-pointer items-center border border-border text-primary hover:border-primary`}
+              >
+                Upload file (.csv or .json)
+                <input
+                  accept=".csv,.json,text/csv,application/json"
+                  className="sr-only"
+                  type="file"
+                  onChange={(event) => {
+                    handleFileUpload(event.target.files?.[0]);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            <p className="text-xs leading-5 text-muted-foreground">
+              The template needs no IDs or code: one row per question with columns for the
+              question, options A-D, the correct option letter, an optional explanation, and
+              difficulty. Exam and topic come from your selection in step 1.
+            </p>
+            {uploadNotice ? (
+              <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+                {uploadNotice}
+              </p>
+            ) : null}
+          </div>
+
+          <details className="mt-5 rounded-xl border border-border bg-background p-4">
             <summary className="cursor-pointer text-sm font-semibold">
-              Template with selected IDs
+              Prefer pasting? View the {format.toUpperCase()} template
             </summary>
             <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-muted p-3 text-xs leading-5 text-muted-foreground">
               {template}
@@ -307,10 +379,12 @@ export function QuestionImportWizard({ exams }: QuestionImportWizardProps) {
       {step === "preview" ? (
         <PreviewStep
           key={`${format}:${payload}`}
+          examId={examId}
           format={format}
           payload={payload}
           selectedExam={selectedExam?.name ?? "Selected exam"}
           selectedTopic={selectedTopic?.name ?? "Selected topic"}
+          topicId={topicId}
           onBack={() => setStep("compose")}
         />
       ) : null}
@@ -375,17 +449,21 @@ function ClientValidationSummary({ validation }: { validation: ClientValidation 
 }
 
 function PreviewStep({
+  examId,
   format,
   onBack,
   payload,
   selectedExam,
-  selectedTopic
+  selectedTopic,
+  topicId
 }: {
+  examId: string;
   format: BulkQuestionImportFormat;
   onBack: () => void;
   payload: string;
   selectedExam: string;
   selectedTopic: string;
+  topicId: string;
 }) {
   const dryRunFormRef = useRef<HTMLFormElement>(null);
   const [dryRunState, dryRunAction, isDryRunPending] = useActionState(
@@ -403,8 +481,12 @@ function PreviewStep({
   const [effectivePayload, setEffectivePayload] = useState(payload);
   const [isEnriching, startEnrichTransition] = useTransition();
   const parsedPlan = useMemo(
-    () => parseBulkQuestionImportPayload(payload, format),
-    [format, payload]
+    () =>
+      parseBulkQuestionImportPayload(payload, format, {
+        examId: examId || undefined,
+        topicId: topicId || undefined
+      }),
+    [examId, format, payload, topicId]
   );
   const validQuestions = parsedPlan.questions;
   const canImport = dryRunState.ok && dryRunState.validRows > 0 && !isDryRunPending;
@@ -471,6 +553,8 @@ function PreviewStep({
       <form ref={dryRunFormRef} action={dryRunAction} className="mt-5 grid gap-3">
         <input name="format" type="hidden" value={format} />
         <input name="payload" type="hidden" value={payload} />
+        <input name="defaultExamId" type="hidden" value={examId} />
+        <input name="defaultTopicId" type="hidden" value={topicId} />
         <input name="dryRun" type="hidden" value="on" />
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -534,6 +618,8 @@ function PreviewStep({
       <form action={importAction} className="mt-5 flex flex-wrap items-center gap-3">
         <input name="format" type="hidden" value={importFormat} />
         <input name="payload" type="hidden" value={effectivePayload} />
+        <input name="defaultExamId" type="hidden" value={examId} />
+        <input name="defaultTopicId" type="hidden" value={topicId} />
         <button
           className={`${buttonBase} bg-primary px-4 text-primary-foreground hover:opacity-90`}
           disabled={!canImport || isImportPending}
@@ -748,32 +834,7 @@ function buildTemplate(format: BulkQuestionImportFormat, examId: string, topicId
     return JSON.stringify([row], null, 2);
   }
 
-  const headers = [
-    "exam_id",
-    "topic_id",
-    "type",
-    "difficulty",
-    "source",
-    "status",
-    "exposure_policy",
-    "quality_tier",
-    "content_json",
-    "explanation"
-  ];
-  const values = [
-    examId,
-    topicId,
-    row.type,
-    row.difficulty,
-    row.source,
-    row.status,
-    row.exposurePolicy,
-    row.qualityTier,
-    JSON.stringify(row.content),
-    row.explanation
-  ];
-
-  return `${headers.join(",")}\n${values.map(csvCell).join(",")}`;
+  return SIMPLE_QUESTION_CSV_TEMPLATE;
 }
 
 function applyOverrides(
@@ -801,8 +862,4 @@ function applyOverrides(
 
 function truncateStem(value: string) {
   return value.length > 80 ? `${value.slice(0, 80)}...` : value;
-}
-
-function csvCell(value: string) {
-  return `"${value.replaceAll('"', '""')}"`;
 }

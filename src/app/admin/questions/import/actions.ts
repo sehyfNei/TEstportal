@@ -35,7 +35,10 @@ export async function importQuestionsAction(
   const format = formData.get("format") === "csv" ? "csv" : "json";
   const rawPayload = getString(formData, "payload");
   const dryRun = formData.get("dryRun") === "on";
-  const plan = parseBulkQuestionImportPayload(rawPayload, format as BulkQuestionImportFormat);
+  const plan = parseBulkQuestionImportPayload(rawPayload, format as BulkQuestionImportFormat, {
+    examId: getString(formData, "defaultExamId") || undefined,
+    topicId: getString(formData, "defaultTopicId") || undefined
+  });
   const totalRows = plan.questions.length + plan.errors.length;
 
   if (plan.errors.length) {
