@@ -16482,3 +16482,28 @@ Facts worth keeping:
 Founder smoke (S57): /admin -> task cards navigate correctly; /admin/manifests -> create a small test exam (2 topics) via the form -> it appears under Existing manifests and in the student catalog exam dropdown; Advanced fold still validates/imports raw JSON.
 
 **Admin UX redesign (TSP-181-184) is now fully built.** With TSP-187, the founder content path is: create exam via form -> download CSV template -> fill in Excel -> upload -> AI-enrich/import -> backfill explanations -> approve in review queue.
+
+---
+
+# Session 58 - Architect Plan - TSP-119 + TSP-086 + TSP-033 (2026-07-14)
+
+Single-agent mode. Founder direction: "close small backlog rows." Picked the three genuinely small, unblocked, migration-free rows; deliberately skipped TSP-094 (audit viewer needs role-change/import logging that does not exist - blocked on unbuilt TSP-090) and TSP-087/161 (new tables, not small).
+
+1. **TSP-119 (M5, docs)** - `docs/ops/WORKER_ESCALATION.md`: criteria for moving from in-Postgres jobs (current: pg jobs table + post-submit kick + daily cron sweeper) to a managed queue / dedicated worker. Thresholds tied to existing OPS_THRESHOLDS + metrics.
+2. **TSP-086 (M4)** - streaks with NO migration. Pure `src/lib/dashboard/streaks.ts` (computeStreak over distinct activity days in IST -> current + longest) fed by a loader over `user_events` filtered to meaningful types (`test_submit`). Surface via new StreakCard on /dashboard; wired into fetchDashboardOverview. Unit tests on the pure function (gaps, single day, timezone boundary, longest > current).
+3. **TSP-033 (M2)** - contested PYQ metadata surfacing, NO migration (is_contested/source_reference/source_year already on questions). Admin question detail: contested review-note banner (reference + year). Review queue card: contested badge + note so reviewers catch disputed keys in the approval/explanation context.
+
+No schema/RPC/action changes. Gates: standard 4 + streak unit tests.
+
+---
+
+# Session 58 - Builder Handoff - TSP-119 + TSP-086 + TSP-033 (2026-07-14)
+
+Commits: `d230fe1` (119), `2ea5e49` (086), `7fd828a` (033). Gates @ Test_Portal: typecheck 0 / lint 0 err + 8 warn / **465/465** (+9) / build clean. All three migration-free.
+
+Facts worth keeping:
+- Streaks are computed on read from user_events (event_type test_submit, occurred_at), NOT stored - no forgetting-curve/decay job needed. Counted in IST so a late-evening session stays on the right day. STREAK_EVENT_TYPES is the list to extend if more activity should qualify. Streak added as required field on DashboardOverview (NextActionInput is a Pick, unaffected).
+- Contested surfacing is display-only over existing questions columns; no student-facing change (would need get_mistake_details RPC change = migration, deliberately out of scope).
+- **TSP-094 (audit viewer) deliberately NOT built**: needs role-change + manifest-import logging that doesn't exist (blocked on unbuilt TSP-090). question_status_events only covers question approvals. Don't mark 094 Review until TSP-090 audit infra lands.
+
+Founder smoke (S58): /dashboard -> Practice streak card (🔥 with day count / 🌱 when 0); after finishing a test today the count reflects it. Admin: open a question with Contested source/key ticked -> amber note on detail + Contested badge on the review-queue card.
