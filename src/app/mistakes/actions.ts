@@ -4,8 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { MISTAKE_STATUSES } from "@/lib/mistakes/mistake-list";
 
+// NOTE: a "use server" file may only export async functions — exporting the
+// initial-state object from here crashed /mistakes in production (Next
+// invalid-use-server-value, founder log 2026-07-14). Type exports are fine.
 export type ResolveMistakeState = { ok: boolean; message: string };
-export const initialResolveMistakeState: ResolveMistakeState = { ok: false, message: "" };
 
 export async function resolveMistakeAction(
   _prev: ResolveMistakeState,

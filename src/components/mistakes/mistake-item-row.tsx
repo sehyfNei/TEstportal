@@ -2,11 +2,10 @@
 
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import {
-  initialResolveMistakeState,
-  resolveMistakeAction
-} from "@/app/mistakes/actions";
+import { resolveMistakeAction, type ResolveMistakeState } from "@/app/mistakes/actions";
 import { MISTAKE_TYPE_LABELS, type MistakeListItem } from "@/lib/mistakes/mistake-list";
+
+const initialResolveMistakeState: ResolveMistakeState = { ok: false, message: "" };
 
 type Props = {
   mistake: MistakeListItem;
