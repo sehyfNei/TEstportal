@@ -42,6 +42,11 @@ const taskGroups: TaskGroup[] = [
         label: "Create or update an exam",
         description: "Guided form: name, duration, marking, topics. The portal handles the rest.",
         href: "/admin/manifests"
+      },
+      {
+        label: "Build a fixed test paper",
+        description: "Hand-pick questions in a set order so every student gets the same mock paper.",
+        href: "/admin/templates"
       }
     ]
   },

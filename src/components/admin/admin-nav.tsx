@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const links = [
   { href: "/admin", label: "Home", exact: true },
   { href: "/admin/manifests", label: "Exams", exact: false },
+  { href: "/admin/templates", label: "Papers", exact: false },
   { href: "/admin/questions/review", label: "Review", exact: false },
   { href: "/admin/questions/import", label: "Import", exact: true },
   { href: "/admin/questions", label: "Questions", exact: true },
