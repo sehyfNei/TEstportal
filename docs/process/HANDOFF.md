@@ -16556,3 +16556,29 @@ Facts worth keeping:
 - Foreign Gemini CLI files (data/, scripts/import-upsc-pyq-2021.js, upsc-pyq-2021-data.test.ts, modified upsc-prelims.manifest.json) STILL uncommitted and untouched - founder decision pending.
 
 Founder smoke (S60): nothing user-visible while the flag is off. Optional: /admin/ops -> flip fsrs on, finish a test with mistakes, check retest_queue gains scheduler=fsrs rows, flip back off.
+
+---
+
+# Session 61 - Architect Plan - TSP-087 + TSP-161 (2026-07-15)
+
+Single-agent mode. Founder: "lets close 87 and 161" - the two rows previously deferred for needing a live-DB migration with the founder present. Live-migration path confirmed open: postgres pkg + DATABASE_URL exist in the Test_Portal clone; new scripts/apply-sql.mjs runs a SQL file in one transaction against live.
+
+1. **TSP-087 (M4) - Weekly pledge.** New weekly_pledges table (one standing weekly target per user, owner RLS). Progress derived at read time by counting test_submit user_events since the start of the current IST week (Monday) - reuses the streak IST logic, no per-week rows, no cron. Dashboard pledge card (set/change/remove target + progress bar + days left).
+2. **TSP-161 (M2) - Fixed test paper authoring.** KEY DISCOVERY: the test_templates table, its RLS (admin-write/user-read-active), and start_test_session's fixed-template branch ALL already existed (built way back in TSP-035/038). Only three things were missing: (a) admin authoring UI, (b) a student surface to launch a paper, (c) a BUG FIX - select_benchmark_questions ordered its fixed picks by random(), so a hand-authored paper came back shuffled, violating the "same questions in the same order for every user" AC. Fixed via a create-or-replace migration using unnest ... with ordinality to preserve authored order; identical signature so start_test_session is untouched.
+
+Both migrations applied live this session and verified.
+
+---
+
+# Session 61 - Builder Handoff - TSP-087 + TSP-161 (2026-07-15)
+
+Commits: `a805c48` (087), `55ce9d8` (161). Migrations APPLIED LIVE + verified: 202607150001_weekly_pledges (table+RLS present), 202607150002_fixed_template_order (fn now orders by pick_order / with ordinality, no random() in fixed branch). Gates @ Test_Portal: typecheck 0 / lint 0 err + 10 warn (2 new are intentional _prev/_formData server-action params) / **500/500** (+18) / build clean.
+
+Facts worth keeping:
+- **Fixed papers are type='benchmark', selection_mode='fixed', config={selectionMode,questionIds[],durationMinutes}.** start_test_session reads config.questionIds only for benchmark/mock sessions. The student surface (Fixed papers on /tests) posts type=benchmark + templateId + count=questionCount. A question dropped from the live pool silently shrinks the paper (selector filters status='live') - acceptable, but note it.
+- **DB smoke proved determinism:** select_benchmark_questions with a scrambled fixed array returns exact authored order across 3 runs. The "same order" AC is met at the DB layer; founder browser smoke should still confirm the full create-paper -> student-start -> same order flow.
+- Weekly pledge is cross-exam (one standing target), loaded in the dashboard page (not per-exam fetchDashboardOverview). Progress counts test_submit in the current IST week.
+- Live-migration tooling now lives at Test_Portal/scripts/apply-sql.mjs (reads a SQL file, runs it in one tx via the postgres pkg + .env DATABASE_URL). Reusable for future founder-present migrations. NOT committed to the OneDrive repo (clone-local).
+- **Foreign Gemini CLI files STILL uncommitted/untouched** (data/, scripts/import-upsc-pyq-2021.js, upsc-pyq-2021-data.test.ts, modified upsc-prelims.manifest.json). Founder decision still pending.
+
+Founder smoke (S61): (1) /dashboard -> Weekly pledge card: set a target (e.g. 3), see progress + days left; finish a test today and confirm the count ticks; change and remove the pledge. (2) Admin -> Papers (/admin/templates): pick an exam, add several questions, drag order with the up/down arrows, save; toggle Active. (3) /tests -> Fixed papers section -> Start paper -> confirm the questions appear in the exact order you authored (start it twice / as two users to confirm identical order).
