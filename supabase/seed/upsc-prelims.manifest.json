@@ -47,7 +47,7 @@
     {
       "slug": "modern-history",
       "name": "Modern Indian History",
-      "weightPercent": 14,
+      "weightPercent": 10,
       "children": [
         {
           "slug": "freedom-struggle",
@@ -60,6 +60,11 @@
           "weightPercent": 3
         }
       ]
+    },
+    {
+      "slug": "ancient-medieval-art-culture",
+      "name": "Ancient, Medieval History and Art & Culture",
+      "weightPercent": 8
     },
     {
       "slug": "geography",
@@ -120,7 +125,7 @@
     {
       "slug": "current-affairs",
       "name": "Current Affairs",
-      "weightPercent": 10
+      "weightPercent": 6
     }
   ],
   "conceptClusters": [
