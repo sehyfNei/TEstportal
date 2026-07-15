@@ -1,6 +1,8 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { fetchDashboardOverview, type DashboardOverview } from "@/lib/dashboard/overview";
+import { MAX_WEEKLY_TARGET, MIN_WEEKLY_TARGET } from "@/lib/dashboard/weekly-pledge";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -12,6 +14,11 @@ export type StartRetestState = {
   ok: boolean;
   message: string;
   sessionId?: string;
+};
+
+export type WeeklyPledgeActionState = {
+  ok: boolean;
+  message: string;
 };
 
 
@@ -154,6 +161,72 @@ export async function startRetestAction(
   }
 
   return { ok: true, message: "Retest started.", sessionId };
+}
+
+export async function setWeeklyPledgeAction(
+  _prev: WeeklyPledgeActionState,
+  formData: FormData
+): Promise<WeeklyPledgeActionState> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+
+  const rawTarget = Number(getString(formData, "weeklyTarget"));
+  if (!Number.isInteger(rawTarget) || rawTarget < MIN_WEEKLY_TARGET || rawTarget > MAX_WEEKLY_TARGET) {
+    return {
+      ok: false,
+      message: `Pick a weekly target between ${MIN_WEEKLY_TARGET} and ${MAX_WEEKLY_TARGET} tests.`
+    };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: authError?.message ?? "Sign in to set a pledge." };
+  }
+
+  const { error } = await supabase
+    .from("weekly_pledges")
+    .upsert({ user_id: user.id, weekly_target: rawTarget }, { onConflict: "user_id" });
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/dashboard");
+  return { ok: true, message: `Pledged ${rawTarget} test${rawTarget === 1 ? "" : "s"} this week.` };
+}
+
+export async function clearWeeklyPledgeAction(
+  _prev: WeeklyPledgeActionState,
+  _formData: FormData
+): Promise<WeeklyPledgeActionState> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: authError?.message ?? "Sign in to continue." };
+  }
+
+  const { error } = await supabase.from("weekly_pledges").delete().eq("user_id", user.id);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/dashboard");
+  return { ok: true, message: "Weekly pledge cleared." };
 }
 
 function getString(formData: FormData, key: string): string {
