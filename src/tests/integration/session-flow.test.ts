@@ -83,6 +83,7 @@ function createFakeSupabase({ userId }: { userId: string | null }) {
       "p_duration_minutes",
       "p_exam_id",
       "p_min_quality_tier",
+      "p_pyq_only",
       "p_template_id",
       "p_topic_id",
       "p_type"
