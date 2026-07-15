@@ -16507,3 +16507,27 @@ Facts worth keeping:
 - **TSP-094 (audit viewer) deliberately NOT built**: needs role-change + manifest-import logging that doesn't exist (blocked on unbuilt TSP-090). question_status_events only covers question approvals. Don't mark 094 Review until TSP-090 audit infra lands.
 
 Founder smoke (S58): /dashboard -> Practice streak card (🔥 with day count / 🌱 when 0); after finishing a test today the count reflects it. Admin: open a question with Contested source/key ticked -> amber note on detail + Contested badge on the review-queue card.
+
+---
+
+# Session 59 - Architect Plan - TSP-064 + TSP-114 (2026-07-14)
+
+Single-agent mode. Founder direction: "keep closing small rows." Both no-migration.
+
+1. **TSP-064 (M4) - FSRS scheduler adapter, pure + tested.** New `src/lib/adaptive/fsrs-scheduler.ts` implementing FSRS-4.5 (default 17-weight vector) behind the SAME interface as simple-scheduler: computeInitialScheduleFsrs / computeRetestScheduleFsrs returning {dueAt, priority, schedulerState}. FSRS state {stability, difficulty, repetitions, lapses, lastReviewedAt, intervalDays} rides in the existing jsonb `retest_queue.scheduler_state`; enum already allows `scheduler='fsrs'`; `fsrs` feature flag already seeded (default off, created for this row). Binary retest outcome maps pass->Good(3)/fail->Again(1). NOT wired into the live handler this session - that's a flag-gated integration step; AC is "FSRS state updates correctly in unit tests." Thorough unit tests (initial state, stability growth on pass, difficulty rise + lapse on fail, retrievability monotonic, interval~stability at 90% retention, spacing effect over repeated passes, clamps).
+2. **TSP-114 (M6) - cost monitoring, already satisfied -> close with evidence.** llm_cost_ledger table (202606030003) written per AI call by the gateway; metrics.ts reports aiSpend24h/aiCalls24h/aiSpendMonth by feature; alerts.ts has daily ($5/$15) + monthly ($30/$60) spend thresholds surfaced on /admin/ops (TSP-142/143). AC ("daily cost alert + llm_cost_ledger reporting exist") is met. Deferred (noted, not blocking): non-AI cost categories (storage/db/worker/email) and pushed/email alerts need RESEND + infra.
+
+Gates: standard 4 + FSRS unit tests.
+
+---
+
+# Session 59 - Builder Handoff - TSP-064 + TSP-114 (2026-07-15)
+
+Commits: `3d2b0ff` (064). Gates @ Test_Portal: typecheck 0 / lint 0 err + 8 warn / **474/474** (+9) / build clean.
+
+Facts worth keeping:
+- FSRS adapter is pure and UNWIRED: update-retest-queue handler still calls the simple scheduler unconditionally. Wiring = read `fsrs` feature flag, branch to computeInitialScheduleFsrs/computeRetestScheduleFsrs, and handle mixed-state rows (simple-shaped scheduler_state lacks stability/difficulty - seed via initial* on first FSRS touch). That is a deliberate follow-up row, not scope creep into this one.
+- TSP-114 closed as already-satisfied (evidence in tracker remarks); the AC's "daily cost alert + llm_cost_ledger reporting" shipped with TSP-142/143. Do not rebuild it.
+- **Foreign files in the OneDrive worktree, NOT committed by me**: `data/`, `scripts/import-upsc-pyq-2021.js`, `src/tests/unit/upsc-pyq-2021-data.test.ts`, modified `supabase/seed/upsc-prelims.manifest.json`. Git author on recent local commands is "Gemini CLI" - looks like a founder-side UPSC PYQ 2021 import attempt in progress. Left untouched; founder to confirm whether to keep, finish, or discard before anyone commits them.
+
+Founder smoke (S59): nothing user-visible this session (FSRS is flag-off library code; cost alerts were already live on /admin/ops - glance there to confirm AI spend numbers render).
