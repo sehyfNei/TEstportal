@@ -1,5 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeInitialSchedule } from "@/lib/adaptive/simple-scheduler";
+import {
+  computeInitialScheduleFsrs,
+  computeRetestScheduleFsrs,
+  toFsrsSchedulerState,
+  type FsrsScheduleResult
+} from "@/lib/adaptive/fsrs-scheduler";
+import { computeInitialSchedule, type ScheduleResult } from "@/lib/adaptive/simple-scheduler";
+import { isFeatureEnabled } from "@/lib/flags";
 
 const ACTIVE_RETEST_STATUSES = ["due", "scheduled", "snoozed"];
 
@@ -65,17 +72,11 @@ export async function updateRetestQueueJob(
   }
 
   const topicWeightMap = await loadTopicWeights(supabase, groups);
+  const useFsrs = await isFeatureEnabled(supabase, "fsrs");
   const nowMs = Date.now();
 
   for (const group of groups.values()) {
     const topicWeight = group.topicId ? (topicWeightMap.get(group.topicId) ?? null) : null;
-    const { dueAt, priority, schedulerState } = computeInitialSchedule(
-      {
-        mistakeTypes: group.mistakeTypes,
-        topicWeightPercent: topicWeight
-      },
-      nowMs
-    );
     const activeRow = await findActiveRetestRow(
       supabase,
       resultRow.user_id,
@@ -85,19 +86,37 @@ export async function updateRetestQueueJob(
     );
 
     if (activeRow) {
+      // Priority bumps always use the initial (mistake-severity) priority so
+      // the two schedulers rank the shared queue consistently.
+      const { priority } = chooseInsertSchedule({
+        useFsrs,
+        priorState: null,
+        mistakeTypes: group.mistakeTypes,
+        topicWeightPercent: topicWeight,
+        nowMs
+      });
       await updatePriorityIfHigher(supabase, activeRow, priority, nowMs);
       continue;
     }
+
+    const priorState = useFsrs ? await findPriorSchedulerState(supabase, resultRow, group) : null;
+    const schedule = chooseInsertSchedule({
+      useFsrs,
+      priorState,
+      mistakeTypes: group.mistakeTypes,
+      topicWeightPercent: topicWeight,
+      nowMs
+    });
 
     const { error: insertError } = await supabase.from("retest_queue").insert({
       user_id: resultRow.user_id,
       exam_id: resultRow.exam_id,
       concept_id: group.conceptId,
       topic_id: group.topicId,
-      due_at: dueAt.toISOString(),
-      scheduler: "simple",
-      scheduler_state: schedulerState,
-      priority,
+      due_at: schedule.dueAt.toISOString(),
+      scheduler: schedule.scheduler,
+      scheduler_state: schedule.schedulerState,
+      priority: schedule.priority,
       status: "due"
     });
 
@@ -105,6 +124,78 @@ export async function updateRetestQueueJob(
       throw new Error(`[retest] retest_queue insert failed: ${insertError.message}`);
     }
   }
+}
+
+export type InsertScheduleInput = {
+  useFsrs: boolean;
+  /** scheduler_state of the group's most recent prior queue row, if any. */
+  priorState: unknown;
+  mistakeTypes: string[];
+  topicWeightPercent: number | null;
+  nowMs: number;
+};
+
+export type InsertSchedule =
+  | ({ scheduler: "simple" } & ScheduleResult)
+  | ({ scheduler: "fsrs" } & FsrsScheduleResult);
+
+/**
+ * Pick the schedule for a new retest_queue row. With the `fsrs` flag off this
+ * is exactly the legacy simple-scheduler behavior. With it on, a group that
+ * resurfaces with fresh mistakes is treated as a failed recall of its prior
+ * state (seeded from defaults when the prior row was simple-scheduled), so
+ * intervals carry memory across attempts instead of resetting to day 1.
+ */
+export function chooseInsertSchedule(input: InsertScheduleInput): InsertSchedule {
+  const scheduleInput = {
+    mistakeTypes: input.mistakeTypes,
+    topicWeightPercent: input.topicWeightPercent
+  };
+
+  if (!input.useFsrs) {
+    return { scheduler: "simple", ...computeInitialSchedule(scheduleInput, input.nowMs) };
+  }
+
+  if (input.priorState) {
+    return {
+      scheduler: "fsrs",
+      ...computeRetestScheduleFsrs(
+        "fail",
+        toFsrsSchedulerState(input.priorState),
+        input.topicWeightPercent,
+        input.nowMs
+      )
+    };
+  }
+
+  return { scheduler: "fsrs", ...computeInitialScheduleFsrs(scheduleInput, input.nowMs) };
+}
+
+async function findPriorSchedulerState(
+  supabase: SupabaseClient,
+  resultRow: ResultRow,
+  group: RetestGroup
+): Promise<unknown> {
+  if (!group.conceptId && !group.topicId) {
+    return null;
+  }
+
+  const base = supabase
+    .from("retest_queue")
+    .select("scheduler_state")
+    .eq("user_id", resultRow.user_id)
+    .eq("exam_id", resultRow.exam_id);
+  const filtered = group.conceptId
+    ? base.eq("concept_id", group.conceptId).is("topic_id", null)
+    : base.eq("topic_id", group.topicId as string).is("concept_id", null);
+
+  const { data, error } = await filtered.order("updated_at", { ascending: false }).limit(1);
+
+  if (error) {
+    throw new Error(`[retest] prior scheduler state lookup failed: ${error.message}`);
+  }
+
+  return ((data ?? []) as { scheduler_state?: unknown }[])[0]?.scheduler_state ?? null;
 }
 
 async function findActiveRetestRow(

@@ -127,6 +127,34 @@ export function stabilityAfterLapse(
   return Math.max(MIN_STABILITY, Math.min(postLapse, stability));
 }
 
+/**
+ * Normalize a stored `scheduler_state` jsonb value into a valid FSRS state.
+ * Rows written by the simple scheduler lack stability/difficulty; those are
+ * seeded from the Again grade (queue entries always originate from mistakes),
+ * so flipping the `fsrs` flag mid-stream never crashes on mixed-shape state.
+ */
+export function toFsrsSchedulerState(raw: unknown): FsrsSchedulerState {
+  const record =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const stability = finiteNumber(record.stability);
+  const difficulty = finiteNumber(record.difficulty);
+
+  return {
+    intervalDays: Math.max(1, Math.round(finiteNumber(record.intervalDays) ?? 1)),
+    repetitions: Math.max(0, Math.round(finiteNumber(record.repetitions) ?? 0)),
+    lapses: Math.max(0, Math.round(finiteNumber(record.lapses) ?? 0)),
+    lastReviewedAt: typeof record.lastReviewedAt === "string" ? record.lastReviewedAt : null,
+    stability: stability === null ? initialStability(GRADE_AGAIN) : Math.max(MIN_STABILITY, stability),
+    difficulty: difficulty === null ? initialDifficulty(GRADE_AGAIN) : clampDifficulty(difficulty)
+  };
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function computeInitialScheduleFsrs(
   input: InitialScheduleInput,
   nowMs?: number,

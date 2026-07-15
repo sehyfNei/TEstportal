@@ -9,6 +9,7 @@ import {
   retrievability,
   stabilityAfterLapse,
   stabilityAfterRecall,
+  toFsrsSchedulerState,
   type FsrsSchedulerState
 } from "@/lib/adaptive/fsrs-scheduler";
 
@@ -44,6 +45,50 @@ describe("FSRS building blocks", () => {
     expect(stabilityAfterRecall(s, d, r)).toBeGreaterThan(s);
     expect(stabilityAfterLapse(s, d, r)).toBeLessThanOrEqual(s);
     expect(stabilityAfterLapse(s, d, r)).toBeGreaterThan(0);
+  });
+});
+
+describe("toFsrsSchedulerState", () => {
+  it("passes a full FSRS state through unchanged", () => {
+    const state: FsrsSchedulerState = {
+      intervalDays: 4,
+      repetitions: 2,
+      lapses: 1,
+      lastReviewedAt: "2026-07-10T00:00:00.000Z",
+      stability: 6.5,
+      difficulty: 4.2
+    };
+
+    expect(toFsrsSchedulerState(state)).toEqual(state);
+  });
+
+  it("seeds stability/difficulty for simple-scheduler-shaped state", () => {
+    const normalized = toFsrsSchedulerState({
+      intervalDays: 4,
+      repetitions: 2,
+      lapses: 1,
+      lastReviewedAt: "2026-07-10T00:00:00.000Z"
+    });
+
+    expect(normalized.intervalDays).toBe(4);
+    expect(normalized.repetitions).toBe(2);
+    expect(normalized.lapses).toBe(1);
+    expect(normalized.stability).toBe(initialStability(1));
+    expect(normalized.difficulty).toBe(initialDifficulty(1));
+  });
+
+  it("falls back to safe defaults for garbage input", () => {
+    for (const raw of [null, undefined, "junk", 42, [], { stability: "high", intervalDays: -3 }]) {
+      const normalized = toFsrsSchedulerState(raw);
+
+      expect(normalized.intervalDays).toBeGreaterThanOrEqual(1);
+      expect(normalized.repetitions).toBe(0);
+      expect(normalized.lapses).toBe(0);
+      expect(normalized.lastReviewedAt).toBeNull();
+      expect(normalized.stability).toBeGreaterThan(0);
+      expect(normalized.difficulty).toBeGreaterThanOrEqual(1);
+      expect(normalized.difficulty).toBeLessThanOrEqual(10);
+    }
   });
 });
 
