@@ -16582,3 +16582,19 @@ Facts worth keeping:
 - **Foreign Gemini CLI files STILL uncommitted/untouched** (data/, scripts/import-upsc-pyq-2021.js, upsc-pyq-2021-data.test.ts, modified upsc-prelims.manifest.json). Founder decision still pending.
 
 Founder smoke (S61): (1) /dashboard -> Weekly pledge card: set a target (e.g. 3), see progress + days left; finish a test today and confirm the count ticks; change and remove the pledge. (2) Admin -> Papers (/admin/templates): pick an exam, add several questions, drag order with the up/down arrows, save; toggle Active. (3) /tests -> Fixed papers section -> Start paper -> confirm the questions appear in the exact order you authored (start it twice / as two users to confirm identical order).
+
+---
+
+# Session 61b - TSP-193 - UPSC 2021 GS-I PYQ import (kept + finished) (2026-07-15)
+
+Founder decided "keep and finish" the previously-foreign Gemini CLI files. On inspection they are a genuine, high-quality content import - NOT to be discarded. Committed as `b5f74d0`.
+
+What they are: data/upsc-pyq/2021-gs1.json (100 UPSC CSE Prelims 2021 GS Paper I Series-A questions with official answers, source_url + answer_key_url on upsc.gov.in, topic tags, difficulty, explanation + explanationDetail + reviewerNotes), scripts/import-upsc-pyq-2021.js (idempotent importer using create_admin_question/update_admin_question with admin JWT claims set in-tx; strict validateRows; auto-creates the ancient-medieval-art-culture topic), src/tests/unit/upsc-pyq-2021-data.test.ts (pure data-integrity, +4 tests), and a manifest seed edit (new ancient-medieval-art-culture topic, weight rebalance modern-history 14->10 / current-affairs 10->6 / +8 new).
+
+State verified LIVE (all 100 already imported by the earlier Gemini run): 100 draft rows for upsc-prelims/pyq/2021, all with explanations, Q80 hidden+quarantine+contested (the officially dropped question, unscored), 0 provenance mismatches vs the data file, all 17 topic slugs resolve. Importer re-run is safe (idempotent skip).
+
+**Load-bearing fact: the 100 questions are status=draft.** They will NOT appear in any student test (selection + fixed papers pull status='live') until an admin reviews and publishes them via /admin/questions/review. reviewerNotes on every row flags OCR transcription + AI-assisted topic/explanation for human review before approval. This is the gate before any "PYQ practice" feature can surface real questions.
+
+Manifest-vs-live note: the manifest seed reduced modern-history/current-affairs weights, but the live import only set the new topic's weight (8) - it did not push the modern-history/current-affairs weight changes to live topics. Minor; reconcile on next manifest re-import if it matters.
+
+Tracker: 84 Done / 62 Review / 40 Backlog / 7 epics (193 rows). No more foreign/uncommitted files in the worktree.
