@@ -84,6 +84,8 @@ export async function startSessionAction(
   const durationMinutes = nullableIntegerValue(formData, "durationMinutes");
   const rawMinQualityTier = getString(formData, "minQualityTier");
   const minQualityTier = isValidQualityTier(rawMinQualityTier) ? rawMinQualityTier : "bronze";
+  // Previous-year-only practice is honoured only for topic sessions server-side.
+  const pyqOnly = booleanValue(formData, "pyqOnly") && type === "topic";
 
   if (!isUuid(examId)) {
     return { ok: false, message: "Valid exam id is required." };
@@ -105,7 +107,8 @@ export async function startSessionAction(
     p_topic_id: topicId,
     p_count: count,
     p_duration_minutes: durationMinutes,
-    p_min_quality_tier: minQualityTier
+    p_min_quality_tier: minQualityTier,
+    p_pyq_only: pyqOnly
   });
 
   if (error) {

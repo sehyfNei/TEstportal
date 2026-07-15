@@ -94,6 +94,13 @@ export function StartTest({ exams, topics, mode, initialTopicId, scheduledItemId
         </label>
       ) : null}
 
+      {mode.sessionType === "topic" ? (
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input disabled={isPending} name="pyqOnly" type="checkbox" value="true" />
+          Previous-year questions only
+        </label>
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-2 text-sm font-medium">
           Questions
