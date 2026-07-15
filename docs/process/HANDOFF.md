@@ -16531,3 +16531,28 @@ Facts worth keeping:
 - **Foreign files in the OneDrive worktree, NOT committed by me**: `data/`, `scripts/import-upsc-pyq-2021.js`, `src/tests/unit/upsc-pyq-2021-data.test.ts`, modified `supabase/seed/upsc-prelims.manifest.json`. Git author on recent local commands is "Gemini CLI" - looks like a founder-side UPSC PYQ 2021 import attempt in progress. Left untouched; founder to confirm whether to keep, finish, or discard before anyone commits them.
 
 Founder smoke (S59): nothing user-visible this session (FSRS is flag-off library code; cost alerts were already live on /admin/ops - glance there to confirm AI spend numbers render).
+
+---
+
+# Session 60 - Architect Plan - TSP-192 (2026-07-15)
+
+Single-agent mode. Follow-up row promised in the S59 handoff: wire the FSRS adapter into the live path behind the `fsrs` flag. No migration (flag seeded off; enum + jsonb pre-exist). New tracker row TSP-192 (dep TSP-064, M4).
+
+1. **TSP-192 - update-retest-queue branches on the fsrs feature flag.** Read flag once per job run via isFeatureEnabled. Flag off: byte-identical legacy behavior (scheduler=simple, day-1 initial). Flag on: new rows insert scheduler=fsrs; a group that resurfaces with fresh mistakes looks up its most recent prior retest_queue row (any scheduler) and applies computeRetestScheduleFsrs("fail", ...) to it - a recurring mistake IS a failed recall - so intervals carry memory across attempts instead of resetting to day 1. Mixed-state handling: new toFsrsSchedulerState(raw) in fsrs-scheduler.ts normalizes any stored scheduler_state, seeding stability/difficulty from the Again grade when the prior row was simple-scheduled. Branch logic extracted as pure exported chooseInsertSchedule for direct unit testing. Priority bumps on already-active rows keep using the initial (mistake-severity) priority under both schedulers so the shared queue ranks consistently.
+
+Discovery recorded: computeRetestSchedule (simple) was never wired either - on concept_retest submit the queue row is just marked completed, and recurrence relies on new mistakes creating fresh rows. TSP-192 preserves that architecture and adds memory only at insert time. A pass-side reschedule (growing intervals instead of completing the row) would change the retest product loop and needs founder sign-off - NOT built.
+
+Gates: standard 4 + new unit tests (toFsrsSchedulerState normalization; chooseInsertSchedule flag-off parity, fsrs initial, lapse carry-over, mixed-state seeding, cross-scheduler priority parity).
+
+---
+
+# Session 60 - Builder Handoff - TSP-192 (2026-07-15)
+
+Commits: `81ba0c2` (192). Gates @ Test_Portal: typecheck 0 / lint 0 err + 8 warn / **482/482** (+8) / build clean.
+
+Facts worth keeping:
+- FSRS is now live-path code but DORMANT: `fsrs` flag defaults off (fail-closed to simple in FEATURE_FLAG_DEFAULTS). Flipping it on /admin/ops switches new retest_queue inserts to FSRS with no deploy; flipping back off is the instant rollback. Existing rows are never rewritten - only new inserts get scheduler=fsrs.
+- Prior-state lookup is per group (user+exam+concept XOR topic), most recent by updated_at, any scheduler. toFsrsSchedulerState makes garbage/simple-shaped state safe, so a mid-stream flag flip cannot crash the job.
+- Foreign Gemini CLI files (data/, scripts/import-upsc-pyq-2021.js, upsc-pyq-2021-data.test.ts, modified upsc-prelims.manifest.json) STILL uncommitted and untouched - founder decision pending.
+
+Founder smoke (S60): nothing user-visible while the flag is off. Optional: /admin/ops -> flip fsrs on, finish a test with mistakes, check retest_queue gains scheduler=fsrs rows, flip back off.
