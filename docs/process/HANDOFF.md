@@ -16598,3 +16598,15 @@ State verified LIVE (all 100 already imported by the earlier Gemini run): 100 dr
 Manifest-vs-live note: the manifest seed reduced modern-history/current-affairs weights, but the live import only set the new topic's weight (8) - it did not push the modern-history/current-affairs weight changes to live topics. Minor; reconcile on next manifest re-import if it matters.
 
 Tracker: 84 Done / 62 Review / 40 Backlog / 7 epics (193 rows). No more foreign/uncommitted files in the worktree.
+
+---
+
+# Session 61c - TSP-194 - Previous-year-only topic practice (2026-07-15)
+
+Founder chose the "weave PYQ into everyday topic practice" option. Migration 202607150003 (APPLIED LIVE): added p_pyq_only to select_topic_practice_questions (extra WHERE `not p_pyq_only or q.source='pyq'`) and threaded a matching p_pyq_only through start_test_session, applied ONLY to the topic branch. Both params default false -> every existing caller unchanged. The old 7-arg start_test_session was dropped so only the 8-arg overload exists (avoids PostgREST ambiguity; confirmed single overload). UI: a "Previous-year questions only" checkbox on the topic-practice form (StartTest, shown when sessionType==='topic'); startSessionAction reads pyqOnly and enforces it server-side only for topic sessions. Commits aee68ad + test fix (session-flow integration test asserts the exact rpc arg-key set, now includes p_pyq_only).
+
+Verified live in a rolled-back tx: with pyq_only=true the selector returns only source='pyq'; with false, non-pyq questions appear. **Surprise finding: upsc-prelims already has ~90 LIVE pyq questions (a pre-existing pool, separate from the TSP-193 2021 GS-I import which is still all 100 draft).** So PYQ topic practice is usable by students NOW; the 2021 batch just enlarges the pool once reviewed+published on /admin/questions/review.
+
+Gates @ Test_Portal: typecheck 0 / lint 0 err (10 warn) / 504/504 / build clean. Tracker: 84 Done / 63 Review / 40 Backlog / 7 epics (194 rows).
+
+Founder smoke: /tests -> Topic practice -> pick a topic -> tick "Previous-year questions only" -> Start -> the questions drawn should all be previous-year (pyq). Untick -> mixed pool. (Uses the ~90 already-live pyq; publishing the 2021 batch adds more.)
