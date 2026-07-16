@@ -16610,3 +16610,21 @@ Verified live in a rolled-back tx: with pyq_only=true the selector returns only 
 Gates @ Test_Portal: typecheck 0 / lint 0 err (10 warn) / 504/504 / build clean. Tracker: 84 Done / 63 Review / 40 Backlog / 7 epics (194 rows).
 
 Founder smoke: /tests -> Topic practice -> pick a topic -> tick "Previous-year questions only" -> Start -> the questions drawn should all be previous-year (pyq). Untick -> mixed pool. (Uses the ~90 already-live pyq; publishing the 2021 batch adds more.)
+
+---
+
+# Session 62 - Architect Plan + Builder Handoff - epics, TSP-032, TSP-010, TSP-195..200 finish (2026-07-16)
+
+Founder picked from backlog: TSP-032 semantic dedup + epic hygiene + TSP-010 Google login; mid-session added "also push the TSP-195..200 changes". Commits: e4ae62b (Gemini batch), 2debe59 (TSP-032), 84dc126 (TSP-010), + chore. Combined gates @ Test_Portal: typecheck 0 / lint 0 err (10 warn) / **521/521** / build clean.
+
+**Epic sweep:** TSP-058, TSP-075, TSP-115 -> Review (all children built). TSP-089 NOT moved - TSP-094 audit viewer still Backlog (blocked on nonexistent role-change/manifest-import logging, see Session 58 note).
+
+**TSP-032 semantic duplicate check** (2debe59): migration 202607160002 APPLIED LIVE. pgvector was ALREADY INSTALLED in the **public** schema (not extensions - first draft referencing extensions.vector failed apply; fixed to unqualified vector). question_embeddings (admin-only RLS) + find_similar_questions (secdef, is_admin() in predicate so non-admins get zero rows, no leak). Embedding = HF all-MiniLM-L6-v2 (384-dim) over canonicalized text (lowercased stem + alphabetically sorted options | joined) so option reorder/case/whitespace cannot evade. Threshold 0.88 warn, advisory only. Wizard: "Check for duplicates" panel in preview (caps 30 rows, mirrors enrichment); "Index questions" card on import page (40/click, re-embeds stale via content_hash FNV-1a). DB smoke rolled-back: near=1.000 matched, far excluded, student zero rows. NOTE: HF api-inference endpoint is free-tier; if HF deprecates it, swap HF_ENDPOINT in src/lib/ai/hf-embeddings.ts.
+
+**TSP-010 Google login** (84dc126): signInWithGoogleAction -> signInWithOAuth(google) -> existing /auth/callback (PKCE) with redirectTo clamped to same-app relative paths. Ships safely BEFORE provider config (friendly error until then). **Founder must do docs/ops/GOOGLE_LOGIN_SETUP.md** (Google Cloud OAuth client -> Supabase provider enable + URL config) before smoking. Register page also gets the button.
+
+**TSP-195..200 finish** (e4ae62b): founder said keep+push. Reviewed before committing: compact wrapper correctly builds on the 8-arg p_pyq_only signature; retrySessionAnalysisAction owner-checked (user_id on both lookups); /tests/history owner-scoped; runner-flow pure. Migration 202607160001 APPLIED LIVE + verified (compact returns only session_id/expires_at/question_count; rolled-back live call). **The Gemini CLI had ALSO left identical uncommitted copies in the Test_Portal clone** - verified byte-identical to the committed versions, then discarded so the clone pulls clean. Watch for this pattern: Gemini works in BOTH worktrees.
+
+Founder smoke additions (on top of the standing list): (1) /admin/questions/import -> "Index questions" until caught up, then upload a CSV containing a near-copy of an existing question -> validate -> "Check for duplicates" -> amber warning with % similarity; (2) after Google config: /login -> Continue with Google -> lands on /dashboard; (3) TSP-195..200: start a big test (fast start), finish a test -> completion screen (no locked question), confidence tap auto-advances, /tests/history lists attempts, result page offers Retry analysis on failed AI runs, short-timer test auto-submits at deadline.
+
+Tracker: 84 Done / 74 Review / 35 Backlog / 7 epics (200 rows). Worktree clean after push.
