@@ -3,6 +3,8 @@
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   type BulkQuestionImportActionState,
+  checkImportDuplicatesAction,
+  type DuplicateCheckResult,
   enrichQuestionsAction,
   type EnrichQuestionsResult,
   type EnrichmentQuestionOutput,
@@ -475,11 +477,13 @@ function PreviewStep({
     initialImportState
   );
   const [enrichResult, setEnrichResult] = useState<EnrichQuestionsResult | null>(null);
+  const [dupResult, setDupResult] = useState<DuplicateCheckResult | null>(null);
   const [overrides, setOverrides] = useState<Map<number, Partial<EnrichmentQuestionOutput>>>(
     () => new Map()
   );
   const [effectivePayload, setEffectivePayload] = useState(payload);
   const [isEnriching, startEnrichTransition] = useTransition();
+  const [isCheckingDuplicates, startDuplicateTransition] = useTransition();
   const parsedPlan = useMemo(
     () =>
       parseBulkQuestionImportPayload(payload, format, {
@@ -503,6 +507,13 @@ function PreviewStep({
     startEnrichTransition(() => {
       setEnrichResult(null);
       void enrichQuestionsAction(validQuestions).then(setEnrichResult);
+    });
+  }
+
+  function handleCheckDuplicates() {
+    startDuplicateTransition(() => {
+      setDupResult(null);
+      void checkImportDuplicatesAction(validQuestions, examId).then(setDupResult);
     });
   }
 
@@ -615,6 +626,38 @@ function PreviewStep({
         </div>
       ) : null}
 
+      {canRequestEnrichment ? (
+        <div className="mt-5 grid gap-3 rounded-md border border-border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">Duplicate check</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Optional: compare this batch against existing questions and warn about near-duplicates.
+                Import is never blocked.
+              </p>
+            </div>
+            {isBatchTooLarge ? null : (
+              <button
+                className={`${buttonBase} border border-border text-foreground hover:border-primary`}
+                disabled={isCheckingDuplicates}
+                type="button"
+                onClick={handleCheckDuplicates}
+              >
+                {isCheckingDuplicates ? "Checking..." : "🔎 Check for duplicates"}
+              </button>
+            )}
+          </div>
+
+          {isBatchTooLarge ? (
+            <p className="text-sm text-muted-foreground">
+              Duplicate check is capped at 30 rows per batch. Import is still available.
+            </p>
+          ) : null}
+
+          {dupResult ? <DuplicatePanel result={dupResult} validQuestions={validQuestions} /> : null}
+        </div>
+      ) : null}
+
       <form action={importAction} className="mt-5 flex flex-wrap items-center gap-3">
         <input name="format" type="hidden" value={importFormat} />
         <input name="payload" type="hidden" value={effectivePayload} />
@@ -638,6 +681,62 @@ function PreviewStep({
         {importState.message ? <ImportSummary state={importState} /> : null}
       </form>
     </section>
+  );
+}
+
+function DuplicatePanel({
+  result,
+  validQuestions
+}: {
+  result: DuplicateCheckResult;
+  validQuestions: BulkQuestionImportInput[];
+}) {
+  if (!result.ok) {
+    return (
+      <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+        {result.message}
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid gap-3">
+      <p className="text-sm text-muted-foreground">{result.message}</p>
+
+      {result.unindexedCount > 0 ? (
+        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-900/80">
+          {result.unindexedCount} existing question{result.unindexedCount === 1 ? " is" : "s are"} not
+          indexed yet, so they were not compared. Use “Index questions” below the wizard for full
+          coverage.
+        </p>
+      ) : null}
+
+      {result.rows.map((row) => {
+        const question = validQuestions[row.rowIndex];
+        const stem = question?.content.text ?? `Row ${row.rowIndex + 1}`;
+
+        return (
+          <div
+            className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-6"
+            key={row.rowIndex}
+          >
+            <p className="font-semibold text-amber-800">
+              Row {row.rowIndex + 1} looks like a duplicate
+            </p>
+            <p className="mt-1 line-clamp-2 text-xs text-amber-900/80">{stem}</p>
+            <ul className="mt-2 grid gap-1 text-xs text-amber-900/80">
+              {row.matches.map((match) => (
+                <li key={match.questionId}>
+                  {Math.round(match.similarity * 100)}% similar to “
+                  <span className="line-clamp-1 inline">{match.stem || match.questionId}</span>”
+                  ({match.status.replaceAll("_", " ")})
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

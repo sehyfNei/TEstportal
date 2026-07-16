@@ -16,6 +16,18 @@ import {
   type BulkQuestionImportInput,
   parseBulkQuestionImportPayload
 } from "@/lib/question-bank/bulk-question-import";
+import { embedTexts } from "@/lib/ai/hf-embeddings";
+import {
+  canonicalizeQuestionText,
+  contentHash,
+  toDuplicateMatches,
+  toVectorLiteral,
+  DUPLICATE_WARN_THRESHOLD,
+  EMBEDDING_INDEX_BATCH,
+  EMBEDDING_MODEL,
+  MAX_DUPLICATE_CHECK_ROWS,
+  type RowDuplicates
+} from "@/lib/question-bank/duplicate-check";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -256,6 +268,180 @@ export async function enrichQuestionsAction(
     }.`,
     suggestions: outputResult.data.questions
   };
+}
+
+export type DuplicateCheckResult = {
+  ok: boolean;
+  message: string;
+  rows: RowDuplicates[];
+  /** Existing questions in this exam that have no embedding yet. */
+  unindexedCount: number;
+};
+
+export async function checkImportDuplicatesAction(
+  questions: BulkQuestionImportInput[],
+  examId: string
+): Promise<DuplicateCheckResult> {
+  const adminCheck = await requireAdminForAction();
+  if (!adminCheck.ok) {
+    return { ok: false, message: adminCheck.message, rows: [], unindexedCount: 0 };
+  }
+
+  if (!isUuid(examId)) {
+    return { ok: false, message: "Valid exam id is required.", rows: [], unindexedCount: 0 };
+  }
+
+  const limited = questions.slice(0, MAX_DUPLICATE_CHECK_ROWS);
+  const texts = limited.map((question) => canonicalizeQuestionText(question.content));
+
+  const embedded = await embedTexts(texts);
+  if (!embedded.ok) {
+    return { ok: false, message: embedded.message, rows: [], unindexedCount: 0 };
+  }
+
+  const supabase = await createClient();
+  const rows: RowDuplicates[] = [];
+
+  for (let index = 0; index < embedded.vectors.length; index += 1) {
+    const { data, error } = await supabase.rpc("find_similar_questions", {
+      p_exam_id: examId,
+      p_embedding: toVectorLiteral(embedded.vectors[index]),
+      p_min_similarity: DUPLICATE_WARN_THRESHOLD,
+      p_limit: 3
+    });
+
+    if (error) {
+      return { ok: false, message: error.message, rows: [], unindexedCount: 0 };
+    }
+
+    const matches = toDuplicateMatches(data);
+    if (matches.length > 0) {
+      rows.push({ rowIndex: index, matches });
+    }
+  }
+
+  const unindexedCount = await countUnindexedQuestions(supabase, examId);
+
+  return {
+    ok: true,
+    message: rows.length
+      ? `${rows.length} row${rows.length === 1 ? " looks" : "s look"} similar to existing questions.`
+      : "No near-duplicates found among indexed questions.",
+    rows,
+    unindexedCount
+  };
+}
+
+export type IndexEmbeddingsResult = {
+  ok: boolean;
+  message: string;
+  indexed: number;
+  remaining: number;
+};
+
+export async function indexQuestionEmbeddingsAction(): Promise<IndexEmbeddingsResult> {
+  const adminCheck = await requireAdminForAction();
+  if (!adminCheck.ok) {
+    return { ok: false, message: adminCheck.message, indexed: 0, remaining: 0 };
+  }
+
+  const supabase = await createClient();
+
+  const [questionsResult, embeddingsResult] = await Promise.all([
+    supabase
+      .from("questions")
+      .select("id,current_version:question_versions!questions_current_version_fk(content)")
+      .neq("status", "retired")
+      .limit(1000),
+    supabase.from("question_embeddings").select("question_id,content_hash").limit(1000)
+  ]);
+
+  if (questionsResult.error || embeddingsResult.error) {
+    return {
+      ok: false,
+      message: questionsResult.error?.message ?? embeddingsResult.error?.message ?? "Load failed.",
+      indexed: 0,
+      remaining: 0
+    };
+  }
+
+  const hashByQuestion = new Map(
+    (embeddingsResult.data ?? []).map((row) => {
+      const record = row as { question_id: string; content_hash: string };
+      return [record.question_id, record.content_hash];
+    })
+  );
+
+  // Index questions that are missing an embedding or whose text changed.
+  const pending = (questionsResult.data ?? [])
+    .map((row) => {
+      const record = row as Record<string, unknown>;
+      const version = record.current_version as { content?: unknown } | null;
+      const content = (version?.content ?? {}) as { text?: unknown; options?: unknown };
+      const text = canonicalizeQuestionText(content);
+      return { id: String(record.id), text, hash: contentHash(text) };
+    })
+    .filter((entry) => entry.text.length > 0 && hashByQuestion.get(entry.id) !== entry.hash);
+
+  const batch = pending.slice(0, EMBEDDING_INDEX_BATCH);
+  if (batch.length === 0) {
+    return { ok: true, message: "All questions are indexed for duplicate detection.", indexed: 0, remaining: 0 };
+  }
+
+  const embedded = await embedTexts(batch.map((entry) => entry.text));
+  if (!embedded.ok) {
+    return { ok: false, message: embedded.message, indexed: 0, remaining: pending.length };
+  }
+
+  const { error: upsertError } = await supabase.from("question_embeddings").upsert(
+    batch.map((entry, index) => ({
+      question_id: entry.id,
+      embedding: toVectorLiteral(embedded.vectors[index]),
+      model: EMBEDDING_MODEL,
+      content_hash: entry.hash,
+      updated_at: new Date().toISOString()
+    })),
+    { onConflict: "question_id" }
+  );
+
+  if (upsertError) {
+    return { ok: false, message: upsertError.message, indexed: 0, remaining: pending.length };
+  }
+
+  const remaining = pending.length - batch.length;
+  return {
+    ok: true,
+    message: `Indexed ${batch.length} question${batch.length === 1 ? "" : "s"}${
+      remaining > 0 ? `; ${remaining} to go — click again.` : "; all caught up."
+    }`,
+    indexed: batch.length,
+    remaining
+  };
+}
+
+async function countUnindexedQuestions(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  examId: string
+): Promise<number> {
+  const [questionsResult, embeddingsResult] = await Promise.all([
+    supabase.from("questions").select("id").eq("exam_id", examId).neq("status", "retired").limit(1000),
+    supabase.from("question_embeddings").select("question_id").limit(1000)
+  ]);
+
+  if (questionsResult.error || embeddingsResult.error) {
+    return 0;
+  }
+
+  const indexed = new Set(
+    (embeddingsResult.data ?? []).map((row) => (row as { question_id: string }).question_id)
+  );
+  return (questionsResult.data ?? []).filter(
+    (row) => !indexed.has((row as { id: string }).id)
+  ).length;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function getString(formData: FormData, key: string) {

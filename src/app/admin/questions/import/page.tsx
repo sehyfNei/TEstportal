@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { EmbeddingIndexCard } from "@/components/admin/embedding-index-card";
 import { QuestionImportWizard } from "@/components/admin/question-import-wizard";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
@@ -28,6 +29,8 @@ export default async function AdminQuestionImportPage() {
       </div>
 
       <QuestionImportWizard exams={exams} />
+
+      <EmbeddingIndexCard />
     </section>
   );
 }
