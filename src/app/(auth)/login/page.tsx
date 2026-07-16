@@ -1,5 +1,6 @@
 import { AuthCard } from "@/components/auth/auth-card";
 import { AuthField } from "@/components/auth/auth-field";
+import { GoogleButton } from "@/components/auth/google-button";
 import { SubmitButton } from "@/components/auth/submit-button";
 import { signInAction } from "@/app/(auth)/actions";
 
@@ -33,6 +34,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         />
         <SubmitButton pendingLabel="Signing in...">Sign in</SubmitButton>
       </form>
+      <GoogleButton redirectTo={params.redirectTo} />
     </AuthCard>
   );
 }

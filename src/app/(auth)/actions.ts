@@ -35,6 +35,37 @@ export async function signInAction(formData: FormData) {
   redirect(redirectTo);
 }
 
+export async function signInWithGoogleAction(formData: FormData) {
+  if (!hasSupabaseConfig()) {
+    redirect(`/login?message=${encodedMessage("Supabase is not configured yet.")}`);
+  }
+
+  // Only allow same-app relative paths so the OAuth round-trip can't be
+  // turned into an open redirect.
+  const rawRedirect = getString(formData, "redirectTo") || "/dashboard";
+  const redirectTo = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//")
+    ? rawRedirect
+    : "/dashboard";
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: `${getAppUrl()}/auth/callback?redirectTo=${encodeURIComponent(redirectTo)}`
+    }
+  });
+
+  if (error || !data?.url) {
+    redirect(
+      `/login?message=${encodedMessage(
+        error?.message ?? "Google sign-in is not configured yet. Use email and password."
+      )}`
+    );
+  }
+
+  redirect(data.url);
+}
+
 export async function signUpAction(formData: FormData) {
   if (!hasSupabaseConfig()) {
     redirect(`/register?message=${encodedMessage("Supabase is not configured yet.")}`);

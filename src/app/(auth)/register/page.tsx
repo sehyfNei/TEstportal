@@ -1,5 +1,6 @@
 import { AuthCard } from "@/components/auth/auth-card";
 import { AuthField } from "@/components/auth/auth-field";
+import { GoogleButton } from "@/components/auth/google-button";
 import { SubmitButton } from "@/components/auth/submit-button";
 import { signUpAction } from "@/app/(auth)/actions";
 
@@ -27,6 +28,7 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
         <AuthField autoComplete="new-password" label="Password" name="password" type="password" />
         <SubmitButton pendingLabel="Creating account...">Create account</SubmitButton>
       </form>
+      <GoogleButton />
     </AuthCard>
   );
 }
