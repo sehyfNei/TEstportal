@@ -61,7 +61,10 @@ export const HANDLERS: Record<
     if (!p?.result_id || !p?.user_id) {
       throw new Error("Invalid payload: missing result_id or user_id");
     }
-    await generateAnalysisJob(p.result_id, p.user_id, supabase);
+    const status = await generateAnalysisJob(p.result_id, p.user_id, supabase);
+    if (status === "failed") {
+      throw new Error("analysis_generation_failed");
+    }
   },
   generate_improvement_plan: async (payload: unknown, supabase: SupabaseClient) => {
     const p = payload as { result_id?: string; user_id?: string; exam_id?: string };

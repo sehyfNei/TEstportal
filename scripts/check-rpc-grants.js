@@ -44,6 +44,7 @@ async function main() {
           'set_question_quality_tier',
           'set_question_status',
           'start_test_session',
+          'start_test_session_compact',
           'submit_question_flag',
           'submit_test_session',
           'update_admin_question',
@@ -54,7 +55,7 @@ async function main() {
 
     console.log(JSON.stringify(rows));
 
-    if (rows.length !== 15 || rows.some((row) => !row.can_execute)) {
+    if (rows.length !== 16 || rows.some((row) => !row.can_execute)) {
       throw new Error("One or more authenticated RPC grants are missing.");
     }
   } finally {

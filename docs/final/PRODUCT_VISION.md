@@ -63,6 +63,12 @@ Every important question and explanation needs clear provenance, review status, 
 
 The dashboard should answer one question first: **What is the most valuable thing I can do next with the time I have?** It should not become a collection of disconnected analytics.
 
+### The Portal Owns The Learner Record; Channels Extend Access
+
+Daily practice may reach aspirants through linked channels such as Telegram or WhatsApp, but those channels must remain extensions of the same preparation loop rather than separate quiz products. Questions delivered outside the portal, learner replies, scoring, timing, explanations, mistakes, mastery updates, retest scheduling, and plan changes must use the same trusted content and canonical learner record as portal activity.
+
+Channel use must be explicitly opted into and securely linked to an authenticated account. Webhooks must be verified, inbound replies processed idempotently, answer keys protected until submission, delivery failures recoverable, and quiet hours, frequency controls, pause, and opt-out respected. The portal remains the primary place for diagnostics, full tests, detailed review, planning, and progress history.
+
 ### Repair Weakness Without Neglecting Strength
 
 Plans balance high-priority weakness repair, maintenance of exam-important strengths, stale-topic revision, uncovered syllabus, and test strategy. Strong topics should become dependable marks.
@@ -147,6 +153,7 @@ Phase 1 closes only when:
 - Current affairs connected to static syllabus and tests.
 - Full CSAT diagnosis, practice, and risk tracking.
 - Daily mission and adaptive weekly calendar.
+- Opt-in daily practice through linked Telegram or WhatsApp accounts, with answers scored and stored in the canonical learner record so mistakes, mastery, retests, readiness, and the next daily mission update across every channel.
 - Recovery after missed study days.
 - Evidence-based motivation, reminders, and milestones.
 - Grounded AI tutor using approved content and learner context.
@@ -211,4 +218,5 @@ The ultimate measure is not questions attempted, chat messages, or time in the a
 - Benchmark scores improve without losing comparability.
 - Plans remain realistic as the exam date approaches.
 - Users consistently complete recommended next actions.
+- Off-platform daily practice improves consistency and leads users back to deeper review and testing in the portal rather than becoming a disconnected engagement feed.
 - Readiness estimates become better calibrated as trusted data grows.

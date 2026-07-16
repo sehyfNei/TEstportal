@@ -16,6 +16,7 @@ import {
   type QuestionState,
   type SelectedAnswer
 } from "@/lib/test-session/answer-shape";
+import { shouldAdvanceAfterConfidence } from "@/lib/test-session/runner-flow";
 import { mergeWithBackup, useSessionBackupStore } from "@/lib/test-session/session-backup-store";
 import { extractStem } from "@/lib/ai/jobs/question-context";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
@@ -302,6 +303,23 @@ export function TestRunner({
     }
   }, [locked, questions.length, remainingMs, submit]);
 
+  useEffect(() => {
+    if (!expiresAt || locked || !questions.length) {
+      return;
+    }
+
+    const elapsedMs = performance.now() - elapsedStartRef.current;
+    const delayMs = getRemainingMs(expiresAt, serverNow, elapsedMs);
+
+    if (delayMs <= 0) {
+      submit("auto");
+      return;
+    }
+
+    const deadlineTimer = window.setTimeout(() => submit("auto"), delayMs + 50);
+    return () => window.clearTimeout(deadlineTimer);
+  }, [expiresAt, locked, questions.length, serverNow, submit]);
+
   function commitQuestionState(
     question: TestRunnerQuestion,
     state: QuestionState,
@@ -350,11 +368,23 @@ export function TestRunner({
     }
 
     const currentState = getQuestionState(questionStatesRef.current, currentQuestion.questionId);
-
-    commitQuestionState(currentQuestion, {
+    const nextState = {
       ...currentState,
       confidence
-    });
+    };
+
+    commitQuestionState(currentQuestion, nextState);
+
+    if (
+      shouldAdvanceAfterConfidence({
+        answer: nextState.answer,
+        confidence,
+        currentIndex,
+        questionCount: questions.length
+      })
+    ) {
+      jumpTo(currentIndex + 1, false);
+    }
   }
 
   function toggleMarkedReview() {
@@ -370,7 +400,7 @@ export function TestRunner({
     });
   }
 
-  function jumpTo(index: number) {
+  function jumpTo(index: number, saveLeaving = true) {
     if (!currentQuestion) {
       return;
     }
@@ -388,13 +418,15 @@ export function TestRunner({
 
     // Capture before the async boundary; save fire-and-forget in background
     const leaving = currentQuestion;
-    void (async () => {
-      await flushDebouncedSave();
-      await saveQuestionAnswer(
-        leaving,
-        getQuestionState(questionStatesRef.current, leaving.questionId)
-      );
-    })();
+    if (saveLeaving) {
+      void (async () => {
+        await flushDebouncedSave();
+        await saveQuestionAnswer(
+          leaving,
+          getQuestionState(questionStatesRef.current, leaving.questionId)
+        );
+      })();
+    }
   }
 
   function move(delta: number) {
@@ -438,6 +470,44 @@ export function TestRunner({
       <div className="rounded-xl border border-border bg-card shadow-card p-5 text-sm leading-6 text-muted-foreground">
         No questions are attached to this session.
       </div>
+    );
+  }
+
+  if (result) {
+    return (
+      <section className="grid gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+          <div>
+            <p className="text-sm font-medium text-primary">Test complete</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {result.attempted ?? answeredCount} of {questions.length} questions attempted
+            </p>
+          </div>
+          <Link className="text-sm font-semibold text-primary hover:underline" href="/tests/history">
+            Test history
+          </Link>
+        </div>
+
+        <div ref={resultPanelRef}>
+          <ResultPanel result={result} />
+        </div>
+        <AnalysisPanel
+          initialAnalysis={initialAnalysis ?? null}
+          questionLabels={questionLabels}
+          resultId={resultId}
+          sessionId={sessionId}
+        />
+        {isDiagnostic ? <PlanPanel initialPlan={initialPlan ?? null} sessionId={sessionId} /> : null}
+
+        <div className="flex flex-wrap gap-3">
+          <Link className="h-10 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground" href="/tests">
+            Take another test
+          </Link>
+          <Link className="h-10 rounded-md border border-border px-4 py-2 text-sm font-semibold" href="/dashboard">
+            Dashboard
+          </Link>
+        </div>
+      </section>
     );
   }
 
@@ -500,24 +570,6 @@ export function TestRunner({
         states={navigatorStates}
       />
 
-      {result ? (
-        <div ref={resultPanelRef}>
-          <ResultPanel result={result} />
-        </div>
-      ) : null}
-
-      {result ? (
-        <AnalysisPanel
-          initialAnalysis={initialAnalysis ?? null}
-          questionLabels={questionLabels}
-          resultId={resultId}
-          sessionId={sessionId}
-        />
-      ) : null}
-
-      {result && isDiagnostic ? (
-        <PlanPanel initialPlan={initialPlan ?? null} sessionId={sessionId} />
-      ) : null}
 
       <div className="grid gap-5 rounded-xl border border-border bg-card shadow-card p-5">
         <QuestionRenderer

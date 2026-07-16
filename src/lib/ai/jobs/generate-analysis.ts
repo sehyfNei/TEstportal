@@ -108,18 +108,18 @@ export async function generateAnalysisJob(
   userId: string,
   supabase: SupabaseClient,
   deps: GenerateAnalysisDeps = {}
-): Promise<void> {
+): Promise<AnalysisJobFinalStatus> {
   const callAiFn = deps.callAiFn ?? callAi;
   const store = deps.store ?? createSupabaseAnalysisStore(supabase);
 
   const insertResult = await store.insertRunningRow(resultId, userId);
   if (insertResult.conflict) {
-    return;
+    return "completed";
   }
 
   if (insertResult.error) {
     console.error("[analysis] insert failed for result", resultId, insertResult.error);
-    return;
+    return "failed";
   }
 
   let source: AnalysisSource | null;
@@ -127,30 +127,30 @@ export async function generateAnalysisJob(
     source = await store.loadSource(resultId);
   } catch (error) {
     await store.finalizeRow(resultId, "failed", null, `load_failed:${errorText(error)}`);
-    return;
+    return "failed";
   }
 
   if (!source) {
     await store.finalizeRow(resultId, "failed", null, "result_not_found");
-    return;
+    return "failed";
   }
 
   if (source.userId !== userId) {
     await store.finalizeRow(resultId, "failed", null, "user_mismatch");
-    return;
+    return "failed";
   }
 
   const input = buildAnalysisInput(source);
   if (!input) {
     await store.finalizeRow(resultId, "failed", null, "no_questions");
-    return;
+    return "failed";
   }
 
   const aiResult = await callAiSafely(callAiFn, resultId, userId, input);
   if (!aiResult.ok) {
     const status = aiResult.status === "disabled" ? "disabled" : "failed";
     await store.finalizeRow(resultId, status, null, `ai_error:${aiResult.error}`);
-    return;
+    return status;
   }
 
   let parsed: unknown;
@@ -158,10 +158,10 @@ export async function generateAnalysisJob(
     parsed = JSON.parse(aiResult.content);
   } catch {
     await store.finalizeRow(resultId, "failed", null, "json_parse_error");
-    return;
+    return "failed";
   }
 
-  const validation = validateAnalysisOutput(parsed);
+  const validation = validateAnalysisOutput(normalizeAnalysisOutput(parsed, input));
   if (!validation.ok) {
     await store.finalizeRow(
       resultId,
@@ -169,10 +169,42 @@ export async function generateAnalysisJob(
       null,
       `validation_failed:${validation.errors.slice(0, 3).join("; ")}`
     );
-    return;
+    return "failed";
   }
 
   await store.finalizeRow(resultId, "completed", validation.data, null);
+  return "completed";
+}
+
+export function normalizeAnalysisOutput(raw: unknown, input: AnalysisInput): unknown {
+  if (!isRecord(raw) || !Array.isArray(raw.questionAnalyses)) {
+    return raw;
+  }
+
+  const questionById = new Map(input.questions.map((question) => [question.questionId, question]));
+  const questionAnalyses = raw.questionAnalyses.map((item) => {
+    if (!isRecord(item)) {
+      return item;
+    }
+
+    if (typeof item.whyCorrect === "string" && item.whyCorrect.trim()) {
+      return item;
+    }
+
+    const questionId = typeof item.questionId === "string" ? item.questionId : "";
+    const question = questionById.get(questionId);
+    const fallback = question?.correctLabel
+      ? `The correct answer is ${question.correctLabel}. Revisit the governing fact or concept in the question review.`
+      : "Revisit the governing fact or concept in the question review.";
+
+    return { ...item, whyCorrect: fallback };
+  });
+
+  return { ...raw, questionAnalyses };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export function buildAnalysisInput(source: AnalysisSource): AnalysisInput | null {
@@ -219,7 +251,37 @@ export function createSupabaseAnalysisStore(supabase: SupabaseClient): AnalysisJ
     });
 
     if (error?.code === "23505") {
-      return { conflict: true, error: null };
+      const existing = await supabase
+        .from("ai_analyses")
+        .select("status")
+        .eq("session_result_id", resultId)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (existing.error) {
+        return { conflict: false, error: existing.error.message };
+      }
+
+      if ((existing.data as { status?: string } | null)?.status === "completed") {
+        return { conflict: true, error: null };
+      }
+
+      const reset = await supabase
+        .from("ai_analyses")
+        .update({
+          status: "running",
+          output: null,
+          error_message: null,
+          schema_version: ANALYSIS_SCHEMA_VERSION,
+          prompt_version: ANALYSIS_PROMPT_VERSION,
+          updated_at: new Date().toISOString()
+        })
+        .eq("session_result_id", resultId)
+        .eq("user_id", userId);
+
+      return reset.error
+        ? { conflict: false, error: reset.error.message }
+        : { conflict: false, error: null };
     }
 
     if (error) {

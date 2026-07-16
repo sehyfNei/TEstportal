@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { getSessionAnalysisAction } from "@/app/test/actions";
+import {
+  getSessionAnalysisAction,
+  retrySessionAnalysisAction
+} from "@/app/test/actions";
 import { logEventAction } from "@/app/analytics/actions";
 import { ExplanationRating } from "@/components/test/explanation-rating";
 import {
@@ -73,6 +76,16 @@ export function AnalysisPanel({
     fetchAnalysis();
   }, [fetchAnalysis]);
 
+  const handleRetry = useCallback(() => {
+    attemptsRef.current = 0;
+    startPolling(async () => {
+      const next = await retrySessionAnalysisAction(sessionId);
+      if (next.ok) {
+        setAnalysis(next.analysis);
+      }
+    });
+  }, [sessionId]);
+
   if (analysis.status === "absent") {
     return null;
   }
@@ -92,6 +105,7 @@ export function AnalysisPanel({
       status={analysis.status}
       isPolling={isPolling}
       onRefresh={handleRefresh}
+      onRetry={handleRetry}
     />
   );
 }
@@ -99,10 +113,12 @@ export function AnalysisPanel({
 function PendingPanel({
   status,
   isPolling,
-  onRefresh
+  onRefresh,
+  onRetry
 }: {
   isPolling: boolean;
   onRefresh: () => void;
+  onRetry: () => void;
   status: AnalysisStatus;
 }) {
   return (
@@ -116,10 +132,10 @@ function PendingPanel({
           <button
             className="h-9 rounded-md border border-border px-3 text-sm font-semibold transition hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isPolling}
-            onClick={onRefresh}
+            onClick={status === "failed" ? onRetry : onRefresh}
             type="button"
           >
-            {isPolling ? "Checking..." : "Refresh"}
+            {isPolling ? "Checking..." : status === "failed" ? "Retry analysis" : "Refresh"}
           </button>
         ) : null}
       </div>
@@ -136,7 +152,7 @@ function statusMessage(status: AnalysisStatus): string {
     return "AI analysis is currently turned off.";
   }
 
-  return "We couldn't generate AI analysis for this attempt. You can click Refresh to try again.";
+  return "We couldn't generate AI analysis for this attempt. Retry it when you're ready.";
 }
 
 function AnalysisReport({

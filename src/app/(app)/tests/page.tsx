@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TestCatalog } from "@/components/test/test-catalog";
 import { FixedPapers, type FixedPaper } from "@/components/test/fixed-papers";
 import type { ExamOption, TopicOption } from "@/components/test/start-test";
@@ -25,6 +26,9 @@ export default async function TestsPage({ searchParams }: TestsPageProps) {
           full mock, or re-attempt your recorded mistakes.
         </p>
       </div>
+        <Link className="mt-3 inline-flex text-sm font-semibold text-primary hover:underline" href="/tests/history">
+          View test history
+        </Link>
 
       {!data.configured ? (
         <StatusPanel message="Supabase is not configured yet. Add Supabase URL and anon key before starting tests." />

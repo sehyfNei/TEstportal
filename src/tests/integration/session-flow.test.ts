@@ -107,10 +107,7 @@ function createFakeSupabase({ userId }: { userId: string | null }) {
       data: {
         session_id: SESSION_ID,
         expires_at: expiresAt,
-        questions: [
-          { question_id: QUESTION_ID, sequence: 1 },
-          { question_id: QUESTION_2_ID, sequence: 2 }
-        ]
+        question_count: 2
       },
       error: null
     };
@@ -203,7 +200,7 @@ function createFakeSupabase({ userId }: { userId: string | null }) {
         rpcFailures.delete(name);
         return { data: null, error: { message: failure } };
       }
-      if (name === "start_test_session") {
+      if (name === "start_test_session_compact") {
         return startTestSession(args);
       }
       if (name === "submit_test_session") {
@@ -280,7 +277,7 @@ describe("session flow: start → save answer → submit", () => {
 
     expect(startState.ok).toBe(true);
     expect(startState.sessionId).toBe(SESSION_ID);
-    expect(startState.questions).toHaveLength(2);
+    expect(startState).not.toHaveProperty("questions");
     // TSP-180: the started session is linked back onto the scheduled item.
     expect(fake.tables.scheduled_items[0].session_id).toBe(SESSION_ID);
     expect(mocks.logEvent).toHaveBeenCalledWith(
@@ -324,7 +321,7 @@ describe("session flow: start → save answer → submit", () => {
       status: "scored"
     });
     expect(fake.rpcCalls.map((call) => call.name)).toEqual([
-      "start_test_session",
+      "start_test_session_compact",
       "submit_test_session"
     ]);
 

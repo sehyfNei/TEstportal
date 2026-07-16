@@ -104,11 +104,12 @@ describe("generateAnalysisJob", () => {
     const store = mockStore();
     const callAiMock = vi.fn(async () => validAiResult());
 
-    await generateAnalysisJob("result-uuid", "user-uuid", mockSupabase(), {
+    const status = await generateAnalysisJob("result-uuid", "user-uuid", mockSupabase(), {
       store,
       callAiFn: callAiMock as unknown as typeof callAi
     });
 
+    expect(status).toBe("completed");
     expect(callAiMock).toHaveBeenCalledWith(
       expect.objectContaining({
         feature: "post_test_analysis",
@@ -130,11 +131,12 @@ describe("generateAnalysisJob", () => {
     const store = mockStore();
     const callAiMock = vi.fn(async () => failureAiResult("http_error", "failed"));
 
-    await generateAnalysisJob("result-uuid", "user-uuid", mockSupabase(), {
+    const status = await generateAnalysisJob("result-uuid", "user-uuid", mockSupabase(), {
       store,
       callAiFn: callAiMock as unknown as typeof callAi
     });
 
+    expect(status).toBe("failed");
     expect(store.finalizeRow).toHaveBeenCalledWith(
       "result-uuid",
       "failed",
@@ -147,11 +149,12 @@ describe("generateAnalysisJob", () => {
     const store = mockStore();
     const callAiMock = vi.fn(async () => failureAiResult("ai_disabled", "disabled"));
 
-    await generateAnalysisJob("result-uuid", "user-uuid", mockSupabase(), {
+    const status = await generateAnalysisJob("result-uuid", "user-uuid", mockSupabase(), {
       store,
       callAiFn: callAiMock as unknown as typeof callAi
     });
 
+    expect(status).toBe("disabled");
     expect(store.finalizeRow).toHaveBeenCalledWith(
       "result-uuid",
       "disabled",
@@ -160,6 +163,32 @@ describe("generateAnalysisJob", () => {
     );
   });
 
+  it("repairs a null whyCorrect field before schema validation", async () => {
+    const store = mockStore();
+    const content = JSON.parse(validAiContent()) as {
+      questionAnalyses: Array<Record<string, unknown>>;
+    };
+    content.questionAnalyses[0].whyCorrect = null;
+
+    const status = await generateAnalysisJob("result-uuid", "user-uuid", mockSupabase(), {
+      store,
+      callAiFn: vi.fn(async () => validAiResult(JSON.stringify(content))) as unknown as typeof callAi
+    });
+
+    expect(status).toBe("completed");
+    expect(store.finalizeRow).toHaveBeenCalledWith(
+      "result-uuid",
+      "completed",
+      expect.objectContaining({
+        questionAnalyses: [
+          expect.objectContaining({
+            whyCorrect: expect.stringContaining("Art 14")
+          })
+        ]
+      }),
+      null
+    );
+  });
   it("finalizes failed when AI JSON fails schema validation", async () => {
     const store = mockStore();
     const callAiMock = vi.fn(async () =>

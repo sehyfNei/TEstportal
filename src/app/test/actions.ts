@@ -36,7 +36,6 @@ export type StartSessionActionState = {
   message: string;
   sessionId?: string;
   expiresAt?: string;
-  questions?: SessionPrompt[];
 };
 
 export type SaveAnswerActionState = {
@@ -100,7 +99,7 @@ export async function startSessionAction(
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("start_test_session", {
+  const rpcArgs = {
     p_exam_id: examId,
     p_type: type,
     p_template_id: templateId,
@@ -109,8 +108,15 @@ export async function startSessionAction(
     p_duration_minutes: durationMinutes,
     p_min_quality_tier: minQualityTier,
     p_pyq_only: pyqOnly
-  });
+  };
+  let startResponse = await supabase.rpc("start_test_session_compact", rpcArgs);
 
+  // Keep rolling deployments usable until the compact wrapper migration lands.
+  if (startResponse.error?.code === "PGRST202") {
+    startResponse = await supabase.rpc("start_test_session", rpcArgs);
+  }
+
+  const { data, error } = startResponse;
   if (error) {
     return { ok: false, message: error.message };
   }
@@ -150,10 +156,9 @@ export async function startSessionAction(
 
   return {
     ok: true,
-    message: `Started session with ${result.questions.length} question${result.questions.length === 1 ? "" : "s"}.`,
+    message: `Started session with ${result.question_count} question${result.question_count === 1 ? "" : "s"}.`,
     sessionId: result.session_id,
-    expiresAt: result.expires_at,
-    questions: result.questions
+    expiresAt: result.expires_at
   };
 }
 
@@ -566,6 +571,92 @@ export async function getSessionAnalysisAction(
   };
 }
 
+export async function retrySessionAnalysisAction(
+  sessionId: string
+): Promise<AnalysisActionResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Supabase is not configured yet." };
+  }
+
+  const auth = await requireAuth();
+  if (!auth.ok) {
+    return { ok: false, message: auth.message };
+  }
+
+  if (!isUuid(sessionId)) {
+    return { ok: false, message: "Valid session id is required." };
+  }
+
+  const supabase = await createClient();
+  const resultLookup = await supabase
+    .from("session_results")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("user_id", auth.userId)
+    .maybeSingle();
+
+  if (resultLookup.error) {
+    return { ok: false, message: resultLookup.error.message };
+  }
+
+  const resultId = (resultLookup.data as { id: string } | null)?.id;
+  if (!resultId) {
+    return { ok: false, message: "Session result was not found." };
+  }
+
+  const analysisLookup = await supabase
+    .from("ai_analyses")
+    .select("status,output")
+    .eq("session_result_id", resultId)
+    .eq("user_id", auth.userId)
+    .maybeSingle();
+
+  if (analysisLookup.error) {
+    return { ok: false, message: analysisLookup.error.message };
+  }
+
+  const current = toAnalysisView(analysisLookup.data as AnalysisRow | null);
+  if (current.status === "completed" || current.status === "pending" || current.status === "running") {
+    return { ok: true, analysis: current };
+  }
+
+  const { enqueueJob, generateIdempotencyKey } = await import("@/lib/jobs/enqueue");
+  const enqueueResult = await enqueueJob(
+    supabase,
+    "generate_analysis",
+    { result_id: resultId, user_id: auth.userId },
+    generateIdempotencyKey("generate_analysis", resultId, crypto.randomUUID())
+  );
+
+  if (!enqueueResult.ok) {
+    return { ok: false, message: enqueueResult.error };
+  }
+
+  if (analysisLookup.data) {
+    const reset = await supabase
+      .from("ai_analyses")
+      .update({
+        status: "pending",
+        output: null,
+        error_message: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("session_result_id", resultId)
+      .eq("user_id", auth.userId);
+
+    if (reset.error) {
+      return { ok: false, message: reset.error.message };
+    }
+  }
+
+  after(async () => {
+    const { kickJobRunnerNonFatal } = await import("@/lib/jobs/kick");
+    await kickJobRunnerNonFatal();
+  });
+
+  return { ok: true, analysis: { status: "running", output: null } };
+}
+
 export type PlanActionResult =
   | { ok: true; plan: PlanView }
   | { ok: false; message: string };
@@ -791,11 +882,14 @@ function isUuid(value: string) {
 function toStartSessionResult(value: unknown) {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const questions = Array.isArray(record.questions) ? (record.questions as SessionPrompt[]) : [];
+  const questionCount =
+    typeof record.question_count === "number" ? record.question_count : questions.length;
 
   return {
     session_id: typeof record.session_id === "string" ? record.session_id : undefined,
     expires_at: typeof record.expires_at === "string" ? record.expires_at : undefined,
-    questions
+    questions,
+    question_count: questionCount
   };
 }
 

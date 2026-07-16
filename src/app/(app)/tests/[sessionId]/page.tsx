@@ -83,7 +83,7 @@ export default async function TestSessionPage({
 
   return (
     <section className="grid gap-6">
-      <Header />
+      <Header completed={Boolean(data.result)} />
       <TestRunner
         expiresAt={data.session.expires_at}
         initialAnalysis={data.analysis}
@@ -101,11 +101,11 @@ export default async function TestSessionPage({
   );
 }
 
-function Header() {
+function Header({ completed = false }: { completed?: boolean }) {
   return (
     <div>
-      <p className="text-sm font-medium text-primary">Timed session</p>
-      <h1 className="mt-2 text-3xl font-semibold">Take test</h1>
+      <p className="text-sm font-medium text-primary">{completed ? "Completed session" : "Timed session"}</p>
+      <h1 className="mt-2 text-3xl font-semibold">{completed ? "Test result" : "Take test"}</h1>
     </div>
   );
 }
