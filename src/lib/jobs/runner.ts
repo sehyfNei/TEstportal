@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateAnalysisJob } from "@/lib/ai/jobs/generate-analysis";
 import { generatePlanJob } from "@/lib/ai/jobs/generate-plan";
 import { getErrorMessage } from "@/lib/errors";
+import { computeQuestionStatsJob } from "./handlers/compute-question-stats";
 import type { JobRow, JobStatus } from "./types";
 
 export interface RunnerStore {
@@ -72,6 +73,9 @@ export const HANDLERS: Record<
       throw new Error("Invalid payload: missing result_id, user_id, or exam_id");
     }
     await generatePlanJob(p.result_id, p.user_id, p.exam_id, supabase);
+  },
+  compute_question_stats: async (_payload: unknown, supabase: SupabaseClient) => {
+    await computeQuestionStatsJob(supabase);
   }
 };
 

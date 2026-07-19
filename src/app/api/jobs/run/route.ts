@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { createAdminClient, hasAdminConfig } from "@/lib/supabase/admin";
 import { getErrorMessage } from "@/lib/errors";
+import { ensureNightlyJobsQueued } from "@/lib/jobs/nightly";
 import { runPendingJobs } from "@/lib/jobs/runner";
 
 export async function GET(request: NextRequest) {
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const adminClient = createAdminClient();
+    await ensureNightlyJobsQueued(adminClient);
     const result = await runPendingJobs(adminClient, workerId, limit);
     return Response.json({ ok: true, result });
   } catch (error: unknown) {

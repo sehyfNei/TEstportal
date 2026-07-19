@@ -1,11 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// Job types expected to complete on a nightly cadence. Empty today: the only
-// registered runner handlers (generate_analysis, generate_improvement_plan)
-// are demand-driven. When a nightly handler lands (decay_mastery,
-// weekly_digest, compute_question_stats...), add its type string here and the
-// staleness alert covers it with no further wiring.
-export const NIGHTLY_JOB_TYPES: readonly string[] = [];
+// Job types expected to complete on a nightly cadence. compute_question_stats
+// (TSP-098) is the first nightly handler; when decay_mastery/weekly_digest
+// land, add their type strings here too and the staleness alert covers them
+// with no further wiring.
+export const NIGHTLY_JOB_TYPES: readonly string[] = ["compute_question_stats"];
 
 export type NightlyJobHealth = {
   type: string;
