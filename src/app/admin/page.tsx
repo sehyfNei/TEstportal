@@ -36,6 +36,11 @@ const taskGroups: TaskGroup[] = [
         label: "Generate questions with AI",
         description: "Pick a topic and difficulty; AI drafts MCQs for you to review before saving.",
         href: "/admin/questions/generate"
+      },
+      {
+        label: "Manage source library",
+        description: "Add past-year papers, articles, or notes to ground AI-generated questions in.",
+        href: "/admin/sources"
       }
     ]
   },

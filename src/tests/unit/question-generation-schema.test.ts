@@ -27,6 +27,16 @@ describe("generationRequestSchema", () => {
   it("rejects an invalid difficulty", () => {
     expect(generationRequestSchema.safeParse({ ...baseRequest, difficulty: "extreme" }).success).toBe(false);
   });
+
+  it("defaults sourceExcerpt to null when omitted (ungrounded requests need no changes)", () => {
+    const result = generationRequestSchema.safeParse(baseRequest);
+    expect(result.success && result.data.sourceExcerpt).toBeNull();
+  });
+
+  it("accepts an explicit sourceExcerpt", () => {
+    const result = generationRequestSchema.safeParse({ ...baseRequest, sourceExcerpt: "Some article text." });
+    expect(result.success && result.data.sourceExcerpt).toBe("Some article text.");
+  });
 });
 
 describe("buildGenerationMessages", () => {
@@ -48,6 +58,23 @@ describe("buildGenerationMessages", () => {
     const messages = buildGenerationMessages(baseRequest);
     const user = messages.find((m) => m.role === "user")?.content ?? "";
     expect(JSON.parse(user)).toMatchObject({ task: "generate_questions", topicName: "Indian Polity" });
+  });
+
+  it("omits grounding instructions when sourceExcerpt is absent", () => {
+    const messages = buildGenerationMessages(baseRequest);
+    const system = messages.find((m) => m.role === "system")?.content ?? "";
+    expect(system).not.toContain("SOURCE_MATERIAL");
+  });
+
+  it("includes the source excerpt and grounding instructions when provided", () => {
+    const messages = buildGenerationMessages({
+      ...baseRequest,
+      sourceExcerpt: "The 73rd Amendment established Panchayati Raj institutions in 1992."
+    });
+    const system = messages.find((m) => m.role === "system")?.content ?? "";
+    expect(system).toContain("Base every question strictly on facts");
+    expect(system).toContain('SOURCE_MATERIAL: """The 73rd Amendment established Panchayati Raj institutions in 1992."""');
+    expect(system).toContain("return fewer questions rather than inventing unsupported ones");
   });
 });
 
@@ -139,6 +166,6 @@ describe("validateGenerationOutput", () => {
 
 describe("version constants", () => {
   it("are stable, explicit strings", () => {
-    expect(GENERATION_PROMPT_VERSION).toBe("question_generation@1.1.0");
+    expect(GENERATION_PROMPT_VERSION).toBe("question_generation@1.2.0");
   });
 });

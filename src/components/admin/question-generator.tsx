@@ -10,6 +10,7 @@ import {
   type ConceptOption,
   type GeneratedCandidate
 } from "@/app/admin/questions/generate/actions";
+import { fetchSourcesForExamAction, type SourceOption } from "@/app/admin/sources/actions";
 
 type ExamOption = { id: string; name: string };
 type Difficulty = "easy" | "medium" | "hard";
@@ -22,6 +23,8 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
   const [topicId, setTopicId] = useState("");
   const [concepts, setConcepts] = useState<ConceptOption[]>([]);
   const [conceptId, setConceptId] = useState("");
+  const [sources, setSources] = useState<SourceOption[]>([]);
+  const [sourceId, setSourceId] = useState("");
   const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [count, setCount] = useState(3);
 
@@ -33,14 +36,18 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
   const selectedExamName = exams.find((exam) => exam.id === examId)?.name ?? "";
   const selectedTopic = topics.find((topic) => topic.id === topicId) ?? null;
   const selectedConceptName = concepts.find((concept) => concept.id === conceptId)?.name ?? null;
+  const selectedSourceTitle = sources.find((source) => source.id === sourceId)?.title ?? null;
 
   useEffect(() => {
     setTopics([]);
     setTopicId("");
+    setSources([]);
+    setSourceId("");
     if (!examId) {
       return;
     }
     void fetchExamTopicsAction(examId).then(setTopics);
+    void fetchSourcesForExamAction(examId).then(setSources);
   }, [examId]);
 
   useEffect(() => {
@@ -69,7 +76,8 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
         topicName: selectedTopic.name,
         conceptName: selectedConceptName,
         difficulty,
-        count
+        count,
+        sourceId: sourceId || null
       }).then((result) => {
         setGenerateMessage(result.message);
         if (result.ok) {
@@ -81,7 +89,7 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
 
   return (
     <div className="grid gap-6">
-      <div className="grid gap-4 rounded-xl border border-border bg-card shadow-card p-5 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 rounded-xl border border-border bg-card shadow-card p-5 sm:grid-cols-2 lg:grid-cols-6">
         <label className="grid gap-2 text-sm font-medium">
           Exam
           <select
@@ -133,6 +141,23 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
         </label>
 
         <label className="grid gap-2 text-sm font-medium">
+          Ground in a source (optional)
+          <select
+            className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+            disabled={!examId || sources.length === 0}
+            onChange={(e) => setSourceId(e.target.value)}
+            value={sourceId}
+          >
+            <option value="">{sources.length ? "None — general knowledge" : "No sources for this exam"}</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.title}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium">
           Difficulty
           <select
             className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
@@ -172,6 +197,9 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
 
       {candidates.length > 0 ? (
         <div className="grid gap-3">
+          {selectedSourceTitle ? (
+            <p className="text-xs font-medium text-muted-foreground">Grounded in: {selectedSourceTitle}</p>
+          ) : null}
           {candidates.map((candidate, index) => (
             <CandidateCard
               candidate={candidate}
@@ -180,6 +208,7 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
               isSaved={savedIndexes.has(index)}
               key={index}
               onSaved={() => setSavedIndexes((prev) => new Set(prev).add(index))}
+              sourceId={sourceId || null}
               topicId={topicId}
             />
           ))}
@@ -195,6 +224,7 @@ function CandidateCard({
   examId,
   isSaved,
   onSaved,
+  sourceId,
   topicId
 }: {
   candidate: GeneratedCandidate;
@@ -202,6 +232,7 @@ function CandidateCard({
   examId: string;
   isSaved: boolean;
   onSaved: () => void;
+  sourceId: string | null;
   topicId: string;
 }) {
   const [isSaving, startSave] = useTransition();
@@ -216,7 +247,7 @@ function CandidateCard({
 
   function handleSave() {
     startSave(() => {
-      void saveGeneratedQuestionAction({ examId, topicId, difficulty, question, gate }).then((result) => {
+      void saveGeneratedQuestionAction({ examId, topicId, difficulty, question, gate, sourceId }).then((result) => {
         setMessage(result.message);
         if (result.ok) {
           setQuestionId(result.questionId ?? null);

@@ -23,6 +23,7 @@ type ReviewQuestionRow = {
   created_at: string;
   exams?: { name?: string | null; slug?: string | null } | null;
   topic?: { name?: string | null; slug?: string | null } | null;
+  source_material?: { title?: string | null } | null;
   current_version?: {
     content?: { text?: string } | null;
     reviewer_notes?: string | null;
@@ -148,6 +149,12 @@ function ReviewQuestionCard({
             <Meta label="Flags" value={String(question.flag_count)} />
           </dl>
 
+          {question.source_material?.title ? (
+            <p className="mt-3 text-xs font-medium text-muted-foreground">
+              Grounded in: {question.source_material.title}
+            </p>
+          ) : null}
+
           {question.current_version?.reviewer_notes ? (
             <p className="mt-4 rounded-md bg-muted px-3 py-2 text-sm leading-6 text-muted-foreground">
               {question.current_version.reviewer_notes}
@@ -238,7 +245,7 @@ async function loadReviewData() {
   const questionsResult = await supabase
     .from("questions")
     .select(
-      "id,status,type,difficulty,source,quality_tier,flag_count,is_contested,source_reference,source_year,created_at,exams(name,slug),topic:topics!questions_topic_id_fkey(name,slug),current_version:question_versions!questions_current_version_fk(version,content,reviewer_notes)"
+      "id,status,type,difficulty,source,quality_tier,flag_count,is_contested,source_reference,source_year,created_at,exams(name,slug),topic:topics!questions_topic_id_fkey(name,slug),source_material:question_sources!questions_source_id_fkey(title),current_version:question_versions!questions_current_version_fk(version,content,reviewer_notes)"
     )
     .in("status", Array.from(REVIEW_STATUSES))
     .order("created_at", { ascending: false })

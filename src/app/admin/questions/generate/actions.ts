@@ -23,6 +23,7 @@ import {
   runQualityGates,
   type QualityGateResult
 } from "@/lib/question-bank/generation-quality-gates";
+import { truncateForGrounding } from "@/lib/question-bank/source-schema";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -47,6 +48,9 @@ export type GenerationRequestInput = {
   conceptName: string | null;
   difficulty: "easy" | "medium" | "hard";
   count: number;
+  // TSP-188: id of an admin-curated question_sources row to ground this
+  // batch in, or null for the original ungrounded TSP-072 behavior.
+  sourceId: string | null;
 };
 
 export async function generateQuestionsAction(
@@ -65,12 +69,35 @@ export async function generateQuestionsAction(
     return { ok: false, message: "Valid exam and topic are required.", candidates: [] };
   }
 
+  const supabase = await createClient();
+
+  let sourceExcerpt: string | null = null;
+  if (input.sourceId) {
+    if (!isUuid(input.sourceId)) {
+      return { ok: false, message: "Invalid source.", candidates: [] };
+    }
+
+    const { data: sourceRow, error: sourceError } = await supabase
+      .from("question_sources")
+      .select("body_text,exam_id")
+      .eq("id", input.sourceId)
+      .maybeSingle();
+
+    const record = sourceRow as Record<string, unknown> | null;
+    if (sourceError || !record || record.exam_id !== input.examId) {
+      return { ok: false, message: "Source not found for this exam.", candidates: [] };
+    }
+
+    sourceExcerpt = truncateForGrounding(String(record.body_text));
+  }
+
   const parsedRequest = generationRequestSchema.safeParse({
     examName: input.examName,
     topicName: input.topicName,
     conceptName: input.conceptName,
     difficulty: input.difficulty,
-    count: input.count
+    count: input.count,
+    sourceExcerpt
   });
 
   if (!parsedRequest.success) {
@@ -119,7 +146,6 @@ export async function generateQuestionsAction(
   }
 
   const questions = validated.data.questions;
-  const supabase = await createClient();
   const embedded = await embedTexts(
     questions.map((q) => canonicalizeQuestionText({ text: q.stem, options: q.options }))
   );
@@ -162,6 +188,7 @@ export async function saveGeneratedQuestionAction(input: {
   difficulty: "easy" | "medium" | "hard";
   question: GeneratedQuestion;
   gate: QualityGateResult;
+  sourceId: string | null;
 }): Promise<SaveGeneratedQuestionState> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Supabase is not configured." };
@@ -174,6 +201,10 @@ export async function saveGeneratedQuestionAction(input: {
 
   if (!isUuid(input.examId) || !isUuid(input.topicId)) {
     return { ok: false, message: "Valid exam and topic are required." };
+  }
+
+  if (input.sourceId && !isUuid(input.sourceId)) {
+    return { ok: false, message: "Invalid source." };
   }
 
   const supabase = await createClient();
@@ -191,6 +222,7 @@ export async function saveGeneratedQuestionAction(input: {
     p_status: "draft",
     p_exposure_policy: "practice",
     p_quality_tier: "bronze",
+    p_source_id: input.sourceId,
     p_content: {
       text: input.question.stem,
       options: input.question.options,

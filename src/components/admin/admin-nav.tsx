@@ -11,6 +11,7 @@ const links = [
   { href: "/admin/questions/review", label: "Review", exact: false },
   { href: "/admin/questions/import", label: "Import", exact: true },
   { href: "/admin/questions/generate", label: "Generate", exact: true },
+  { href: "/admin/sources", label: "Sources", exact: false },
   { href: "/admin/questions", label: "Questions", exact: true },
   { href: "/admin/ai-ratings", label: "AI ratings", exact: false },
   { href: "/admin/questions/flags", label: "Flagged", exact: false },

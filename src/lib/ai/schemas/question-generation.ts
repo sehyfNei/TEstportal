@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AiMessage } from "@/lib/ai/types";
 
 export const GENERATION_SCHEMA_VERSION = "1.1.0";
-export const GENERATION_PROMPT_VERSION = "question_generation@1.1.0";
+export const GENERATION_PROMPT_VERSION = "question_generation@1.2.0";
 
 // First pass targets plain MCQ only (4 options, one correct answer) — msq and
 // integer generation are meaningfully harder to validate automatically and
@@ -15,7 +15,11 @@ export const generationRequestSchema = z.object({
   topicName: z.string().min(1),
   conceptName: z.string().min(1).nullable(),
   difficulty: DIFFICULTY,
-  count: z.number().int().min(1).max(8)
+  count: z.number().int().min(1).max(8),
+  // TSP-188: an optional excerpt from an admin-curated source (past-year
+  // paper, article) to ground the generated questions in. Defaulted so
+  // every ungrounded caller (the original TSP-072 flow) needs no changes.
+  sourceExcerpt: z.string().min(1).nullable().default(null)
 });
 
 export type GenerationRequest = z.infer<typeof generationRequestSchema>;
@@ -70,6 +74,16 @@ export function buildGenerationMessages(input: GenerationRequest): AiMessage[] {
     ? `${input.examName} / ${input.topicName} / ${input.conceptName}`
     : `${input.examName} / ${input.topicName}`;
 
+  // TSP-188: grounding is opt-in per request — omitting sourceExcerpt keeps
+  // this byte-identical to the original ungrounded TSP-072 prompt.
+  const groundingLines = input.sourceExcerpt
+    ? [
+        "Base every question strictly on facts, arguments, or events contained in the SOURCE_MATERIAL block below — do not introduce outside facts it does not support.",
+        "If the source material does not contain enough distinct facts for the full requested count, return fewer questions rather than inventing unsupported ones.",
+        `SOURCE_MATERIAL: """${input.sourceExcerpt}"""`
+      ]
+    : [];
+
   return [
     {
       role: "system",
@@ -87,7 +101,8 @@ export function buildGenerationMessages(input: GenerationRequest): AiMessage[] {
         // without spelling it out makes the model invent field names.
         'Return ONLY a JSON object with exactly this shape: {"questions": [{"index": 0, "stem": "string", "options": ["string","string","string","string"], "correctOptionIndex": 0, "explanation": "string", "confidence": "high|medium|low", "distractorRationales": [{"optionIndex": 1, "misconception": "string"}, {"optionIndex": 2, "misconception": "string"}, {"optionIndex": 3, "misconception": "string"}]}]}.',
         "distractorRationales must contain exactly one entry for every option index that is NOT correctOptionIndex — never one for the correct option.",
-        `Include exactly ${input.count} entries, indexed 0 to ${input.count - 1}.`
+        `Include exactly ${input.count} entries, indexed 0 to ${input.count - 1}.`,
+        ...groundingLines
       ].join(" ")
     },
     {
