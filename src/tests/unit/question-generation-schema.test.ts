@@ -11,7 +11,8 @@ const baseRequest = {
   topicName: "Indian Polity",
   conceptName: null,
   difficulty: "medium" as const,
-  count: 3
+  count: 3,
+  sourceExcerpt: null
 };
 
 describe("generationRequestSchema", () => {
@@ -29,7 +30,13 @@ describe("generationRequestSchema", () => {
   });
 
   it("defaults sourceExcerpt to null when omitted (ungrounded requests need no changes)", () => {
-    const result = generationRequestSchema.safeParse(baseRequest);
+    const result = generationRequestSchema.safeParse({
+      examName: "UPSC Prelims",
+      topicName: "Indian Polity",
+      conceptName: null,
+      difficulty: "medium",
+      count: 3
+    });
     expect(result.success && result.data.sourceExcerpt).toBeNull();
   });
 
