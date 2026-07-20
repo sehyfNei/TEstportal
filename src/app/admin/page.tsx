@@ -31,6 +31,11 @@ const taskGroups: TaskGroup[] = [
         label: "Fill in missing explanations with AI",
         description: "Generates explanations for imported questions that have none, ten at a time.",
         href: "/admin/questions/backfill"
+      },
+      {
+        label: "Generate questions with AI",
+        description: "Pick a topic and difficulty; AI drafts MCQs for you to review before saving.",
+        href: "/admin/questions/generate"
       }
     ]
   },
