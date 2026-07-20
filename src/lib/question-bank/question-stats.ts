@@ -38,6 +38,12 @@ export const MIN_ATTEMPTS_FOR_DISCRIMINATION = 8;
 // Kelley (1939) upper/lower split fraction for the classical D-index.
 const DISCRIMINATION_SPLIT_FRACTION = 0.27;
 
+// Weaker students doing better than stronger ones on an item usually means a
+// bad answer key or a genuinely ambiguous question. Exported so the quality
+// dashboard (TSP-100) can flag the same condition even when the computed
+// suggested tier hasn't caught up to 'quarantine' yet (e.g. flag_count is 0).
+export const QUARANTINE_NEGATIVE_DISCRIMINATION = -0.1;
+
 // Suggested-tier thresholds. Named and grouped here so they can be retuned
 // without touching the aggregation logic.
 const TIER_THRESHOLDS = {
@@ -45,7 +51,7 @@ const TIER_THRESHOLDS = {
   quarantineMinAttempts: 20,
   quarantineDegenerateLow: 0.05, // almost nobody gets it right
   quarantineDegenerateHigh: 0.98, // almost everybody gets it right
-  quarantineNegativeDiscrimination: -0.1, // weaker students do better: likely a bad key
+  quarantineNegativeDiscrimination: QUARANTINE_NEGATIVE_DISCRIMINATION,
   goldMinAttempts: 20,
   goldMinDiscrimination: 0.3,
   goldDifficultyBand: [0.2, 0.9] as const,

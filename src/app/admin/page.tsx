@@ -68,6 +68,11 @@ const taskGroups: TaskGroup[] = [
         label: "AI answers students disliked",
         description: "AI explanations rated unhelpful, with a link to the session for context.",
         href: "/admin/ai-ratings"
+      },
+      {
+        label: "Quality analytics",
+        description: "Difficulty, discrimination, and a suggested tier computed nightly from real attempts.",
+        href: "/admin/quality"
       }
     ]
   },
