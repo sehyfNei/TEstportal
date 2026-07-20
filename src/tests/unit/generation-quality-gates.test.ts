@@ -11,6 +11,11 @@ function candidate(overrides: Partial<GeneratedQuestion> = {}): GeneratedQuestio
     correctOptionIndex: 1,
     explanation: "Article 14 guarantees equality before the law.",
     confidence: "high",
+    distractorRationales: [
+      { optionIndex: 0, misconception: "Confuses Article 12's definitions clause with the equality guarantee." },
+      { optionIndex: 2, misconception: "Mixes up Article 19's freedoms with the right to equality." },
+      { optionIndex: 3, misconception: "Confuses the right to life (Article 21) with equality before law." }
+    ],
     ...overrides
   };
 }
@@ -66,6 +71,40 @@ describe("runQualityGates", () => {
   it("can report multiple independent warnings at once", () => {
     const result = runQualityGates(candidate({ confidence: "low" }), [match({ similarity: 0.9 })]);
     expect(result.warnings).toHaveLength(2);
+  });
+
+  it("fails when two distractor rationales are near-duplicates", () => {
+    const result = runQualityGates(
+      candidate({
+        distractorRationales: [
+          { optionIndex: 0, misconception: "Mixes up two similar articles." },
+          { optionIndex: 2, misconception: "Mixes up two similar articles." },
+          { optionIndex: 3, misconception: "Confuses the right to life with equality before law." }
+        ]
+      }),
+      []
+    );
+    expect(result.passed).toBe(false);
+    expect(result.warnings[0]).toMatch(/near-duplicates/i);
+  });
+
+  it("ignores case and surrounding whitespace when comparing rationale text", () => {
+    const result = runQualityGates(
+      candidate({
+        distractorRationales: [
+          { optionIndex: 0, misconception: "  Mixes up two similar articles.  " },
+          { optionIndex: 2, misconception: "MIXES UP TWO SIMILAR ARTICLES." },
+          { optionIndex: 3, misconception: "Confuses the right to life with equality before law." }
+        ]
+      }),
+      []
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it("passes when every distractor rationale targets a distinct misconception", () => {
+    const result = runQualityGates(candidate(), []);
+    expect(result.passed).toBe(true);
   });
 });
 

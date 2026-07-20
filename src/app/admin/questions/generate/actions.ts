@@ -194,7 +194,14 @@ export async function saveGeneratedQuestionAction(input: {
     p_content: {
       text: input.question.stem,
       options: input.question.options,
-      correct_options: [input.question.correctOptionIndex]
+      correct_options: [input.question.correctOptionIndex],
+      // TSP-074: kept as plain jsonb metadata (question_content_schema in
+      // admin-question-schema.ts is .passthrough(), so this round-trips
+      // through the raw-JSON edit form untouched) — no new column needed.
+      distractor_rationales: input.question.distractorRationales.map((r) => ({
+        option_index: r.optionIndex,
+        misconception: r.misconception
+      }))
     },
     p_explanation: input.question.explanation,
     p_explanation_detail: null,

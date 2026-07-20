@@ -244,15 +244,22 @@ function CandidateCard({
       </div>
 
       <ol className="mt-3 grid gap-1 text-sm">
-        {question.options.map((option, optionIndex) => (
-          <li
-            className={optionIndex === question.correctOptionIndex ? "font-semibold text-emerald-700" : ""}
-            key={optionIndex}
-          >
-            {String.fromCharCode(65 + optionIndex)}. {option}
-            {optionIndex === question.correctOptionIndex ? " ✓" : ""}
-          </li>
-        ))}
+        {question.options.map((option, optionIndex) => {
+          const isCorrect = optionIndex === question.correctOptionIndex;
+          const rationale = question.distractorRationales.find((r) => r.optionIndex === optionIndex);
+
+          return (
+            <li className={isCorrect ? "font-semibold text-emerald-700" : ""} key={optionIndex}>
+              {String.fromCharCode(65 + optionIndex)}. {option}
+              {isCorrect ? " ✓" : ""}
+              {rationale ? (
+                <span className="block text-xs font-normal text-muted-foreground">
+                  Targets: {rationale.misconception}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
       </ol>
 
       <p className="mt-3 text-xs leading-5 text-muted-foreground">

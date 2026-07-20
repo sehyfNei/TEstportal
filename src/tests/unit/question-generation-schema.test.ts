@@ -58,7 +58,12 @@ describe("validateGenerationOutput", () => {
     options: ["Article 12", "Article 14", "Article 19", "Article 21"],
     correctOptionIndex: 1,
     explanation: "Article 14 guarantees equality before the law.",
-    confidence: "high"
+    confidence: "high",
+    distractorRationales: [
+      { optionIndex: 0, misconception: "Confuses Article 12's definitions clause with the equality guarantee." },
+      { optionIndex: 2, misconception: "Mixes up Article 19's freedoms with the right to equality." },
+      { optionIndex: 3, misconception: "Confuses the right to life (Article 21) with equality before law." }
+    ]
   };
 
   it("accepts a well-formed batch", () => {
@@ -91,10 +96,49 @@ describe("validateGenerationOutput", () => {
     expect(validateGenerationOutput("not json").ok).toBe(false);
     expect(validateGenerationOutput(null).ok).toBe(false);
   });
+
+  it("rejects a missing distractorRationales entry for a wrong option", () => {
+    const result = validateGenerationOutput({
+      questions: [{ ...validCandidate, distractorRationales: validCandidate.distractorRationales.slice(0, 2) }]
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a distractorRationales entry that points at the correct option", () => {
+    const result = validateGenerationOutput({
+      questions: [
+        {
+          ...validCandidate,
+          distractorRationales: [
+            { optionIndex: 1, misconception: "Should never target the correct option." },
+            { optionIndex: 2, misconception: "Mixes up Article 19's freedoms with the right to equality." },
+            { optionIndex: 3, misconception: "Confuses the right to life (Article 21) with equality before law." }
+          ]
+        }
+      ]
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a duplicate distractorRationales optionIndex", () => {
+    const result = validateGenerationOutput({
+      questions: [
+        {
+          ...validCandidate,
+          distractorRationales: [
+            { optionIndex: 0, misconception: "Confuses Article 12's definitions clause with the equality guarantee." },
+            { optionIndex: 0, misconception: "Same index repeated instead of covering option 2." },
+            { optionIndex: 3, misconception: "Confuses the right to life (Article 21) with equality before law." }
+          ]
+        }
+      ]
+    });
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("version constants", () => {
   it("are stable, explicit strings", () => {
-    expect(GENERATION_PROMPT_VERSION).toBe("question_generation@1.0.0");
+    expect(GENERATION_PROMPT_VERSION).toBe("question_generation@1.1.0");
   });
 });

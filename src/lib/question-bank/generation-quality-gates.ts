@@ -47,6 +47,14 @@ export function runQualityGates(
     notes.push("Model self-reported medium confidence in this answer.");
   }
 
+  // TSP-074: distractors are only "adversarial" if each targets a distinct
+  // misconception. A model that pastes near-identical rationale text across
+  // options has likely generated generic filler, not a real misconception.
+  const rationaleTexts = question.distractorRationales.map((r) => r.misconception.trim().toLowerCase());
+  if (new Set(rationaleTexts).size < rationaleTexts.length) {
+    warnings.push("Two or more distractor rationales are near-duplicates — distractors may not be genuinely adversarial.");
+  }
+
   return { passed: warnings.length === 0, warnings, notes };
 }
 
