@@ -16646,3 +16646,19 @@ Founder picked TSP-098 via AskUserQuestion from three founder-gate-free Backlog 
 Gates @ Test_Portal: typecheck 0 / **546/546** (+25) / lint 0 err (10 warn) / build clean. Tracker: 84 Done / 75 Review / 34 Backlog / 7 epics (200 rows, no new tracker row - TSP-098 pre-existed in Backlog).
 
 Founder smoke: nothing new to click - this is a backend nightly job. To eyeball it: after the next cron tick (or an admin-triggered run), /admin/ops should show `compute_question_stats` in the nightly-jobs health section (previously blank/absent); a `select * from question_stats where total_attempts > 0` in the Supabase SQL editor shows real per-question stats once enough attempts accumulate.
+
+---
+
+# Session 64 - TSP-100 question quality analytics dashboard (2026-07-20)
+
+Founder picked TSP-100 via AskUserQuestion (freshly unblocked by TSP-098 landing last session). Commit 9b7917e.
+
+New /admin/quality page: reads question_stats (TSP-098) joined with questions, shows live tier vs a computed suggested tier (only when they diverge), difficulty index, discrimination, avg time, flags, usage, and calibration freshness (stale after 36h, reusing OPS_THRESHOLDS.nightlyStaleRedHours for consistency with the ops dashboard's meaning of "stale"). "Needs attention" section: suggested=quarantine-but-still-live, strongly negative discrimination with enough attempts, or flag_count>=3 - three independent reasons, all advisory, nothing auto-applied (same precedent as TSP-032/098/167). Sort-by-metric via plain searchParams links, no client JS needed for a read-only report.
+
+Exported `QUARANTINE_NEGATIVE_DISCRIMINATION` from question-stats.ts (was an inline literal in TIER_THRESHOLDS) so the dashboard's attention logic and the nightly job's tier-suggestion logic share one source of truth instead of two copies of `-0.1`.
+
+Verified live: ran the dashboard's exact join query directly against production data - 52 real calibrated rows (from last session's compute_question_stats run) came back with correct shapes; spot-checked a gold-tier question with difficulty_index=0 from only 4 attempts and confirmed it correctly does NOT appear in "needs attention" (suggested tier is bronze, not quarantine, at this sample size - exactly the intended behavior). Did not script a full authenticated browser click-through this session (would need a scripted login flow); founder smoke covers that.
+
+Gates @ Test_Portal: typecheck 0 / **562/562** (+16) / lint 0 err (10 warn) / build clean. Tracker: 84 Done / 76 Review / 33 Backlog / 7 epics (200 rows).
+
+Founder smoke: /admin/quality - browse the "Needs attention" and "All calibrated questions" sections, click each sort link (Attempts/Usage/Flags/Difficulty/Discrimination), open a question from a card to confirm the link lands correctly.
