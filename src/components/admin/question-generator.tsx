@@ -177,7 +177,6 @@ export function QuestionGenerator({ exams }: { exams: ExamOption[] }) {
               candidate={candidate}
               difficulty={difficulty}
               examId={examId}
-              index={index}
               isSaved={savedIndexes.has(index)}
               key={index}
               onSaved={() => setSavedIndexes((prev) => new Set(prev).add(index))}
@@ -194,7 +193,6 @@ function CandidateCard({
   candidate,
   difficulty,
   examId,
-  index,
   isSaved,
   onSaved,
   topicId
@@ -202,7 +200,6 @@ function CandidateCard({
   candidate: GeneratedCandidate;
   difficulty: Difficulty;
   examId: string;
-  index: number;
   isSaved: boolean;
   onSaved: () => void;
   topicId: string;
