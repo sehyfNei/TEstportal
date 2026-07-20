@@ -31,6 +31,42 @@ describe("admin question form schema", () => {
     expect(parsed.content.text).toBe("Question text in markdown");
   });
 
+  it("passes through extra content keys unchanged (e.g. TSP-074 distractor_rationales)", () => {
+    const formData = new FormData();
+    formData.set("examId", examId);
+    formData.set("topicId", topicId);
+    formData.set("type", "mcq");
+    formData.set("difficulty", "medium");
+    formData.set("source", "ai_generated");
+    formData.set("sourceYear", "");
+    formData.set("language", "en");
+    formData.set("status", "draft");
+    formData.set("exposurePolicy", "practice");
+    formData.set("qualityTier", "bronze");
+    formData.set(
+      "content",
+      JSON.stringify({
+        text: "Which right is exempt?",
+        options: ["A", "B", "C", "D"],
+        correct_options: [2],
+        distractor_rationales: [
+          { option_index: 0, misconception: "Thinks equality is absolute." },
+          { option_index: 1, misconception: "Thinks freedom is unrestricted." },
+          { option_index: 3, misconception: "Thinks remedies are absolute." }
+        ]
+      })
+    );
+    formData.set("explanation", "Because it is the correct option.");
+
+    const parsed = parseAdminQuestionFormData(formData);
+
+    expect(parsed.content.distractor_rationales).toEqual([
+      { option_index: 0, misconception: "Thinks equality is absolute." },
+      { option_index: 1, misconception: "Thinks freedom is unrestricted." },
+      { option_index: 3, misconception: "Thinks remedies are absolute." }
+    ]);
+  });
+
   it("rejects malformed content JSON", () => {
     const formData = new FormData();
     formData.set("examId", examId);
