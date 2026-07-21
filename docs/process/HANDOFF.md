@@ -16716,3 +16716,21 @@ On /admin/questions/generate, a new optional "Ground in a source" picker (scoped
 Gates @ Test_Portal: typecheck 0 / **606/606** (+15) / lint 0 err (10 pre-existing warn) / build clean. Tracker: 84 Done / **80 Review** / 29 Backlog / 7 epics (200 rows).
 
 Founder smoke: /admin/sources - add a source (paste any paragraph of text, 50+ characters). Then on /admin/questions/generate, pick the same exam, choose your new source from "Ground in a source," and generate - the questions should visibly draw on what you pasted rather than general knowledge. Save one and confirm /admin/questions/review shows a new "Grounded in: <your source title>" line on that question's card.
+
+---
+
+# Session 68 - TSP-190 expert persona registry (2026-07-21)
+
+Founder picked TSP-190 via AskUserQuestion (offered alongside TSP-124 auto-tagging and TSP-121 peer benchmarks; TSP-190 is the first concrete child of the "AI Subject Experts" epic (TSP-189), freshly unblocked by TSP-188 landing last session). Commit 77a188b.
+
+New **/admin/experts**: admin defines a named AI expert persona scoped to a topic (subject or sub-topic - deliberately not restricted to top-level topics only, since a persona for a specific sub-topic like "Fundamental Rights" is just as plausible as one for all of "Indian Polity"). Each persona has its own system prompt, an optional binding to one or more TSP-188 sources (new `expert_persona_sources` join table), and a `generation_cadence` field (manual/daily/weekly) - stored as addressable data for a future recurring-generation job, matching the acceptance criteria's forward-looking wording ("addressable by generation jobs," not "a job exists yet"). No job runner is wired up in this row; that's separate future work.
+
+TSP-189's own description literally says "one AI expert persona per subject/topic" - enforced here as a real database guarantee, not a UI convention: a partial unique index on `expert_personas(topic_id) where is_active` means creating a second active persona for a topic that already has one raises a clean unique-violation, caught in the action and translated into "deactivate the existing one first." Each persona card has an Activate/Deactivate toggle so an admin can swap.
+
+RLS deliberately does NOT copy TSP-188's admin-only-everything pattern. It mirrors exams/topics instead: a narrow "read active personas" policy open to any authenticated user, plus a broad admin-all policy for writes - so a future chat feature (TSP-191) can address an active persona under the *student's own session*, without needing a service-role bypass to read it.
+
+**Verified live via a rolled-back transaction** (nothing persisted): created a real persona for a real topic; confirmed a second active persona for the same topic is genuinely rejected by the partial unique index; confirmed deactivating the first then creating a second succeeds; confirmed a source binding round-trips through the join table. Then switched the transaction-local JWT to a plain "student" role (same `request.jwt.claims` technique as last session) and confirmed two things that actually matter for TSP-191 later: the read policy shows ONLY the active persona (the deactivated one is correctly invisible), and a write attempt from that student session is genuinely blocked. Worth noting honestly: the first draft of this specific check was wrong - it expected Postgres to *raise an error* on the blocked write, but RLS doesn't work that way for UPDATE; a row invisible under the applicable policy is just silently affected 0 times, no exception thrown. Caught this by inspecting the actual `returning` result instead of trusting a bare try/catch, and rewrote the check around row-count rather than exception-catching before treating it as verified.
+
+Gates @ Test_Portal: typecheck 0 / **615/615** (+9) / lint 0 err (10 pre-existing warn) / build clean. Tracker: 84 Done / **81 Review** / 28 Backlog / 7 epics (200 rows).
+
+Founder smoke: /admin/experts - pick an exam and topic, write a short system prompt (e.g. "You are a strict, exam-focused Indian Polity tutor..."), optionally tick a source if you've added one, click Create expert. Confirm it shows up below as Active. Try creating a second expert for the *same* topic - it should be refused until you Deactivate the first one.
