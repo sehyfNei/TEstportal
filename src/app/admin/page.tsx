@@ -41,6 +41,11 @@ const taskGroups: TaskGroup[] = [
         label: "Manage source library",
         description: "Add past-year papers, articles, or notes to ground AI-generated questions in.",
         href: "/admin/sources"
+      },
+      {
+        label: "Define subject experts",
+        description: "Give each subject its own AI persona — a teaching prompt, optionally grounded in your sources.",
+        href: "/admin/experts"
       }
     ]
   },
