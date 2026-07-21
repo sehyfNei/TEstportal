@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { MAX_CHAT_MESSAGE_CHARS, validateChatRequestBody } from "@/lib/chat/chat-service";
 
 const VALID_UUID = "3f2c9d8e-1a4b-4c6d-9e8f-0a1b2c3d4e5f";
+const VALID_UUID_2 = "4a3d0e9f-2b5c-4d7e-8f0a-1b2c3d4e5f6a";
 
 describe("validateChatRequestBody", () => {
   it("accepts a full valid body", () => {
     const result = validateChatRequestBody({
       sessionId: VALID_UUID,
       examId: VALID_UUID.toUpperCase(),
+      topicId: VALID_UUID_2,
       message: "  Explain the doctrine of basic structure.  "
     });
 
@@ -15,6 +17,7 @@ describe("validateChatRequestBody", () => {
       ok: true,
       sessionId: VALID_UUID,
       examId: VALID_UUID.toUpperCase(),
+      topicId: VALID_UUID_2,
       message: "Explain the doctrine of basic structure."
     });
   });
@@ -25,6 +28,7 @@ describe("validateChatRequestBody", () => {
       ok: true,
       sessionId: null,
       examId: null,
+      topicId: null,
       message: "What is Article 356?"
     });
   });
@@ -61,6 +65,10 @@ describe("validateChatRequestBody", () => {
     expect(
       validateChatRequestBody({ message: "hi", examId: "3f2c9d8e-1a4b-4c6d-9e8f" })
     ).toEqual({ ok: false, error: "invalid_id" });
+    expect(validateChatRequestBody({ message: "hi", topicId: "not-a-uuid" })).toEqual({
+      ok: false,
+      error: "invalid_id"
+    });
   });
 
   it("treats non-string or blank ids as absent", () => {
@@ -69,6 +77,6 @@ describe("validateChatRequestBody", () => {
       sessionId: 42,
       examId: "   "
     });
-    expect(result).toEqual({ ok: true, sessionId: null, examId: null, message: "hi" });
+    expect(result).toEqual({ ok: true, sessionId: null, examId: null, topicId: null, message: "hi" });
   });
 });

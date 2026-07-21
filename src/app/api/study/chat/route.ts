@@ -14,6 +14,7 @@ import {
   writeChatCostLedger
 } from "@/lib/chat/chat-service";
 import { assembleContext, type ContextPayload } from "@/lib/chat/context-injector";
+import { assembleTopicContext, buildPersonaSystemMessage, loadActivePersona } from "@/lib/chat/persona-context";
 import { isFeatureEnabled } from "@/lib/flags";
 import { getAiConsent } from "@/lib/profile/profile-service";
 import { CHAT_RATE_LIMIT, checkRateLimit } from "@/lib/security/rate-limit";
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       return Response.json({ error: validation.error }, { status: 400 });
     }
 
-    const { sessionId, examId, message } = validation;
+    const { sessionId, examId, topicId, message } = validation;
     const rateLimit = await checkRateLimit(supabase, CHAT_RATE_LIMIT, user.id);
     if (!rateLimit.allowed) {
       return Response.json(
@@ -92,12 +93,13 @@ export async function POST(request: NextRequest): Promise<Response> {
       examId,
       sessionId,
       message,
-      contextPayload
+      contextPayload,
+      topicId
     );
 
     await insertMessage(adminSupabase, activeSessionId, "user", message, estimateTokenCount(message));
 
-    const systemMessage = buildSystemMessage(contextPayload);
+    const systemMessage = await resolveSystemMessage(supabase, user.id, topicId, contextPayload);
     const history = await getRecentMessages(adminSupabase, activeSessionId);
     const groqMessages = ensureCurrentUserMessage([systemMessage, ...history], message);
     const streamStartedAt = Date.now();
@@ -162,6 +164,34 @@ function ensureCurrentUserMessage(messages: AiMessage[], message: string): AiMes
   }
 
   return [...messages, { role: "user", content: message }];
+}
+
+// TSP-191: a topic with an active expert persona routes to that persona's
+// voice + topic-scoped mastery/mistake context instead of the generic
+// exam-wide tutor prompt. No topic, or a topic with no active persona,
+// falls through to the original exam-wide behavior unchanged.
+async function resolveSystemMessage(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  topicId: string | null,
+  contextPayload: ContextPayload
+): Promise<AiMessage> {
+  if (!topicId) {
+    return buildSystemMessage(contextPayload);
+  }
+
+  try {
+    const persona = await loadActivePersona(supabase, topicId);
+    if (!persona) {
+      return buildSystemMessage(contextPayload);
+    }
+
+    const topicContext = await assembleTopicContext(supabase, userId, topicId);
+    return buildPersonaSystemMessage(persona, topicContext);
+  } catch (error) {
+    console.error("[study/chat] persona resolution failed", error);
+    return buildSystemMessage(contextPayload);
+  }
 }
 
 async function resolveContextPayload(

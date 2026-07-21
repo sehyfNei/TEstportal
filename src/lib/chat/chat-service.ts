@@ -14,7 +14,7 @@ export const MAX_CHAT_MESSAGE_CHARS = 4000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ChatRequestValidation =
-  | { ok: true; sessionId: string | null; examId: string | null; message: string }
+  | { ok: true; sessionId: string | null; examId: string | null; topicId: string | null; message: string }
   | { ok: false; error: "empty_message" | "message_too_long" | "invalid_id" };
 
 export type UsageCapResult = {
@@ -57,7 +57,7 @@ export function validateChatRequestBody(body: unknown): ChatRequestValidation {
     return { ok: false, error: "empty_message" };
   }
 
-  const record = body as { sessionId?: unknown; examId?: unknown; message?: unknown };
+  const record = body as { sessionId?: unknown; examId?: unknown; topicId?: unknown; message?: unknown };
   const message = typeof record.message === "string" ? record.message.trim() : "";
   if (!message) {
     return { ok: false, error: "empty_message" };
@@ -68,11 +68,12 @@ export function validateChatRequestBody(body: unknown): ChatRequestValidation {
 
   const sessionId = readOptionalUuid(record.sessionId);
   const examId = readOptionalUuid(record.examId);
-  if (!sessionId.ok || !examId.ok) {
+  const topicId = readOptionalUuid(record.topicId);
+  if (!sessionId.ok || !examId.ok || !topicId.ok) {
     return { ok: false, error: "invalid_id" };
   }
 
-  return { ok: true, sessionId: sessionId.id, examId: examId.id, message };
+  return { ok: true, sessionId: sessionId.id, examId: examId.id, topicId: topicId.id, message };
 }
 
 function readOptionalUuid(value: unknown): { ok: true; id: string | null } | { ok: false } {
@@ -153,7 +154,8 @@ export async function getOrCreateSession(
   examId: string | null,
   sessionId: string | null,
   firstMessagePreview: string,
-  contextSnapshot: ContextPayload
+  contextSnapshot: ContextPayload,
+  topicId: string | null = null
 ): Promise<string> {
   if (sessionId) {
     const { data, error } = await adminSupabase
@@ -177,6 +179,7 @@ export async function getOrCreateSession(
     .insert({
       user_id: userId,
       exam_id: examId,
+      topic_id: topicId,
       title: buildSessionTitle(firstMessagePreview),
       context: contextSnapshot
     })

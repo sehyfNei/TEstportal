@@ -13,14 +13,22 @@ type Exam = {
   name: string;
 };
 
+type Topic = {
+  id: string;
+  name: string;
+  examId: string;
+};
+
 type DisplayMessage = ChatDisplayMessage & {
   streaming?: boolean;
 };
 
 type ChatViewProps = {
   exams: Exam[];
+  topics: Topic[];
   initialMessages: ChatDisplayMessage[];
   initialExamId: string | null;
+  initialTopicId: string | null;
   initialSessionId: string | null;
   topicHint: string | null;
 };
@@ -42,13 +50,16 @@ const MAX_MESSAGE_CHARS = 4000;
 
 export function ChatView({
   exams,
+  topics,
   initialExamId,
+  initialTopicId,
   initialMessages,
   initialSessionId,
   topicHint
 }: ChatViewProps) {
   const [messages, setMessages] = useState<DisplayMessage[]>(initialMessages);
   const [examId, setExamId] = useState<string | null>(initialExamId);
+  const [topicId, setTopicId] = useState<string | null>(initialTopicId);
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [input, setInput] = useState(
     topicHint && initialMessages.length === 0 ? `Help me understand ${topicHint}` : ""
@@ -60,6 +71,10 @@ export function ChatView({
   const currentExam = useMemo(
     () => exams.find((exam) => exam.id === examId) ?? null,
     [examId, exams]
+  );
+  const topicsForExam = useMemo(
+    () => topics.filter((topic) => topic.examId === examId),
+    [examId, topics]
   );
   const needsExam = !sessionId && exams.length > 0 && !examId;
   const hasNoExams = !sessionId && exams.length === 0;
@@ -98,7 +113,7 @@ export function ChatView({
       const response = await fetch("/api/study/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ examId, message: text, sessionId })
+        body: JSON.stringify({ examId, topicId, message: text, sessionId })
       });
 
       if (!response.ok) {
@@ -110,7 +125,7 @@ export function ChatView({
       const returnedSessionId = response.headers.get("X-Session-Id");
       if (returnedSessionId && !sessionId) {
         setSessionId(returnedSessionId);
-        persistSessionInUrl(returnedSessionId, examId);
+        persistSessionInUrl(returnedSessionId, examId, topicId);
       }
 
       if (!response.body) {
@@ -180,8 +195,16 @@ export function ChatView({
   function handleExamChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextExamId = event.target.value || null;
     setExamId(nextExamId);
+    setTopicId(null);
     setErrorKey(null);
     persistExamInUrl(nextExamId);
+  }
+
+  function handleTopicChange(event: ChangeEvent<HTMLSelectElement>) {
+    const nextTopicId = event.target.value || null;
+    setTopicId(nextTopicId);
+    setErrorKey(null);
+    persistTopicInUrl(nextTopicId);
   }
 
   return (
@@ -198,22 +221,43 @@ export function ChatView({
         </div>
 
         {exams.length > 0 ? (
-          <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-            Exam
-            <select
-              className="h-10 min-w-56 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isStreaming || Boolean(sessionId)}
-              value={examId ?? ""}
-              onChange={handleExamChange}
-            >
-              <option value="">Select exam</option>
-              {exams.map((exam) => (
-                <option key={exam.id} value={exam.id}>
-                  {exam.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+              Exam
+              <select
+                className="h-10 min-w-56 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isStreaming || Boolean(sessionId)}
+                value={examId ?? ""}
+                onChange={handleExamChange}
+              >
+                <option value="">Select exam</option>
+                {exams.map((exam) => (
+                  <option key={exam.id} value={exam.id}>
+                    {exam.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {topicsForExam.length > 0 ? (
+              <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+                Subject / topic (optional)
+                <select
+                  className="h-10 min-w-56 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isStreaming || Boolean(sessionId)}
+                  value={topicId ?? ""}
+                  onChange={handleTopicChange}
+                >
+                  <option value="">General (no subject expert)</option>
+                  {topicsForExam.map((topic) => (
+                    <option key={topic.id} value={topic.id}>
+                      {topic.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -381,12 +425,15 @@ function placeholderText({
   return "Ask anything. Enter sends, Shift+Enter adds a new line.";
 }
 
-function persistSessionInUrl(sessionId: string, examId: string | null) {
+function persistSessionInUrl(sessionId: string, examId: string | null, topicId: string | null) {
   const url = new URL(window.location.href);
   url.searchParams.set("sessionId", sessionId);
   url.searchParams.delete("topic");
   if (examId) {
     url.searchParams.set("examId", examId);
+  }
+  if (topicId) {
+    url.searchParams.set("topicId", topicId);
   }
   window.history.replaceState(null, "", url.toString());
 }
@@ -397,6 +444,17 @@ function persistExamInUrl(examId: string | null) {
     url.searchParams.set("examId", examId);
   } else {
     url.searchParams.delete("examId");
+  }
+  url.searchParams.delete("topicId");
+  window.history.replaceState(null, "", url.toString());
+}
+
+function persistTopicInUrl(topicId: string | null) {
+  const url = new URL(window.location.href);
+  if (topicId) {
+    url.searchParams.set("topicId", topicId);
+  } else {
+    url.searchParams.delete("topicId");
   }
   window.history.replaceState(null, "", url.toString());
 }

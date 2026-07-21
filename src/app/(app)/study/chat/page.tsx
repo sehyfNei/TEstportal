@@ -11,6 +11,7 @@ export const metadata = {
 type SearchParams = {
   examId?: string | string[];
   sessionId?: string | string[];
+  topicId?: string | string[];
   topic?: string | string[];
 };
 
@@ -19,12 +20,20 @@ type Exam = {
   name: string;
 };
 
+type Topic = {
+  id: string;
+  name: string;
+  examId: string;
+};
+
 type ChatPageData =
   | { configured: false }
   | {
       configured: true;
       exams: Exam[];
+      topics: Topic[];
       initialExamId: string | null;
+      initialTopicId: string | null;
       initialMessages: ChatDisplayMessage[];
       initialSessionId: string | null;
       topicHint: string | null;
@@ -50,7 +59,9 @@ export default async function StudyChatPage({
   return (
     <ChatView
       exams={data.exams}
+      topics={data.topics}
       initialExamId={data.initialExamId}
+      initialTopicId={data.initialTopicId}
       initialMessages={data.initialMessages}
       initialSessionId={data.initialSessionId}
       topicHint={data.topicHint}
@@ -75,21 +86,28 @@ async function loadChatPageData(params: SearchParams): Promise<ChatPageData> {
 
   const examId = firstParam(params.examId);
   const sessionId = firstParam(params.sessionId);
+  const topicId = firstParam(params.topicId);
   const topic = firstParam(params.topic);
-  const { data: examRows } = await supabase
-    .from("exams")
-    .select("id,name")
-    .eq("is_active", true)
-    .order("name");
+  const [{ data: examRows }, { data: topicRows }] = await Promise.all([
+    supabase.from("exams").select("id,name").eq("is_active", true).order("name"),
+    supabase.from("topics").select("id,name,exam_id").order("name")
+  ]);
 
   const exams = toExams(examRows);
+  const topics = toTopics(topicRows);
   const initialMessages = sessionId ? await loadChatHistory(supabase, sessionId) : [];
   const initialExamId = examId && exams.some((exam) => exam.id === examId) ? examId : null;
+  const initialTopicId =
+    topicId && topics.some((candidate) => candidate.id === topicId && candidate.examId === initialExamId)
+      ? topicId
+      : null;
 
   return {
     configured: true,
     exams,
+    topics,
     initialExamId,
+    initialTopicId,
     initialMessages,
     initialSessionId: sessionId,
     topicHint: topic
@@ -105,10 +123,12 @@ function buildRedirectTarget(params: SearchParams): string {
   const search = new URLSearchParams();
   const examId = firstParam(params.examId);
   const sessionId = firstParam(params.sessionId);
+  const topicId = firstParam(params.topicId);
   const topic = firstParam(params.topic);
 
   if (examId) search.set("examId", examId);
   if (sessionId) search.set("sessionId", sessionId);
+  if (topicId) search.set("topicId", topicId);
   if (topic) search.set("topic", topic);
 
   const query = search.toString();
@@ -127,6 +147,21 @@ function toExams(rows: unknown): Exam[] {
       name: typeof row.name === "string" ? row.name : ""
     }))
     .filter((exam) => exam.id && exam.name);
+}
+
+function toTopics(rows: unknown): Topic[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+    .map((row) => ({
+      id: typeof row.id === "string" ? row.id : "",
+      name: typeof row.name === "string" ? row.name : "",
+      examId: typeof row.exam_id === "string" ? row.exam_id : ""
+    }))
+    .filter((topic) => topic.id && topic.name && topic.examId);
 }
 
 function PageHeader() {
