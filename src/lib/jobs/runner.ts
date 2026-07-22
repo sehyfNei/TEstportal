@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateAnalysisJob } from "@/lib/ai/jobs/generate-analysis";
 import { generatePlanJob } from "@/lib/ai/jobs/generate-plan";
+import { generateLearningPathJob } from "@/lib/ai/jobs/generate-learning-path";
 import { getErrorMessage } from "@/lib/errors";
 import { computeQuestionStatsJob } from "./handlers/compute-question-stats";
 import type { JobRow, JobStatus } from "./types";
@@ -76,6 +77,13 @@ export const HANDLERS: Record<
   },
   compute_question_stats: async (_payload: unknown, supabase: SupabaseClient) => {
     await computeQuestionStatsJob(supabase);
+  },
+  generate_learning_path: async (payload: unknown, supabase: SupabaseClient) => {
+    const p = payload as { learning_path_id?: string };
+    if (!p?.learning_path_id) {
+      throw new Error("Invalid payload: missing learning_path_id");
+    }
+    await generateLearningPathJob(p.learning_path_id, supabase);
   }
 };
 

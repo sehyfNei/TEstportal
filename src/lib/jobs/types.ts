@@ -11,6 +11,7 @@ export const JOB_TYPES = [
   'compute_percentiles',
   'weekly_digest',
   'cleanup_expired_sessions',
+  'generate_learning_path',
 ] as const;
 export type JobType = typeof JOB_TYPES[number];
 
@@ -31,6 +32,7 @@ export type JobPayloads = {
   compute_percentiles:        Record<string, never>;
   weekly_digest:              { user_id: string };
   cleanup_expired_sessions:   Record<string, never>;
+  generate_learning_path:     { learning_path_id: string };
 };
 
 export type JobRow = {

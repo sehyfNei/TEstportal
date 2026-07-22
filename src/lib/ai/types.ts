@@ -3,7 +3,8 @@ export type AiFeature =
   | "post_test_analysis"
   | "improvement_plan"
   | "question_generation"
-  | "question_enrichment";
+  | "question_enrichment"
+  | "learning_path_generation";
 
 export type AiMessage = {
   role: "system" | "user" | "assistant";
