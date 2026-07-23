@@ -173,8 +173,15 @@ async function safeWriteLedger(writeLedger: LedgerWriter, row: LedgerRow): Promi
 }
 
 async function defaultWriteLedger(row: LedgerRow): Promise<void> {
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
+  // Uses the admin client, not the cookie-based request client: this table
+  // is an internal cost log (its RLS insert policy only allows a row's own
+  // owner or an admin session), and callAi is invoked from cron/background
+  // job contexts with no user cookies at all — a request-scoped client would
+  // silently fail RLS there. Discovered via TSP-173's live verification: the
+  // learning-path generation job (cron-triggered) produced real AI output
+  // but its cost never reached the ledger.
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const supabase = createAdminClient();
   const { error } = await supabase.from("llm_cost_ledger").insert({
     user_id: row.userId,
     feature: row.feature,

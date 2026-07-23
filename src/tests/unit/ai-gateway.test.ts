@@ -4,6 +4,13 @@ import { computeCostUsd, hashInput } from "@/lib/ai/cost";
 import { callAi } from "@/lib/ai/gateway";
 import type { AiCallInput, LedgerRow } from "@/lib/ai/types";
 
+const insertMock = vi.fn(async () => ({ error: null }));
+const createAdminClientMock = vi.fn(() => ({ from: () => ({ insert: insertMock }) }));
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => createAdminClientMock()
+}));
+
 describe("callAi", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -167,6 +174,28 @@ describe("callAi", () => {
 
     expect(result).toMatchObject({ ok: true, content: "done" });
     expect(consoleSpy).toHaveBeenCalled();
+  });
+
+  // Regression guard for a real bug found via TSP-173's live verification:
+  // the default ledger writer used to derive a cookie-based request client,
+  // which has no session at all in a cron/background job context — the
+  // insert silently failed RLS and cost never reached the ledger.
+  it("writes the ledger through the admin client by default, not a request-scoped one", async () => {
+    insertMock.mockClear();
+    createAdminClientMock.mockClear();
+
+    const result = await callAi(baseInput(), {
+      fetchFn: mockFetchJson({
+        choices: [{ message: { content: "done" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 4 }
+      })
+      // No writeLedger override — exercises the real defaultWriteLedger.
+    });
+
+    expect(result).toMatchObject({ ok: true, content: "done" });
+    expect(createAdminClientMock).toHaveBeenCalledTimes(1);
+    expect(insertMock).toHaveBeenCalledTimes(1);
+    expect(insertMock.mock.calls[0][0]).toMatchObject({ status: "completed", feature: "post_test_analysis" });
   });
 });
 
