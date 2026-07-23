@@ -4,7 +4,7 @@ import { computeCostUsd, hashInput } from "@/lib/ai/cost";
 import { callAi } from "@/lib/ai/gateway";
 import type { AiCallInput, LedgerRow } from "@/lib/ai/types";
 
-const insertMock = vi.fn(async () => ({ error: null }));
+const insertMock = vi.fn(async (_row: Record<string, unknown>) => ({ error: null }));
 const createAdminClientMock = vi.fn(() => ({ from: () => ({ insert: insertMock }) }));
 
 vi.mock("@/lib/supabase/admin", () => ({

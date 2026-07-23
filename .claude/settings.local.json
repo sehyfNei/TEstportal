@@ -15,7 +15,13 @@
       "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" push)",
       "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" diff --name-only HEAD~1 HEAD)",
       "PowerShell(git -C \"C:\\\\Users\\\\Rakesh\\\\OneDrive\\\\Documents\\\\Business\\\\TEST\" diff --name-only HEAD~2 HEAD~1)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(node scripts/verify-stats-populated.mjs)",
+      "Bash(node scripts/smoke-generation-save.mjs)",
+      "Bash(corepack pnpm *)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Rakesh\\Documents\\Test_Portal\\scripts"
     ]
   }
 }
