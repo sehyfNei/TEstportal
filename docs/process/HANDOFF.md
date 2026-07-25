@@ -16858,3 +16858,21 @@ Email sending is gated behind `hasResendConfig()` (`RESEND_API_KEY` + `REMINDER_
 Gates @ Test_Portal: typecheck 0 / **697/697** (+24) / lint 0 err (10 pre-existing warn) / build clean. Tracker: 84 Done / **92 Review** / 17 Backlog / 7 epics (200 rows).
 
 Founder smoke: nothing new to click - this is a background job with no UI of its own (the schedule page already showed due/overdue items before this row). Once `RESEND_API_KEY` and `REMINDER_FROM_EMAIL` are set in Vercel, real reminder emails start going out automatically on the next cron tick - no code or deploy needed to flip that on.
+
+---
+
+# Session 76 - TSP-088 weekly digest + TSP-082 epic sweep (2026-07-26)
+
+Offered TSP-088 (last unbuilt child of the same reminders epic, reuses last session's pattern directly) as Recommended over TSP-099; founder picked TSP-088. Also swept **TSP-082** (Scheduling And Behavioral Design epic) to Review for free - every other child (083/084/085/086/087/180) already Done/Review. Commit `6acae24`.
+
+Exact same per-user fan-out design as TSP-085: `weekly_digest` was already a reserved `JOB_TYPES` entry with the identical `{user_id: string}` payload shape, unused until now. `ensureDigestJobsQueued` runs every cron tick but only actually enqueues on the IST week's Monday (`isDigestDay`) - gated so a daily cron doesn't attempt six redundant enqueue-conflict inserts per user per week - fanning out one job per registered user, keyed by a week-scoped idempotency key. Reused `istWeekStart`/`istDayKey` from TSP-087's weekly pledge (exported `istDayKey`, previously private) rather than inventing a second week-boundary concept, so pledges/streaks/digest all agree on the same week.
+
+**Reuse worth noting**: the handler leans on `fetchDashboardOverview` - the exact same aggregate the dashboard page itself renders - for weak topics, rather than re-deriving that logic a third time in this codebase. It resolves the user's most-recent exam from `test_sessions` (falling back to an upcoming `scheduled_items` row if they have no sessions yet, and genuinely no-oping if neither exists), separately counts tests submitted since this week's IST Monday with its own direct count query (`fetchDashboardOverview`'s own `recentSessions` is capped at 5, which would silently undercount an active week), and pulls the next 7 days of planned `scheduled_items` for "upcoming."
+
+**Small refactor along the way**: extracted `hasResendConfig` out of `reminder-email.ts` into a shared `resend-config.ts`, since it's a generic email-config gate both reminders and the digest now depend on, not something reminder-specific - `reminder-email.ts` re-exports it so nothing else needed to change. Same `AI_DISABLED`-style gating as TSP-085: not configured is a clean no-op, not a thrown error.
+
+**Verified live** against the real DB and real job runner: today wasn't Monday, so rather than wait a week or add a debug backdoor to the cron route (the fan-out's own Monday-gating is already thoroughly unit-tested with exact date-boundary cases, including an IST/UTC-boundary edge case), manually enqueued a real `weekly_digest` job for `student@example.com` and ran it through the real `/api/jobs/run` - completed successfully on the first attempt against real `test_sessions`, real mastery data via the real `fetchDashboardOverview`, real `scheduled_items`, and a real resolved email via `supabase.auth.admin.getUserById`, with the send itself correctly no-op'd. **Worth flagging honestly**: the real database currently has 6 registered users, several with what look like genuine personal emails beyond the two designated test accounts - confirmed before running anything that the email-send step is a guaranteed no-op right now, so nothing from this (or TSP-085's) verification could have reached a real inbox.
+
+Gates @ Test_Portal: typecheck 0 / **719/719** (+22) / lint 0 err (10 pre-existing warn) / build clean. Tracker: 84 Done / **94 Review** / 15 Backlog / 7 epics (200 rows).
+
+Founder smoke: nothing new to click - same as TSP-085, this is a background job with no UI. Once `RESEND_API_KEY`/`REMINDER_FROM_EMAIL` are set, both reminders and the weekly digest start sending real email on the next cron tick.
