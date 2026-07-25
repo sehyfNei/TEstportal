@@ -3,6 +3,7 @@ import { createAdminClient, hasAdminConfig } from "@/lib/supabase/admin";
 import { getErrorMessage } from "@/lib/errors";
 import { ensureNightlyJobsQueued } from "@/lib/jobs/nightly";
 import { ensureReminderJobsQueued } from "@/lib/jobs/enqueue-reminders";
+import { ensureDigestJobsQueued } from "@/lib/jobs/enqueue-digest";
 import { runPendingJobs } from "@/lib/jobs/runner";
 
 export async function GET(request: NextRequest) {
@@ -34,6 +35,7 @@ export async function GET(request: NextRequest) {
     const adminClient = createAdminClient();
     await ensureNightlyJobsQueued(adminClient);
     await ensureReminderJobsQueued(adminClient);
+    await ensureDigestJobsQueued(adminClient);
     const result = await runPendingJobs(adminClient, workerId, limit);
     return Response.json({ ok: true, result });
   } catch (error: unknown) {

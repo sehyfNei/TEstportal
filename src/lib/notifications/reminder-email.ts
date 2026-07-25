@@ -1,8 +1,7 @@
 import { getErrorMessage } from "@/lib/errors";
+import { hasResendConfig } from "@/lib/notifications/resend-config";
 
-export function hasResendConfig(): boolean {
-  return Boolean(process.env.RESEND_API_KEY && process.env.REMINDER_FROM_EMAIL);
-}
+export { hasResendConfig };
 
 export type ReminderEmailInput = {
   toEmail: string;

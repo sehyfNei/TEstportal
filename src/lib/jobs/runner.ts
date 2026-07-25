@@ -5,6 +5,7 @@ import { generateLearningPathJob } from "@/lib/ai/jobs/generate-learning-path";
 import { getErrorMessage } from "@/lib/errors";
 import { computeQuestionStatsJob } from "./handlers/compute-question-stats";
 import { sendRemindersJob } from "./handlers/send-reminders";
+import { sendWeeklyDigestJob } from "./handlers/send-weekly-digest";
 import type { JobRow, JobStatus } from "./types";
 
 export interface RunnerStore {
@@ -92,6 +93,13 @@ export const HANDLERS: Record<
       throw new Error("Invalid payload: missing user_id");
     }
     await sendRemindersJob(p.user_id, supabase);
+  },
+  weekly_digest: async (payload: unknown, supabase: SupabaseClient) => {
+    const p = payload as { user_id?: string };
+    if (!p?.user_id) {
+      throw new Error("Invalid payload: missing user_id");
+    }
+    await sendWeeklyDigestJob(p.user_id, supabase);
   }
 };
 

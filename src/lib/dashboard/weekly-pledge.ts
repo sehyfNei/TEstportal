@@ -36,7 +36,7 @@ export function istWeekStart(now: Date = new Date()): Date {
   return new Date(istMondayMidnight - IST_OFFSET_MINUTES * 60 * 1000);
 }
 
-function istDayKey(instant: Date): string {
+export function istDayKey(instant: Date): string {
   const shifted = new Date(instant.getTime() + IST_OFFSET_MINUTES * 60 * 1000);
   return shifted.toISOString().slice(0, 10);
 }
