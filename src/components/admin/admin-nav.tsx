@@ -18,7 +18,8 @@ const links = [
   { href: "/admin/questions/flags", label: "Flagged", exact: false },
   { href: "/admin/quality", label: "Quality", exact: false },
   { href: "/admin/jobs", label: "Jobs", exact: false },
-  { href: "/admin/ops", label: "Health", exact: false }
+  { href: "/admin/ops", label: "Health", exact: false },
+  { href: "/admin/audit", label: "Audit", exact: false }
 ];
 
 export function AdminNav() {

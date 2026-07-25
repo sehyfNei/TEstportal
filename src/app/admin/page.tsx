@@ -104,6 +104,11 @@ const taskGroups: TaskGroup[] = [
         label: "Background jobs",
         description: "AI analysis and other jobs; retry anything that failed.",
         href: "/admin/jobs"
+      },
+      {
+        label: "Audit log",
+        description: "Who changed a question's status, ran a bulk import, or imported a manifest, and when.",
+        href: "/admin/audit"
       }
     ]
   }

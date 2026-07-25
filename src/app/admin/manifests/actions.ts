@@ -1,6 +1,7 @@
 "use server";
 
 import { requireAdminForAction } from "@/lib/auth/require-admin";
+import { logAdminAction } from "@/lib/audit/log-admin-action";
 import { createManifestImportPlanFromJson } from "@/lib/exam/manifest-import";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
@@ -93,6 +94,16 @@ export async function importManifestAction(
   }
 
   const result = toImportResult(data);
+
+  await logAdminAction(supabase, {
+    actorId: adminCheck.userId,
+    action: "manifest_import",
+    entityType: "exam",
+    entityId: result?.examId ?? null,
+    details: result
+      ? { examSlug: result.examSlug, manifestVersion: result.manifestVersion, topicCount: result.topicCount }
+      : { examSlug: plan.summary.examSlug }
+  });
 
   return {
     ok: true,

@@ -1,6 +1,7 @@
 "use server";
 
 import { requireAdminForAction } from "@/lib/auth/require-admin";
+import { logAdminAction } from "@/lib/audit/log-admin-action";
 import { callAi } from "@/lib/ai/gateway";
 import {
   buildEnrichmentMessages,
@@ -147,6 +148,14 @@ export async function importQuestionsAction(
 
     importedRows += 1;
   }
+
+  await logAdminAction(supabase, {
+    actorId: adminCheck.userId,
+    action: "question_bulk_import",
+    entityType: "exam",
+    entityId: getString(formData, "defaultExamId") || plan.questions[0]?.examId || null,
+    details: { format, importedRows, totalRows }
+  });
 
   return {
     ok: true,

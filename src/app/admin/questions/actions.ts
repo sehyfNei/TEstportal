@@ -1,6 +1,7 @@
 "use server";
 
 import { requireAdminForAction } from "@/lib/auth/require-admin";
+import { logAdminAction } from "@/lib/audit/log-admin-action";
 import {
   type AdminQuestionActionState,
   parseAdminQuestionFormData
@@ -374,6 +375,16 @@ async function setQuestionStatus(
   const rpcResult = toQuestionRpcResult(data);
 
   const status = rpcResult.status ?? rpcResult.to_status ?? toStatus;
+
+  if (rpcResult.changed !== false) {
+    await logAdminAction(supabase, {
+      actorId: adminCheck.userId,
+      action: "question_status_change",
+      entityType: "question",
+      entityId: questionId,
+      details: { fromStatus: rpcResult.from_status ?? null, toStatus: status, note }
+    });
+  }
 
   return {
     ok: true,
