@@ -183,6 +183,7 @@ describe("callAi", () => {
   // which has no session at all in a cron/background job context — the
   // insert silently failed RLS and cost never reached the ledger.
   it("writes the ledger through the admin client by default, not a request-scoped one", async () => {
+    vi.stubEnv("GROQ_API_KEY", "test-key");
     insertMock.mockClear();
     createAdminClientMock.mockClear();
 
