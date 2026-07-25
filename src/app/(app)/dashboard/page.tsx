@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { DueRetests } from "@/components/dashboard/due-retests";
+import { LearningPathCta } from "@/components/dashboard/learning-path-cta";
 import { NextActionCard } from "@/components/dashboard/next-action-card";
 import { ProgressTimeline } from "@/components/dashboard/progress-timeline";
 import { PledgeCard } from "@/components/dashboard/pledge-card";
@@ -79,6 +80,8 @@ export default async function DashboardPage({
 
       <NextActionCard overview={overview} />
 
+      {!data.hasActivePath ? <LearningPathCta examId={examId} /> : null}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <ReadinessCard readiness={overview.readiness} />
         <StreakCard streak={overview.streak} />
@@ -117,6 +120,7 @@ type DashboardData =
       overview: Awaited<ReturnType<typeof fetchDashboardOverview>>;
       timeline: TimelinePoint[];
       pledge: WeeklyPledgeSummary;
+      hasActivePath: boolean;
     };
 
 async function loadDashboardData(examParam: string | undefined): Promise<DashboardData> {
@@ -155,15 +159,26 @@ async function loadDashboardDataInner(examParam: string | undefined): Promise<Da
   }
 
   const examId = isValidExamId(examParam, exams) ? examParam : exams[0].id;
-  const [overview, timeline, pledge] = await Promise.all([
+  const [overview, timeline, pledge, activePath] = await Promise.all([
     fetchDashboardOverview(supabase, user.id, examId),
     fetchProgressTimeline(supabase, user.id, examId).catch((): TimelinePoint[] => []),
     loadWeeklyPledge(supabase, user.id).catch(
       (): WeeklyPledgeSummary => ({ target: null, completed: 0, weekStartDay: "", daysLeftInWeek: 7 })
-    )
+    ),
+    supabase
+      .from("learning_paths")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("exam_id", examId)
+      .eq("status", "active")
+      .maybeSingle()
+      .then(
+        (result) => Boolean(result.data),
+        () => false
+      )
   ]);
 
-  return { configured: true, authed: true, examId, exams, overview, timeline, pledge };
+  return { configured: true, authed: true, examId, exams, overview, timeline, pledge, hasActivePath: activePath };
 }
 
 function isValidExamId(param: string | undefined, exams: Exam[]): param is string {

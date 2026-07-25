@@ -5,6 +5,7 @@ import { createMistakeItemsJob } from "@/lib/jobs/handlers/create-mistake-items"
 import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
 import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
+import { updatePathProgressJob } from "@/lib/jobs/handlers/update-path-progress";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
 import { isValidFlagReason, type FlagReason } from "@/lib/question-bank/flag-reasons";
 import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
@@ -424,6 +425,13 @@ export async function submitSessionAction(
       ).catch((e) => console.error("[analytics] test_submit failed", e)),
 
       updateMasteryJob(resultId, createSupabaseMasteryRepository(supabase))
+        .then(() =>
+          // Runs only after mastery is written so it reads this attempt's
+          // fresh scores, not stale ones from before this submit (TSP-174).
+          updatePathProgressJob(resultId, supabase).catch((e) =>
+            console.error("[path_progress] update failed for result", resultId, e)
+          )
+        )
         .catch((e) => console.error("[mastery] update failed for result", resultId, e)),
 
       createMistakeItemsJob(resultId, supabase)

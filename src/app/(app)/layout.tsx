@@ -23,6 +23,7 @@ export default function AppLayout({
             <NavLink href="/dashboard">Dashboard</NavLink>
             <NavLink href="/tests">Tests</NavLink>
             <NavLink href="/schedule">Schedule</NavLink>
+            <NavLink href="/study/path">Path</NavLink>
             <NavLink href="/study/chat">Chat</NavLink>
             <NavLink href="/mistakes">Mistakes</NavLink>
             <NavLink href="/profile">Profile</NavLink>
