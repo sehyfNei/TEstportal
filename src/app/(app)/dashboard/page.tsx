@@ -7,6 +7,7 @@ import { PledgeCard } from "@/components/dashboard/pledge-card";
 import { ReadinessCard } from "@/components/dashboard/readiness-card";
 import { StrategyMetricsCard } from "@/components/dashboard/strategy-metrics";
 import { StreakCard } from "@/components/dashboard/streak-card";
+import { TodayFocusCta } from "@/components/dashboard/today-focus-cta";
 import { WeakTopics } from "@/components/dashboard/weak-topics";
 import { fetchDashboardOverview } from "@/lib/dashboard/overview";
 import { loadWeeklyPledge, type WeeklyPledgeSummary } from "@/lib/dashboard/weekly-pledge";
@@ -79,6 +80,8 @@ export default async function DashboardPage({
       </div>
 
       <NextActionCard overview={overview} />
+
+      <TodayFocusCta examId={examId} />
 
       {!data.hasActivePath ? <LearningPathCta examId={examId} /> : null}
 

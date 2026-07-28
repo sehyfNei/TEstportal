@@ -21,6 +21,7 @@ export default function AppLayout({
           </Link>
           <nav className="flex items-center gap-1">
             <NavLink href="/dashboard">Dashboard</NavLink>
+            <NavLink href="/study/today">Today</NavLink>
             <NavLink href="/tests">Tests</NavLink>
             <NavLink href="/schedule">Schedule</NavLink>
             <NavLink href="/study/path">Path</NavLink>

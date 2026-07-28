@@ -6,6 +6,7 @@ import { updateMasteryJob } from "@/lib/jobs/handlers/update-mastery";
 import { createSupabaseMasteryRepository } from "@/lib/jobs/handlers/update-mastery-supabase";
 import { updateRetestQueueJob } from "@/lib/jobs/handlers/update-retest-queue";
 import { updatePathProgressJob } from "@/lib/jobs/handlers/update-path-progress";
+import { completeLadderRevisionCheck, updateLadderProgressJob } from "@/lib/jobs/handlers/update-ladder-progress";
 import { isValidQualityTier } from "@/lib/question-bank/quality-tier";
 import { isValidFlagReason, type FlagReason } from "@/lib/question-bank/flag-reasons";
 import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
@@ -440,6 +441,9 @@ export async function submitSessionAction(
       updateRetestQueueJob(resultId, supabase)
         .catch((e) => console.error("[retest] update failed for result", resultId, e)),
 
+      updateLadderProgressJob(resultId, supabase)
+        .catch((e) => console.error("[ladder] update failed for result", resultId, e)),
+
       enqueueModule.then(({ enqueueJob, generateIdempotencyKey }) =>
         enqueueJob(
           supabase,
@@ -485,7 +489,12 @@ export async function submitSessionAction(
               .update({ status: "completed" })
               .eq("id", retestQueueId)
               .eq("user_id", userId)
-          ).then(() => {}).catch((e) => console.error("[retest] failed to mark queue completed", e))
+          )
+            // A retest_queue row can originate from a ladder mastery (TSP-204),
+            // not just a mistake - if so, this was its cycle-1 check, and
+            // completing it books cycle 2 (~6 weeks post-mastery) directly.
+            .then(() => completeLadderRevisionCheck(retestQueueId, userId, supabase))
+            .catch((e) => console.error("[retest] failed to mark queue completed", e))
         );
       }
     }
