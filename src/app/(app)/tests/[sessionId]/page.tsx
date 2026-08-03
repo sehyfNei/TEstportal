@@ -13,8 +13,10 @@ import { toAnalysisView, type AnalysisRow } from "@/lib/ai/analysis-read";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
 import { toPlanView, type PlanRow } from "@/lib/ai/plan-read";
 import type { PlanView } from "@/lib/ai/plan-view";
+import { isFeatureEnabled } from "@/lib/flags";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
+import { normalizeTestExperience } from "@/lib/test-session/experience";
 
 type SessionRow = {
   duration_minutes: number | null;
@@ -52,11 +54,18 @@ type SessionResultRow = {
 };
 
 export default async function TestSessionPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ sessionId: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { sessionId } = await params;
+  const [{ sessionId }, resolvedSearchParams] = await Promise.all([
+    params,
+    searchParams ??
+      Promise.resolve<Record<string, string | string[] | undefined>>({})
+  ]);
+  const requestedExperience = normalizeTestExperience(firstQueryValue(resolvedSearchParams.experience));
   const data = await loadTestSessionData(sessionId);
 
   if (!data.configured) {
@@ -81,10 +90,17 @@ export default async function TestSessionPage({
     notFound();
   }
 
+  const experience =
+    requestedExperience === "beta" &&
+    (await isFeatureEnabled(await createClient(), "test_runner_beta"))
+      ? "beta"
+      : "classic";
+
   return (
     <section className="grid gap-6">
-      <Header completed={Boolean(data.result)} />
+      {experience === "classic" || data.result ? <Header completed={Boolean(data.result)} /> : null}
       <TestRunner
+        experience={experience}
         expiresAt={data.session.expires_at}
         initialAnalysis={data.analysis}
         initialPlan={data.plan}
@@ -96,9 +112,14 @@ export default async function TestSessionPage({
         questions={data.questions}
         serverNow={new Date().toISOString()}
         sessionId={data.session.id}
+        sessionType={data.session.type}
       />
     </section>
   );
+}
+
+function firstQueryValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function Header({ completed = false }: { completed?: boolean }) {

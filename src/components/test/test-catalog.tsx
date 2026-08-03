@@ -4,27 +4,29 @@ import { useState } from "react";
 import Link from "next/link";
 import { TEST_MODES, type CatalogPreselect, type TestModeId } from "@/lib/tests/catalog";
 import { StartTest, type ExamOption, type TopicOption } from "@/components/test/start-test";
+import type { TestExperience } from "@/lib/test-session/experience";
 
 type TestCatalogProps = {
   exams: ExamOption[];
   topics: TopicOption[];
   preselect: CatalogPreselect;
+  experience: TestExperience;
 };
 
-export function TestCatalog({ exams, topics, preselect }: TestCatalogProps) {
+export function TestCatalog({ exams, experience, topics, preselect }: TestCatalogProps) {
   const [selectedModeId, setSelectedModeId] = useState<TestModeId>(preselect.modeId);
   const selectedMode = TEST_MODES.find((mode) => mode.id === selectedModeId) ?? TEST_MODES[0];
 
   return (
-    <div className="grid gap-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid min-w-0 gap-6">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {TEST_MODES.map((mode) => {
           const isSelected = mode.id === selectedMode.id;
 
           return (
             <button
               aria-pressed={isSelected}
-              className={`rounded-xl border p-4 text-left transition ${
+              className={`min-w-0 rounded-xl border p-4 text-left transition ${
                 isSelected
                   ? "border-primary bg-primary/5 shadow-card"
                   : "border-border bg-card hover:border-primary/50"
@@ -40,7 +42,7 @@ export function TestCatalog({ exams, topics, preselect }: TestCatalogProps) {
         })}
 
         <Link
-          className="rounded-xl border border-border bg-card p-4 text-left transition hover:border-primary/50"
+          className="min-w-0 rounded-xl border border-border bg-card p-4 text-left transition hover:border-primary/50"
           href="/mistakes"
         >
           <p className="text-sm font-semibold">Mistake retest</p>
@@ -52,6 +54,7 @@ export function TestCatalog({ exams, topics, preselect }: TestCatalogProps) {
 
       <StartTest
         exams={exams}
+        experience={experience}
         initialTopicId={preselect.topicId}
         key={selectedMode.id}
         mode={selectedMode}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { logTabSwitchAction, saveAnswerAction, submitSessionAction } from "@/app/test/actions";
 import { AnalysisPanel, type QuestionLabel } from "@/components/test/analysis-panel";
+import { BetaTestEnvironment } from "@/components/test/beta-test-environment";
 import { PlanPanel } from "@/components/test/plan-panel";
 import { ConfidenceControl } from "@/components/test/confidence-control";
 import { QuestionNavigator } from "@/components/test/question-navigator";
@@ -17,6 +18,7 @@ import {
   type SelectedAnswer
 } from "@/lib/test-session/answer-shape";
 import { shouldAdvanceAfterConfidence } from "@/lib/test-session/runner-flow";
+import type { TestExperience } from "@/lib/test-session/experience";
 import { mergeWithBackup, useSessionBackupStore } from "@/lib/test-session/session-backup-store";
 import { extractStem } from "@/lib/ai/jobs/question-context";
 import type { AnalysisView } from "@/lib/ai/analysis-view";
@@ -51,9 +53,11 @@ type TestRunnerProps = {
   initialResultId?: string | null;
   initialStatus: string;
   isDiagnostic?: boolean;
+  experience?: TestExperience;
   questions: TestRunnerQuestion[];
   serverNow: string;
   sessionId: string;
+  sessionType?: string;
 };
 
 type SaveStatus = "idle" | "pending" | "saving" | "saved" | "failed";
@@ -74,9 +78,11 @@ export function TestRunner({
   initialResultId,
   initialStatus,
   isDiagnostic,
+  experience = "classic",
   questions,
   serverNow,
-  sessionId
+  sessionId,
+  sessionType
 }: TestRunnerProps) {
   const [questionStates, setQuestionStates] =
     useState<Record<string, QuestionState>>(initialQuestionStates);
@@ -362,6 +368,19 @@ export function TestRunner({
     );
   }
 
+  function clearCurrentAnswer() {
+    if (!currentQuestion || locked) {
+      return;
+    }
+
+    const currentState = getQuestionState(questionStatesRef.current, currentQuestion.questionId);
+    commitQuestionState(currentQuestion, {
+      ...currentState,
+      answer: null,
+      confidence: null
+    });
+  }
+
   function handleConfidenceChange(confidence: Confidence | null) {
     if (!currentQuestion || locked) {
       return;
@@ -508,6 +527,33 @@ export function TestRunner({
           </Link>
         </div>
       </section>
+    );
+  }
+
+  if (experience === "beta") {
+    return (
+      <BetaTestEnvironment
+        answeredCount={answeredCount}
+        currentIndex={currentIndex}
+        currentQuestion={currentQuestion}
+        currentQuestionState={currentQuestionState}
+        locked={locked}
+        message={message}
+        navigatorStates={navigatorStates}
+        onAnswerChange={handleAnswerChange}
+        onClearAnswer={clearCurrentAnswer}
+        onConfidenceChange={handleConfidenceChange}
+        onJump={jumpTo}
+        onSubmit={() => submit("manual")}
+        onToggleReview={toggleMarkedReview}
+        pending={isPending}
+        questions={questions}
+        remainingLabel={formatRemaining(remainingMs)}
+        reviewCount={reviewCount}
+        saveStatusLabel={saveLabel(saveStatus)}
+        sessionType={sessionType}
+        timerUrgent={remainingMs <= 5 * 60 * 1000}
+      />
     );
   }
 

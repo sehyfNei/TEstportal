@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const FEATURE_FLAG_DEFAULTS = {
   chat_enabled: true,
   ai_analysis_enabled: true,
+  test_runner_beta: true,
   fsrs: false,
   pos: false,
   peer_insights: false,

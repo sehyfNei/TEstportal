@@ -68,6 +68,7 @@ describe("feature flags", () => {
 
   it("recognizes only registered flag keys", () => {
     expect(isKnownFlag("chat_enabled")).toBe(true);
+    expect(isKnownFlag("test_runner_beta")).toBe(true);
     expect(isKnownFlag("nonexistent_flag")).toBe(false);
   });
 });

@@ -52,6 +52,35 @@ Do not overwrite earlier entries from other agents. Append a new dated entry so 
 
 ## Latest Agent Handoffs
 
+### 2026-08-03 - Builder - TSP-205 Beta CBT
+
+Scope:
+
+- Adapted the supplied `otehr/` prototype into an opt-in Beta CBT experience without replacing the production test-session, autosave, scoring, history, or AI-analysis paths.
+- Added a persistent Classic/Beta selector, full-screen responsive Beta shell, URL experience persistence, runtime feature flag, and analytics experience property.
+- Added authenticated production-build browser coverage for desktop Chromium and Pixel 7 mobile.
+
+Verification:
+
+- `corepack pnpm typecheck`: clean.
+- `corepack pnpm test`: 745/745 tests passed.
+- `corepack pnpm lint`: 0 errors, 10 pre-existing warnings.
+- `corepack pnpm build`: clean.
+- Playwright against `next start`: 2/2 passed (desktop Chromium and Pixel 7 mobile), covering login, Beta selection, real test start, answer/confidence auto-advance, palette, submit confirmation, authoritative result, and responsive layout.
+- Live `feature_flags.test_runner_beta` migration applied and read back as enabled. The all-migrations helper stopped earlier on the pre-existing `mastery_records_topic_unique` index, so the new idempotent migration was applied directly and verified.
+- Temporary `beta-smoke-*` Supabase users: 0 remaining.
+
+Findings resolved:
+
+- Browser QA exposed mobile catalog horizontal overflow and pointer interception; responsive app navigation and test-form sizing were corrected.
+- The compact mobile submit icon lacked an accessible name; an `aria-label` and tooltip were added.
+
+Next recommended step:
+
+- Independent Sanity Agent reviews TSP-205 and either marks it Done or records specific regressions. Keep `otehr/` as an untracked design reference; it is intentionally excluded from the production commit.
+
+---
+
 ### 2026-05-29 - Builder Orientation - Codex
 
 Scope:

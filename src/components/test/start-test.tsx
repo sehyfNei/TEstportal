@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { startSessionAction, type StartSessionActionState } from "@/app/test/actions";
+import { buildTestSessionHref, type TestExperience } from "@/lib/test-session/experience";
 import type { TestMode } from "@/lib/tests/catalog";
 
 export type ExamOption = {
@@ -29,36 +30,38 @@ type StartTestProps = {
   mode: TestMode;
   initialTopicId: string | null;
   scheduledItemId?: string | null;
+  experience: TestExperience;
 };
 
-export function StartTest({ exams, topics, mode, initialTopicId, scheduledItemId }: StartTestProps) {
+export function StartTest({ exams, experience, topics, mode, initialTopicId, scheduledItemId }: StartTestProps) {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(startSessionAction, initialState);
   const [examId, setExamId] = useState(exams.length === 1 ? exams[0].id : "");
 
   useEffect(() => {
     if (state.ok && state.sessionId) {
-      router.push(`/tests/${state.sessionId}`);
+      router.push(buildTestSessionHref(state.sessionId, experience));
     }
-  }, [router, state.ok, state.sessionId]);
+  }, [experience, router, state.ok, state.sessionId]);
 
   const examTopics = topics.filter((topic) => topic.examId === examId);
 
   return (
-    <form action={formAction} className="grid gap-5 rounded-xl border border-border bg-card shadow-card p-5">
+    <form action={formAction} className="grid min-w-0 gap-5 rounded-xl border border-border bg-card shadow-card p-5">
       <div>
         <h2 className="text-xl font-semibold">{mode.title}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{mode.description}</p>
       </div>
 
       <input name="type" type="hidden" value={mode.sessionType} />
+      <input name="experience" type="hidden" value={experience} />
       <input name="minQualityTier" type="hidden" value={mode.minQualityTier} />
       {scheduledItemId ? <input name="scheduledItemId" type="hidden" value={scheduledItemId} /> : null}
 
-      <label className="grid gap-2 text-sm font-medium">
+      <label className="grid min-w-0 gap-2 text-sm font-medium">
         Exam
         <select
-          className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+          className="h-11 min-w-0 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
           disabled={isPending || !exams.length}
           name="examId"
           onChange={(event) => setExamId(event.target.value)}
@@ -75,10 +78,10 @@ export function StartTest({ exams, topics, mode, initialTopicId, scheduledItemId
       </label>
 
       {mode.requiresTopic ? (
-        <label className="grid gap-2 text-sm font-medium">
+        <label className="grid min-w-0 gap-2 text-sm font-medium">
           Topic
           <select
-            className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+            className="h-11 min-w-0 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
             defaultValue={initialTopicId ?? ""}
             disabled={isPending || !examId}
             name="topicId"
@@ -101,11 +104,11 @@ export function StartTest({ exams, topics, mode, initialTopicId, scheduledItemId
         </label>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-2 text-sm font-medium">
+      <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+        <label className="grid min-w-0 gap-2 text-sm font-medium">
           Questions
           <input
-            className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+            className="h-11 min-w-0 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
             defaultValue={String(mode.defaultCount)}
             min="1"
             max="100"
@@ -113,10 +116,10 @@ export function StartTest({ exams, topics, mode, initialTopicId, scheduledItemId
             type="number"
           />
         </label>
-        <label className="grid gap-2 text-sm font-medium">
+        <label className="grid min-w-0 gap-2 text-sm font-medium">
           Minutes {mode.defaultDurationMinutes === null ? "(optional)" : ""}
           <input
-            className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+            className="h-11 min-w-0 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
             defaultValue={mode.defaultDurationMinutes === null ? "" : String(mode.defaultDurationMinutes)}
             min="1"
             name="durationMinutes"

@@ -10,8 +10,8 @@ export default function AppLayout({
   return (
     <main className="min-h-screen">
       <header className="sticky top-0 z-40 border-b border-border/80 bg-card/85 backdrop-blur">
-        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
-          <Link className="flex items-center gap-2.5" href="/dashboard">
+        <div className="mx-auto flex min-h-16 w-full max-w-6xl flex-col gap-2 px-4 py-3 sm:h-16 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6 sm:py-0">
+          <Link className="flex shrink-0 items-center gap-2.5" href="/dashboard">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/70 text-primary-foreground shadow-sm">
               <GraduationCap size={18} />
             </span>
@@ -19,7 +19,10 @@ export default function AppLayout({
               Test Series Portal
             </span>
           </Link>
-          <nav className="flex items-center gap-1">
+          <nav
+            aria-label="Primary navigation"
+            className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-1 overflow-x-auto px-1 pb-1 sm:mx-0 sm:w-auto sm:overflow-visible sm:px-0 sm:pb-0"
+          >
             <NavLink href="/dashboard">Dashboard</NavLink>
             <NavLink href="/study/today">Today</NavLink>
             <NavLink href="/tests">Tests</NavLink>
@@ -31,7 +34,7 @@ export default function AppLayout({
           </nav>
         </div>
       </header>
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">{children}</div>
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">{children}</div>
     </main>
   );
 }

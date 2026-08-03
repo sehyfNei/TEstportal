@@ -23,6 +23,7 @@ import {
 } from "@/lib/ai/rating-helpers";
 import { createClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { normalizeTestExperience } from "@/lib/test-session/experience";
 
 type AuthCheckResult = { ok: false; message: string } | { ok: true; userId: string };
 
@@ -79,6 +80,7 @@ export async function startSessionAction(
 
   const examId = getString(formData, "examId");
   const type = getString(formData, "type") || "diagnostic";
+  const experience = normalizeTestExperience(formData.get("experience"));
   const templateId = nullableString(formData, "templateId");
   const topicId = nullableString(formData, "topicId");
   const count = integerValue(formData, "count", 10);
@@ -150,7 +152,7 @@ export async function startSessionAction(
       eventType: "test_start",
       entityType: "session",
       entityId: result.session_id,
-      properties: { type, examId }
+      properties: { type, examId, experience }
     });
   } catch (logError) {
     console.error("[analytics] failed to log test_start event", logError);

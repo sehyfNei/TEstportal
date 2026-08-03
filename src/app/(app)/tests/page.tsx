@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { TestCatalog } from "@/components/test/test-catalog";
-import { FixedPapers, type FixedPaper } from "@/components/test/fixed-papers";
+import type { FixedPaper } from "@/components/test/fixed-papers";
+import { TestLaunchpad } from "@/components/test/test-launchpad";
 import type { ExamOption, TopicOption } from "@/components/test/start-test";
 import { durationFromConfig, questionIdsFromConfig } from "@/lib/exam/test-template";
+import { isFeatureEnabled } from "@/lib/flags";
 import { parseCatalogSearchParams } from "@/lib/tests/catalog";
 import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
@@ -37,10 +38,13 @@ export default async function TestsPage({ searchParams }: TestsPageProps) {
       {data.loadError ? <StatusPanel message={data.loadError} /> : null}
 
       {data.configured && !data.loadError ? (
-        <>
-          <TestCatalog exams={data.exams} preselect={preselect} topics={data.topics} />
-          <FixedPapers papers={data.fixedPapers} />
-        </>
+        <TestLaunchpad
+          betaAvailable={data.betaAvailable}
+          exams={data.exams}
+          fixedPapers={data.fixedPapers}
+          preselect={preselect}
+          topics={data.topics}
+        />
       ) : null}
     </section>
   );
@@ -61,12 +65,13 @@ async function loadTestsPageData() {
       loadError: null,
       exams: [] as ExamOption[],
       topics: [] as TopicOption[],
-      fixedPapers: [] as FixedPaper[]
+      fixedPapers: [] as FixedPaper[],
+      betaAvailable: false
     };
   }
 
   const supabase = await createClient();
-  const [examsResult, topicsResult, papersResult] = await Promise.all([
+  const [examsResult, topicsResult, papersResult, betaAvailable] = await Promise.all([
     supabase.from("exams").select("id,name,slug,description").eq("is_active", true).order("name"),
     supabase.from("topics").select("id,exam_id,name,level,order_index").eq("level", 1).order("order_index"),
     supabase
@@ -74,7 +79,8 @@ async function loadTestsPageData() {
       .select("id,exam_id,title,description,config,exams(name)")
       .eq("selection_mode", "fixed")
       .eq("is_active", true)
-      .order("updated_at", { ascending: false })
+      .order("updated_at", { ascending: false }),
+    isFeatureEnabled(supabase, "test_runner_beta")
   ]);
 
   return {
@@ -82,7 +88,8 @@ async function loadTestsPageData() {
     loadError: examsResult.error?.message ?? topicsResult.error?.message ?? null,
     exams: toExamOptions(examsResult.data),
     topics: toTopicOptions(topicsResult.data),
-    fixedPapers: toFixedPapers(papersResult.data)
+    fixedPapers: toFixedPapers(papersResult.data),
+    betaAvailable
   };
 }
 

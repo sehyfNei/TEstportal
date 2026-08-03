@@ -3,6 +3,7 @@
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { startSessionAction, type StartSessionActionState } from "@/app/test/actions";
+import { buildTestSessionHref, type TestExperience } from "@/lib/test-session/experience";
 
 export type FixedPaper = {
   id: string;
@@ -16,7 +17,7 @@ export type FixedPaper = {
 
 const initialState: StartSessionActionState = { ok: false, message: "" };
 
-export function FixedPapers({ papers }: { papers: FixedPaper[] }) {
+export function FixedPapers({ experience, papers }: { experience: TestExperience; papers: FixedPaper[] }) {
   if (papers.length === 0) {
     return null;
   }
@@ -31,22 +32,22 @@ export function FixedPapers({ papers }: { papers: FixedPaper[] }) {
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         {papers.map((paper) => (
-          <FixedPaperCard key={paper.id} paper={paper} />
+          <FixedPaperCard experience={experience} key={paper.id} paper={paper} />
         ))}
       </div>
     </div>
   );
 }
 
-function FixedPaperCard({ paper }: { paper: FixedPaper }) {
+function FixedPaperCard({ experience, paper }: { experience: TestExperience; paper: FixedPaper }) {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(startSessionAction, initialState);
 
   useEffect(() => {
     if (state.ok && state.sessionId) {
-      router.push(`/tests/${state.sessionId}`);
+      router.push(buildTestSessionHref(state.sessionId, experience));
     }
-  }, [router, state.ok, state.sessionId]);
+  }, [experience, router, state.ok, state.sessionId]);
 
   return (
     <form
@@ -65,6 +66,7 @@ function FixedPaperCard({ paper }: { paper: FixedPaper }) {
       </div>
 
       <input name="type" type="hidden" value="benchmark" />
+      <input name="experience" type="hidden" value={experience} />
       <input name="examId" type="hidden" value={paper.examId} />
       <input name="templateId" type="hidden" value={paper.id} />
       <input name="count" type="hidden" value={String(paper.questionCount)} />

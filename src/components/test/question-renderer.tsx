@@ -1,6 +1,7 @@
 "use client";
 
 import { useId } from "react";
+import { cn } from "@/lib/utils";
 import {
   makeIntegerAnswer,
   makeMcqAnswer,
@@ -31,30 +32,32 @@ type QuestionRendererProps = {
   onChange: (answer: SelectedAnswer) => void;
   promptSnapshot: unknown;
   value: SelectedAnswer;
+  variant?: "classic" | "beta";
 };
 
 export function QuestionRenderer({
   disabled,
   onChange,
   promptSnapshot,
-  value
+  value,
+  variant = "classic"
 }: QuestionRendererProps) {
   const prompt = toPromptSnapshot(promptSnapshot);
   const type = prompt.type;
 
   return (
-    <div className="grid gap-6">
+    <div className={cn("grid gap-6", variant === "beta" && "text-slate-950")}>
       <QuestionPrompt prompt={prompt} />
 
       {type === "mcq" ? (
-        <McqOptions disabled={disabled} onChange={onChange} options={prompt.options ?? []} value={value} />
+        <McqOptions disabled={disabled} onChange={onChange} options={prompt.options ?? []} value={value} variant={variant} />
       ) : null}
 
       {type === "msq" ? (
-        <MsqOptions disabled={disabled} onChange={onChange} options={prompt.options ?? []} value={value} />
+        <MsqOptions disabled={disabled} onChange={onChange} options={prompt.options ?? []} value={value} variant={variant} />
       ) : null}
 
-      {type === "integer" ? <IntegerAnswer disabled={disabled} onChange={onChange} value={value} /> : null}
+      {type === "integer" ? <IntegerAnswer disabled={disabled} onChange={onChange} value={value} variant={variant} /> : null}
 
       {type === "statement" || type === "assertion" || type === "match" ? (
         <DeferredAnswerEntry type={type} />
@@ -131,12 +134,14 @@ function McqOptions({
   disabled,
   onChange,
   options,
-  value
+  value,
+  variant
 }: {
   disabled?: boolean;
   onChange: (answer: SelectedAnswer) => void;
   options: string[];
   value: SelectedAnswer;
+  variant: "classic" | "beta";
 }) {
   const groupId = useId();
   const normalized = normalizeSelectedAnswer("mcq", value);
@@ -151,12 +156,17 @@ function McqOptions({
       <legend className="sr-only">Choose one answer</legend>
       {options.map((option, index) => (
         <label
-          className="flex min-h-12 cursor-pointer items-start gap-3 rounded-md border border-border bg-background p-3 text-sm leading-6 transition hover:border-primary has-[:checked]:border-primary has-[:checked]:bg-primary/10"
+          className={cn(
+            "flex min-h-12 cursor-pointer items-start gap-3 rounded-md border p-3 text-sm leading-6 transition",
+            variant === "beta"
+              ? "border-slate-300 bg-white hover:border-emerald-600 has-[:checked]:border-emerald-600 has-[:checked]:bg-emerald-50"
+              : "border-border bg-background hover:border-primary has-[:checked]:border-primary has-[:checked]:bg-primary/10"
+          )}
           key={`${option}-${index}`}
         >
           <input
             checked={selectedIndex === index}
-            className="mt-1 h-4 w-4 border-border text-primary focus:ring-primary"
+            className={cn("mt-1 h-4 w-4", variant === "beta" ? "border-slate-400 text-emerald-600 focus:ring-emerald-600" : "border-border text-primary focus:ring-primary")}
             name={groupId}
             onChange={() => onChange(makeMcqAnswer(index))}
             type="radio"
@@ -172,12 +182,14 @@ function MsqOptions({
   disabled,
   onChange,
   options,
-  value
+  value,
+  variant
 }: {
   disabled?: boolean;
   onChange: (answer: SelectedAnswer) => void;
   options: string[];
   value: SelectedAnswer;
+  variant: "classic" | "beta";
 }) {
   const normalized = normalizeSelectedAnswer("msq", value);
   const selected = normalized && "options" in normalized ? normalized.options : [];
@@ -191,12 +203,17 @@ function MsqOptions({
       <legend className="sr-only">Choose all correct answers</legend>
       {options.map((option, index) => (
         <label
-          className="flex min-h-12 cursor-pointer items-start gap-3 rounded-md border border-border bg-background p-3 text-sm leading-6 transition hover:border-primary has-[:checked]:border-primary has-[:checked]:bg-primary/10"
+          className={cn(
+            "flex min-h-12 cursor-pointer items-start gap-3 rounded-md border p-3 text-sm leading-6 transition",
+            variant === "beta"
+              ? "border-slate-300 bg-white hover:border-emerald-600 has-[:checked]:border-emerald-600 has-[:checked]:bg-emerald-50"
+              : "border-border bg-background hover:border-primary has-[:checked]:border-primary has-[:checked]:bg-primary/10"
+          )}
           key={`${option}-${index}`}
         >
           <input
             checked={selected.includes(index)}
-            className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+            className={cn("mt-1 h-4 w-4 rounded", variant === "beta" ? "border-slate-400 text-emerald-600 focus:ring-emerald-600" : "border-border text-primary focus:ring-primary")}
             onChange={() => onChange(toggleMsqAnswer(value, index))}
             type="checkbox"
           />
@@ -210,11 +227,13 @@ function MsqOptions({
 function IntegerAnswer({
   disabled,
   onChange,
-  value
+  value,
+  variant
 }: {
   disabled?: boolean;
   onChange: (answer: SelectedAnswer) => void;
   value: SelectedAnswer;
+  variant: "classic" | "beta";
 }) {
   const normalized = normalizeSelectedAnswer("integer", value);
   const displayValue = normalized && "integer" in normalized ? String(normalized.integer) : "";
@@ -223,7 +242,10 @@ function IntegerAnswer({
     <label className="grid gap-2 text-sm font-medium">
       Answer
       <input
-        className="h-12 rounded-md border border-border bg-background px-3 text-base outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+        className={cn(
+          "h-12 rounded-md border bg-background px-3 text-base outline-none disabled:cursor-not-allowed disabled:opacity-60",
+          variant === "beta" ? "border-slate-300 focus:border-emerald-600" : "border-border focus:border-primary"
+        )}
         disabled={disabled}
         inputMode="decimal"
         onChange={(event) => onChange(makeIntegerAnswer(event.target.value))}
