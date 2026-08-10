@@ -52,6 +52,31 @@ Do not overwrite earlier entries from other agents. Append a new dated entry so 
 
 ## Latest Agent Handoffs
 
+### 2026-08-10 - Sanity Test - TSP-205 Beta CBT
+
+Scope:
+
+- Independent sanity review of TSP-205 (Beta CBT test-taking experience), built by a separate agent (Gemini CLI) on 2026-08-03 and left in Review pending this pass.
+
+Method:
+
+- Read the full commit diff (`ccd77ed`) line by line before running anything: `beta-test-environment.tsx`, `test-launchpad.tsx`, and every shared file it touched (`test-runner.tsx`, `question-renderer.tsx`, `confidence-control.tsx`, `start-test.tsx`, `test-catalog.tsx`, `fixed-papers.tsx`, `(app)/tests/page.tsx`, `(app)/tests/[sessionId]/page.tsx`, `(app)/layout.tsx`, `nav-link.tsx`, `flags.ts`, `src/app/test/actions.ts`, the new migration, and the new tests).
+- Confirmed the beta shell is presentation-only: `TestRunner` renders `<BetaTestEnvironment>` when `experience === "beta"` but wires it to the exact same handlers as Classic (`handleAnswerChange`, `handleConfidenceChange`, `jumpTo`, `submit("manual")`, `toggleMarkedReview`), so `saveAnswerAction`/`submitSessionAction` — the real autosave/scoring path — are untouched. `QuestionRenderer`/`ConfidenceControl` only gained a `variant` prop for styling.
+- Confirmed the `?experience=beta` query param is never trusted from the client alone: `(app)/tests/[sessionId]/page.tsx` re-checks the `test_runner_beta` flag server-side via `isFeatureEnabled` before honoring it.
+- Confirmed no collision with TSP-202/203/204's ladder wiring in `src/app/test/actions.ts` from this same session block — TSP-205 only added an `experience` field and an analytics property; `updateLadderProgressJob`/`completeLadderRevisionCheck` are untouched.
+
+Verification:
+
+- Re-ran all 4 gates independently @ Test_Portal on the synced commit: `typecheck` clean, `lint` 0 errors / 10 pre-existing warnings, `test` 745/745, `build` clean. `/study/today` and `/tests/[sessionId]` both present in the route list.
+- Live-verified end to end via the established magic-link + temp `set-session` technique with `student@example.com`: logged in, toggled Beta CBT on `/tests`, started a real 3-question diagnostic, landed on the full-screen shell (timer, question palette, submit confirmation), answered questions (confidence control correctly appears only after answering, matching Classic's rule), submitted, and reached the exact same authoritative result view Classic uses (0.67/6, 50% accuracy, AI analysis/plan panels generating) — confirming Beta sessions score through the real server-side engine, not a local formula. Screenshots taken at each step.
+- Deleted the temporary `set-session` route and verification scripts after use, per standing discipline; the real resulting `test_sessions`/`results` row for `student@example.com` is kept as genuine evidence, consistent with prior-session precedent.
+
+Findings: none. No regressions.
+
+Next recommended step: TSP-205 moved Review -> Done. Resume Phase 1 closure priorities per `ROADMAP.md` (remaining Review-row browser smokes, then the content gate).
+
+---
+
 ### 2026-08-03 - Builder - TSP-205 Beta CBT
 
 Scope:
